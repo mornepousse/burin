@@ -52,6 +52,8 @@ pub struct PostDef {
     /// Things in the file this program doesn't act on, to show the user.
     pub notes: Vec<String>,
     pub source: Option<PathBuf>,
+    /// Comes down fast to just above the material. If not, the whole way down is at the plunge rate.
+    pub rapid_plunge: bool,
 }
 
 /// Bytes to text; older files aren't always UTF-8.
@@ -102,10 +104,9 @@ fn unquote(text: &str) -> String {
     t.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(t).to_string()
 }
 
-const SETTINGS_WITHOUT_EFFECT: [&str; 7] = [
+const SETTINGS_WITHOUT_EFFECT: [&str; 6] = [
     "SUBSTITUTE",
     "DIRECT_OUTPUT",
-    "RAPID_PLUNGE_TO_STARTZ",
     "ROTARY_WRAP_X",
     "ROTARY_WRAP_Y",
     "LASER_MODE",
@@ -143,6 +144,7 @@ impl PostDef {
             blocks: HashMap::new(),
             notes: Vec::new(),
             source: None,
+            rapid_plunge: true,
         };
         // A file can build on another one: start from that, then let this file override it.
         let base_name = text.lines().find_map(|l| {
@@ -207,6 +209,7 @@ impl PostDef {
                 "LINE_NUMBER_INCREMENT" => def.line_step = value.trim().parse().unwrap_or(1.0),
                 "LINE_NUMBER_MAXIMUM" => def.line_max = value.trim().parse().unwrap_or(999_999.0),
                 "POST_BASE" => {}
+                "RAPID_PLUNGE_TO_STARTZ" => def.rapid_plunge = !value.trim().eq_ignore_ascii_case("NO"),
                 k if SETTINGS_WITHOUT_EFFECT.contains(&k) => def.notes.push(format!("{k} is not applied.")),
                 _ => {}
             }
@@ -581,7 +584,11 @@ fn write_moves(w: &mut Writer, path: &PostPath, arcs: Option<f64>) {
         let flat = (m.p[0] - before[0]).hypot(m.p[1] - before[1]);
         let rise = m.p[2] - before[2];
         if m.rapid {
-            if flat < 1e-9 && rise > 0.0 {
+            if flat < 1e-9 && rise < 0.0 && !w.def.rapid_plunge {
+                w.rate = tool.plunge;
+                w.note_rate();
+                w.plunge();
+            } else if flat < 1e-9 && rise > 0.0 {
                 w.retract(tool);
             } else {
                 w.rapid(tool);
@@ -959,5 +966,18 @@ begin FOOTER
         assert_eq!(text.lines().nth(change + 1), Some("SEGMENT"));
         assert!(text.lines().nth(change + 2).unwrap().starts_with("INIT  X10"), "{text}");
         assert_eq!(text.lines().last(), Some("FOOT"));
+    }
+
+    #[test]
+    fn a_file_can_ask_to_come_down_at_the_plunge_rate_the_whole_way() {
+        let m = |p: [f64; 3], rapid: bool| Move { p, rapid };
+        let moves = vec![m([10.0, 0.0, 15.0], true), m([10.0, 0.0, 2.0], true), m([10.0, 0.0, -3.0], false)];
+        let t = mm_tool();
+        let mut d = def();
+        d.blocks.insert("PLUNGE_MOVE".to_string(), vec!["DOWN [Z]".to_string()]);
+        let text = |d: &PostDef| render(d, &[PostPath { name: "P", tool: &t, moves: &moves, dwell: 0.0, steps: None }], &job(), None);
+        assert_eq!(text(&d).lines().filter(|l| l.contains("DOWN")).count(), 1, "fast to just above, by default");
+        d.rapid_plunge = false;
+        assert_eq!(text(&d).lines().filter(|l| l.contains("DOWN")).count(), 2, "{}", text(&d));
     }
 }
