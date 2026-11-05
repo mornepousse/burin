@@ -1,0 +1,23 @@
+[package]
+name = "burin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.37"
+egui = "0.37"
+ab_glyph = "0.2"
+epaint_default_fonts = "0.37"
+png = "0.18"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland", "pollster"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+roxmltree = "0.20"
+i_overlay = "9.1.0"
+
+[dev-dependencies]
+egui_kittest = "0.37"
+
+[profile.dev]
+opt-level = 2
