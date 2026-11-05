@@ -1,0 +1,637 @@
+//! Burin: a desktop program for designing and carving with a CNC machine.
+
+mod app;
+mod arcs;
+mod bitmap;
+mod bulk;
+mod canvas;
+mod constraints;
+mod crv3d;
+mod distort;
+mod edit;
+mod geom;
+mod icons;
+mod opdialogs;
+mod panels;
+mod recalc;
+mod planetcnc;
+mod postp;
+mod snap;
+mod svg;
+mod theme;
+mod relief;
+mod relief_import;
+mod toolpath;
+mod ui;
+mod view3d;
+#[cfg(test)]
+mod ui_tests;
+
+use app::App;
+use std::path::PathBuf;
+
+struct Program {
+    app: App,
+    screenshot: Option<PathBuf>,
+    frames: u32,
+    /// True while the window is being driven only by `--screenshot`.
+    requested: bool,
+}
+
+impl eframe::App for Program {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        fit_scale(&ctx);
+        self.app.frame(ui);
+        // Saving a picture of the 3D view from the preview panel.
+        if let Some(path) = self.app.save_preview.take() {
+            let area = self.app.view_rect;
+            let ppp = ctx.pixels_per_point();
+            ctx.request_screenshot(move |image| {
+                let _ = write_png(&path, &image.region(&area, Some(ppp)));
+            });
+        }
+        if self.screenshot.is_some() {
+            self.frames += 1;
+            ctx.request_repaint();
+            if self.frames >= 120 && !self.requested {
+                self.requested = true;
+                let path = self.screenshot.clone().unwrap();
+                ctx.request_screenshot(move |image| match write_png(&path, &image) {
+                    Ok(()) => std::process::exit(0),
+                    Err(e) => {
+                        eprintln!("Could not save {}: {e}", path.display());
+                        std::process::exit(1);
+                    }
+                });
+            }
+        }
+    }
+}
+
+/// Keeps the panels usable in narrow windows by drawing smaller, down to real pixel size.
+fn fit_scale(ctx: &egui::Context) {
+    const NARROWEST: f32 = 1300.0;
+    let Some(native) = ctx.native_pixels_per_point() else { return };
+    let pixels = ctx.content_rect().width() * ctx.pixels_per_point();
+    let wanted = (pixels / NARROWEST).clamp(native.min(1.0), native);
+    if (wanted - ctx.pixels_per_point()).abs() > 0.01 {
+        ctx.set_zoom_factor(wanted / native);
+    }
+}
+
+fn write_png(path: &std::path::Path, image: &egui::ColorImage) -> Result<(), String> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), image.size[0] as u32, image.size[1] as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    let bytes: Vec<u8> = image.pixels.iter().flat_map(|c| [c.r(), c.g(), c.b(), 255]).collect();
+    writer.write_image_data(&bytes).map_err(|e| e.to_string())
+}
+
+/// Opens one of the known screens, for checking the look against the pictures.
+fn open_state(app: &mut App, state: &str) {
+    use app::{Datum, DrawForm, DrawKind, LeftForm, Prim, RightMode};
+    // The numbers below are in inches; only this one shows a new job as it really starts.
+    app.metric_by_default = state == "millimetres";
+    app.background_recalc = false;
+    app.surface_in_background = false;
+    // A real job carved in the preview, for looking at it closely: BURIN_CAM is zoom,yaw,tilt,pan x,pan y.
+    if let Some(path) = state.strip_prefix("file:") {
+        if let Err(why) = app.open_path(path.into()) {
+            eprintln!("{why}");
+        }
+        app.right_open = true;
+        app.right = RightMode::Preview;
+        app.view3d = true;
+        let all: Vec<usize> = (0..app.doc.toolpaths.len()).collect();
+        let started = std::time::Instant::now();
+        app.preview(all);
+        app.message = None;
+        app.finish_preview();
+        eprintln!("carved in {:?}, {} cells", started.elapsed(), app.sim.as_ref().map_or(0, |s| s.grid.data.len()));
+        for t in &mut app.doc.toolpaths {
+            t.visible = false;
+        }
+        let cam: Vec<f32> = std::env::var("BURIN_CAM").unwrap_or_default().split(',').filter_map(|v| v.trim().parse().ok()).collect();
+        if let [zoom, yaw, tilt, x, y] = cam[..] {
+            app.cam = view3d::Camera { yaw: yaw.to_radians(), tilt: tilt.to_radians(), zoom, pan: egui::vec2(x, y) };
+        }
+        return;
+    }
+    let circle = |app: &mut App| {
+        let (c, r) = ([4.3034, 5.9983], 1.2);
+        let id = app.doc.add_vector(vec![geom::Path::closed(geom::circle(c, r))], Prim::Circle { c, r });
+        app.selected = vec![id];
+    };
+    match state {
+        "job" => app.new_file(),
+        "drawing" => {
+            app.new_file();
+            app.left = LeftForm::None;
+        }
+        "circle" => {
+            app.new_file();
+            circle(app);
+            let mut f = DrawForm::new(DrawKind::Circle, &app.doc.job);
+            f.c = [4.3034, 5.9983];
+            f.r = 1.2;
+            app.left = LeftForm::Draw(f);
+            app.right_open = true;
+            app.right = RightMode::List;
+        }
+        "profile" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            circle(app);
+            app.start_op(toolpath::OpKind::Profile);
+        }
+        "3d" | "cut" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            circle(app);
+            app.start_op(toolpath::OpKind::Profile);
+            app.calculate_op();
+            if state == "cut" {
+                app.preview(vec![0]);
+                app.finish_preview();
+                app.doc.toolpaths[0].visible = false;
+            }
+        }
+        "tools" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            app.right_open = true;
+            app.start_op(toolpath::OpKind::Profile);
+            app.open_tool_list(Some(0));
+        }
+        "modeling" | "clipart" | "layers" | "material" | "pocket" | "vcarve" | "rough" | "finish" | "drill" | "engrave" | "save" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            circle(app);
+            app.right_open = true;
+            match state {
+                "modeling" => app.left_tab = app::LeftTab::Modeling,
+                "clipart" => app.left_tab = app::LeftTab::Clipart,
+                "layers" => app.left_tab = app::LeftTab::Layers,
+                "material" => app.right = RightMode::Material(Box::new(app.doc.clone())),
+                "pocket" => app.start_op(toolpath::OpKind::Pocket),
+                "vcarve" => app.start_op(toolpath::OpKind::VCarve),
+                "rough" => app.start_op(toolpath::OpKind::Rough3D),
+                "finish" => app.start_op(toolpath::OpKind::Finish3D),
+                "drill" => app.start_op(toolpath::OpKind::Drill),
+                "engrave" => app.start_op(toolpath::OpKind::Engrave),
+                _ => app.right = RightMode::Save,
+            }
+        }
+        "posts" => {
+            const DEMO: &str = "POST_NAME = \"Router G-code (mm) (*.tap)\"\nFILE_EXTENSION = \"tap\"\nUNITS = \"MM\"\nSUBSTITUTE = \"([91])[93]\"\nVAR X_POSITION = [X|C| X|1.3]\nbegin HEADER\n\"G21 [UNKNOWN_FIELD]\"\nbegin RAPID_MOVE\n\"G0[X]\"\nbegin FEED_MOVE\n\"G1[X]\"\n";
+            app.new_file();
+            app.left = LeftForm::None;
+            circle(app);
+            app.start_op(toolpath::OpKind::Profile);
+            app.calculate_op();
+            app.view3d = false;
+            app.right_open = true;
+            app.right = RightMode::Save;
+            app.loaded_posts.push(postp::PostDef::parse(DEMO, &|_| None).unwrap());
+            app.post_index = toolpath::POSTS.len();
+        }
+        "trim_before" | "trim_after" => {
+            use constraints::{DimMode, Elem, Kind};
+            app.new_file();
+            app.left = LeftForm::None;
+            let plate = app.doc.add_vector(vec![geom::Path::closed(geom::rect([5.0, 5.0], 6.0, 4.0, 0.0))], Prim::Rect { c: [5.0, 5.0], w: 6.0, h: 4.0, corner: 0.0 });
+            app.doc.add_vector(vec![geom::Path::open(vec![[5.0, 1.5], [5.0, 8.5]])], Prim::Free);
+            app.add_constraint(Kind::Fixed, vec![Elem::Node { v: plate, path: 0, node: 0 }]);
+            app.make_dimension(&[Elem::Seg { v: plate, path: 0, seg: 0 }], DimMode::Smart);
+            app.make_dimension(&[Elem::Seg { v: plate, path: 0, seg: 1 }], DimMode::Smart);
+            app.dim_edit = None;
+            app.selected.clear();
+            app.start_xform(app::Xform::Trim);
+            if state == "trim_after" {
+                app.trim_at([6.5, 3.0], 0.1, false);
+            }
+        }
+        "tee_before" | "tee_after" => {
+            use constraints::{DimMode, Elem, Kind};
+            app.new_file();
+            app.left = LeftForm::None;
+            let mut rect_at = |c: [f64; 2], w: f64, h: f64| app.doc.add_vector(vec![geom::Path::closed(geom::rect(c, w, h, 0.0))], Prim::Rect { c, w, h, corner: 0.0 });
+            let base = rect_at([5.0, 3.0], 6.0, 2.0);
+            let post = rect_at([5.0, 5.5], 2.0, 5.0);
+            app.add_constraint(Kind::Fixed, vec![Elem::Node { v: base, path: 0, node: 0 }]);
+            app.make_dimension(&[Elem::Seg { v: base, path: 0, seg: 0 }], DimMode::Smart);
+            app.make_dimension(&[Elem::Seg { v: base, path: 0, seg: 1 }], DimMode::Smart);
+            app.make_dimension(&[Elem::Seg { v: post, path: 0, seg: 2 }], DimMode::Smart);
+            app.dim_edit = None;
+            app.trim_at([5.0, 4.0], 0.05, false);
+            app.trim_at([5.0, 3.0], 0.05, false);
+            app.rejoin_all(0.01);
+            app.maintain_constraints();
+            app.drop_stale_envelope();
+            if state == "tee_after" {
+                let i = app.doc.constraints.iter().position(|c| c.kind == Kind::Distance && c.items.iter().any(|e| e.vector_id() == post)).unwrap();
+                app.set_dimension(i, 3.5);
+            }
+            app.selected.clear();
+            app.start_constraint_form();
+        }
+        "sweep" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            for y in [3.0, 4.5, 6.0, 7.5] {
+                app.doc.add_vector(vec![geom::Path::open(vec![[1.0, y], [9.0, y]])], Prim::Free);
+            }
+            app.doc.add_vector(vec![geom::Path::open(vec![[5.0, 1.0], [5.0, 9.0]])], Prim::Free);
+            app.selected.clear();
+            app.start_xform(app::Xform::Trim);
+            for y in [3.0, 4.5, 6.0] {
+                app.trim_at([7.0, y], 0.05, false);
+            }
+        }
+        "origin" | "origin_set" => {
+            app.new_file();
+            app.confirm_job();
+            let circle = app.doc.add_vector(vec![geom::Path::closed(geom::circle([5.0, 5.0], 2.0))], Prim::Free);
+            app.selected = vec![circle];
+            app.doc.job.datum = Datum::Centre;
+            if state == "origin_set" {
+                app.open_job_setup();
+            }
+        }
+        "relief" | "relief3d" => {
+            app.new_file();
+            app.confirm_job();
+            app.open_relief_picture("sample.png".into(), &demo_picture());
+            if state == "relief3d" {
+                if let LeftForm::Relief(f) = app.left.clone() {
+                    app.apply_relief(&f);
+                }
+            }
+        }
+        "flute" | "chamfer" => {
+            app.new_file();
+            app.confirm_job();
+            let line = geom::Path::open(vec![[2.0, 2.0], [8.0, 8.0]]);
+            let shape = app.doc.add_vector(vec![line], Prim::Free);
+            app.selected = vec![shape];
+            app.start_op(if state == "flute" { toolpath::OpKind::Flute } else { toolpath::OpKind::Chamfer });
+        }
+        "editcircle" => {
+            app.new_file();
+            app.confirm_job();
+            let circle = Prim::Circle { c: [4.0, 6.0], r: 1.5 };
+            let id = app.doc.add_vector(circle.paths(), circle);
+            app.selected = vec![id];
+            app.start_draw(DrawKind::Circle);
+        }
+        "millimetres" => {
+            app.new_file();
+            app.confirm_job();
+            let (c, r) = ([300.0, 200.0], 80.0);
+            let id = app.doc.add_vector(vec![geom::Path::closed(geom::circle(c, r))], Prim::Circle { c, r });
+            app.selected = vec![id];
+            app.right_open = true;
+            app.start_op(toolpath::OpKind::Profile);
+            app.calculate_op();
+            app.selected = vec![id];
+            app.start_op(toolpath::OpKind::Pocket);
+            app.calculate_op();
+            app.view3d = false;
+            app.start_xform(app::Xform::Move);
+            app.right = RightMode::List;
+        }
+        "progress" => {
+            app.new_file();
+            app.confirm_job();
+            circle(app);
+            let (send, messages) = std::sync::mpsc::channel::<recalc::Message>();
+            let names = ["Outline 1", "Pocket 2", "Drilling 3"];
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(120));
+                drop(send);
+            });
+            app.recalc = Some(recalc::Running { total: names.len(), results: Vec::new(), current: names[1].into(), messages, stop: Default::default(), started: std::time::Instant::now() - std::time::Duration::from_secs(3), finish: None });
+        }
+        "sharp3d" | "sharp3dfar" | "toodeep" => {
+            app.metric_by_default = true;
+            app.new_file();
+            app.confirm_job();
+            let square = app.doc.add_vector(vec![geom::Path::closed(geom::rect([180.0, 210.0], 240.0, 180.0, 0.0))], Prim::Free);
+            let round = app.doc.add_vector(vec![geom::Path::closed(geom::circle([440.0, 240.0], 90.0))], Prim::Free);
+            let star = app.doc.add_vector(vec![geom::Path::closed(vec![[100.0, 40.0], [330.0, 60.0], [400.0, 30.0], [520.0, 110.0], [250.0, 95.0]])], Prim::Free);
+            app.right_open = true;
+            let pass = |app: &mut App, ids: Vec<u64>, kind, depth: f64, setup: &dyn Fn(&mut toolpath::Op)| {
+                app.selected = ids;
+                app.start_op(kind);
+                if let RightMode::Op { op, .. } = &mut app.right {
+                    op.cut_depth = depth;
+                    op.tool.pass_depth = 100.0;
+                    setup(op);
+                }
+                app.calculate_op();
+            };
+            pass(app, vec![square], toolpath::OpKind::Pocket, 6.0, &|_| {});
+            pass(app, vec![round], toolpath::OpKind::Profile, 18.8, &|op| op.side = toolpath::Side::Inside);
+            pass(app, vec![star], toolpath::OpKind::Pocket, 2.0, &|_| {});
+            app.selected.clear();
+            if state == "toodeep" {
+                app.view3d = false;
+                app.right = RightMode::List;
+                app.recalculate_all();
+            } else {
+                app.right = RightMode::Preview;
+                app.view3d = true;
+                app.preview(vec![0, 1, 2]);
+                app.message = None;
+                app.finish_preview();
+                for t in &mut app.doc.toolpaths {
+                    t.visible = false;
+                }
+                if state == "sharp3d" {
+                    app.cam.zoom = 3.0;
+                }
+            }
+        }
+        "board" => {
+            app.metric_by_default = true;
+            app.new_file();
+            app.doc.job.thickness = 13.0;
+            app.doc.job.spoil_board = 3.0;
+        }
+        "boardmaterial" | "boardalert" => {
+            app.metric_by_default = true;
+            app.new_file();
+            app.confirm_job();
+            app.doc.job.thickness = 13.0;
+            app.doc.job.spoil_board = 3.0;
+            let id = app.doc.add_vector(vec![geom::Path::closed(geom::circle([300.0, 200.0], 80.0))], Prim::Free);
+            app.selected = vec![id];
+            app.right_open = true;
+            app.start_op(toolpath::OpKind::Profile);
+            if let RightMode::Op { op, .. } = &mut app.right {
+                op.cut_depth = 16.5;
+                op.tool.pass_depth = 100.0;
+            }
+            app.calculate_op();
+            app.view3d = false;
+            if state == "boardmaterial" {
+                app.right = RightMode::Material(Box::new(app.doc.clone()));
+            } else {
+                app.right = RightMode::List;
+                app.recalculate_all();
+            }
+        }
+        "zero" => {
+            app.metric_by_default = true;
+            app.new_file();
+            app.confirm_job();
+            let id = app.doc.add_vector(vec![geom::Path::closed(geom::circle([300.0, 200.0], 80.0))], Prim::Free);
+            app.selected = vec![id];
+            app.doc.job.set_origin([317.0, 228.0]);
+            app.grid = true;
+            app.start_xform(app::Xform::Move);
+        }
+        "toolrates" => {
+            app.new_file();
+            app.confirm_job();
+            circle(app);
+            app.right_open = true;
+            app.start_op(toolpath::OpKind::Profile);
+            app.edit_passes = true;
+            if let RightMode::Op { op, .. } = &mut app.right {
+                op.tool.per_second = true;
+            }
+        }
+        "ramp" | "leads" | "order" | "startat" | "corners" | "passes" | "selector" | "through" => {
+            app.new_file();
+            app.confirm_job();
+            circle(app);
+            app.right_open = true;
+            app.show_advanced = true;
+            app.start_op(toolpath::OpKind::Profile);
+            if let RightMode::Op { tab, op, .. } = &mut app.right {
+                *tab = match state {
+                    "leads" => 1,
+                    "order" => 2,
+                    "startat" => 3,
+                    "corners" => 4,
+                    _ => 0,
+                };
+                if state == "through" {
+                    op.cut_depth = 10.0;
+                }
+                op.ramp = state == "ramp";
+                op.lead = state == "leads";
+                op.ramp_kind = toolpath::RampKind::Smooth;
+            }
+            if let RightMode::Op { op, .. } = app.right.clone() {
+                match state {
+                    "passes" => {
+                        let mut o = (*op).clone();
+                        o.cut_depth = 1.0;
+                        o.tool.pass_depth = 0.25;
+                        app.right = RightMode::Op { op: Box::new(o.clone()), editing: None, tab: 0, error: None };
+                        app.open_passes(&o);
+                    }
+                    "selector" => app.open_selector(&op),
+                    "through" => app.confirm_depth_then_calculate(),
+                    _ => {}
+                }
+            }
+        }
+        "trace" | "traced" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            app.place_bitmap("sample.png".into(), "sample".into(), demo_picture());
+            app.start_trace();
+            if let LeftForm::Trace(f) = &mut app.left {
+                f.color = true;
+            }
+            if state == "traced" {
+                let mut f = bitmap::TraceForm { color: true, ..bitmap::TraceForm::new() };
+                f.sorted = Some(bitmap::sort_colors(&demo_picture(), 4));
+                f.ticked = vec![true, true, true, false];
+                app.apply_trace(&f);
+                app.selected.clear();
+            }
+        }
+        "distort" | "distorted" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            let text = Prim::Text { at: [2.2, 4.0], height: 1.6, text: "Burin".into() };
+            let word = app.doc.add_vector(text.paths(), text);
+            app.selected = vec![word];
+            app.start_xform(app::Xform::Distort);
+            if state == "distorted" {
+                app.apply_envelope(distort::EnvelopeKind::BoundingBox);
+                let c = app.envelope.as_ref().unwrap().corners;
+                app.move_envelope_corner(2, [c[2][0] + 0.5, c[2][1] + 2.2]);
+                app.move_envelope_corner(3, [c[3][0] - 0.5, c[3][1] + 0.6]);
+                app.selected = vec![word];
+            }
+        }
+        "grid" | "grid3d" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            circle(app);
+            app.selected.clear();
+            app.grid = true;
+            app.view3d = state == "grid3d";
+        }
+        "sketch" => {
+            use constraints::{DimMode, Elem, Kind};
+            app.new_file();
+            app.left = LeftForm::None;
+            app.right_open = false;
+            let plate = app.doc.add_vector(vec![geom::Path::closed(geom::rect([5.0, 5.0], 7.0, 5.0, 0.0))], Prim::Rect { c: [5.0, 5.0], w: 7.0, h: 5.0, corner: 0.0 });
+            let (c, r) = ([5.0, 5.0], 1.0);
+            let hole = app.doc.add_vector(vec![geom::Path::closed(geom::circle(c, r))], Prim::Circle { c, r });
+            app.doc.new_construction = true;
+            let axis = app.doc.add_vector(vec![geom::Path::open(vec![[5.0, 1.5], [5.0, 8.5]])], Prim::Free);
+            app.doc.new_construction = false;
+            let side = |seg| Elem::Seg { v: plate, path: 0, seg };
+            app.add_constraint(Kind::Fixed, vec![Elem::Node { v: plate, path: 0, node: 0 }]);
+            app.make_dimension(&[side(0)], DimMode::Smart);
+            app.make_dimension(&[side(1)], DimMode::Smart);
+            app.make_dimension(&[Elem::Round { v: hole }], DimMode::Smart);
+            app.add_constraint(Kind::Vertical, vec![Elem::Seg { v: axis, path: 0, seg: 0 }]);
+            app.add_constraint(Kind::PointOnLine, vec![Elem::Centre { v: hole }, Elem::Seg { v: axis, path: 0, seg: 0 }]);
+            app.dim_edit = None;
+            app.selected.clear();
+            app.start_constraint_form();
+        }
+        "similar" | "rules" | "paths2d" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            app.right_open = true;
+            let mut holes = Vec::new();
+            for (i, c) in [[2.0, 2.0], [8.0, 2.0], [2.0, 8.0], [8.0, 8.0]].into_iter().enumerate() {
+                let r = if i < 4 { 0.08 } else { 0.2 };
+                holes.push(app.doc.add_vector(vec![geom::Path::closed(geom::circle(c, r))], Prim::Circle { c, r }));
+            }
+            let plate = app.doc.add_vector(vec![geom::Path::closed(geom::rect([5.0, 5.0], 8.0, 8.0, 0.0))], Prim::Rect { c: [5.0, 5.0], w: 8.0, h: 8.0, corner: 0.0 });
+            let (c, r) = ([5.0, 5.0], 1.5);
+            let big = app.doc.add_vector(vec![geom::Path::closed(geom::circle(c, r))], Prim::Circle { c, r });
+            match state {
+                "similar" => {
+                    app.selected = vec![holes[0]];
+                    app.start_xform(app::Xform::Bulk);
+                    app.select_similar(0.01);
+                }
+                "rules" => {
+                    use constraints::{Elem, Kind};
+                    let round = |v| Elem::Round { v };
+                    app.add_constraint(Kind::Equal, vec![round(holes[0]), round(holes[1])]);
+                    app.add_constraint(Kind::Equal, vec![round(holes[1]), round(holes[2])]);
+                    app.add_constraint(Kind::Diameter, vec![round(big)]);
+                    app.add_constraint(Kind::Coincident, vec![Elem::Node { v: plate, path: 0, node: 0 }, Elem::Centre { v: holes[0] }]);
+                    app.selected.clear();
+                    app.start_constraint_form();
+                }
+                _ => {
+                    app.selected = vec![big];
+                    app.start_op(toolpath::OpKind::Pocket);
+                    app.calculate_op();
+                    app.view3d = false;
+                    app.right = RightMode::List;
+                    app.selected = vec![plate];
+                    app.start_op(toolpath::OpKind::Profile);
+                    app.calculate_op();
+                    app.view3d = false;
+                    app.right = RightMode::List;
+                }
+            }
+        }
+        "move" | "align" | "array" | "lines" => {
+            app.new_file();
+            circle(app);
+            app.right_open = true;
+            app.left = LeftForm::None;
+            match state {
+                "move" => app.start_xform(app::Xform::Move),
+                "align" => app.start_xform(app::Xform::Align),
+                "array" => app.start_xform(app::Xform::BlockCopy),
+                _ => app.left = LeftForm::Draw(DrawForm::new(DrawKind::Polyline, &app.doc.job)),
+            }
+        }
+        "model" => {
+            app.load_sample();
+            app.right_open = true;
+            app.right = RightMode::List;
+            app.view3d = true;
+        }
+        "carved" => {
+            app.load_sample();
+            app.right_open = true;
+            app.right = RightMode::Preview;
+            app.view3d = true;
+            app.preview(vec![0, 1, 2]);
+            app.finish_preview();
+            for t in &mut app.doc.toolpaths {
+                t.visible = false;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A small made-up picture for checking the trace screen.
+fn demo_picture() -> bitmap::Image {
+    let (w, h) = (400usize, 300usize);
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        for x in 0..w {
+            let (dx, dy) = (x as f64 - 130.0, y as f64 - 150.0);
+            let r = dx.hypot(dy);
+            let c: [u8; 3] = if r < 45.0 {
+                [235, 180, 40]
+            } else if r < 95.0 {
+                [30, 30, 40]
+            } else if (250..360).contains(&x) && (70..230).contains(&y) {
+                [190, 50, 50]
+            } else {
+                [250, 250, 250]
+            };
+            rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
+        }
+    }
+    bitmap::Image { w, h, rgba: std::sync::Arc::new(rgba) }
+}
+
+fn main() -> eframe::Result {
+    let mut screenshot = None;
+    let mut state = None;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--screenshot" => screenshot = args.next().map(PathBuf::from),
+            "--open" => state = args.next(),
+            _ => {}
+        }
+    }
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_title("Burin").with_inner_size([1910.0, 1040.0]).with_min_inner_size([900.0, 600.0]),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "Burin",
+        options,
+        Box::new(move |cc| {
+            ui::setup_style(&cc.egui_ctx);
+            let mut app = App::default();
+            // The picture to save has to be the finished one.
+            app.surface_in_background = screenshot.is_none();
+            app.restore_posts();
+            if let Some(s) = &state {
+                open_state(&mut app, s);
+            }
+            Ok(Box::new(Program { app, screenshot, frames: 0, requested: false }))
+        }),
+    )
+}

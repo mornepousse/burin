@@ -1,0 +1,15 @@
+# Build output
+/target/
+/shots/
+
+# Real jobs and machine files stay out of the repository
+*.crv3d
+*.crv
+*.burin
+*.gcode
+*.ngc
+*.nc
+*.tap
+*.pp
+*.dxf
+*.svg
