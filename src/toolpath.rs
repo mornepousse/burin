@@ -546,7 +546,12 @@ struct Emit<'a> {
     /// Added to the cutting height when the path follows the 3D model.
     project: Option<&'a Grid>,
     top: f64,
+    /// Closer than this counts as the same spot.
+    same_spot: f64,
 }
+
+/// A thousandth of a millimetre.
+const SAME_SPOT_MM: f64 = 0.001;
 
 impl Emit<'_> {
     fn z_at(&self, x: f64, y: f64, z: f64) -> f64 {
@@ -573,6 +578,14 @@ impl Emit<'_> {
     }
     /// Lifts, travels, and comes down to the start of a cut.
     fn go_to(&mut self, x: f64, y: f64, z: f64) {
+        // Already in the material right there: straight on down, with no need to lift.
+        let l = self.last();
+        if l[2] < self.m.safe_z && (l[0] - x).hypot(l[1] - y) < self.same_spot {
+            if (l[2] - z).abs() > self.same_spot {
+                self.feed(x, y, z);
+            }
+            return;
+        }
         self.retract();
         let safe = self.m.safe_z;
         self.rapid([x, y, safe]);
@@ -2372,7 +2385,8 @@ pub fn generate(op: &Op, machine: Machine, job: &JobSize, model: Option<&Grid>) 
     }
     let top = model.map_or(0.0, |g| machine.model_top(job.thickness, g.max() as f64));
     let project = if op.project && !op.kind.uses_model() { model } else { None };
-    let mut e = Emit { moves: Vec::new(), m: machine, project, top };
+    let same_spot = if op.tool.metric { SAME_SPOT_MM } else { SAME_SPOT_MM / 25.4 };
+    let mut e = Emit { moves: Vec::new(), m: machine, project, top, same_spot };
     let home = machine.home;
     e.rapid(home);
     match op.kind {
@@ -3770,7 +3784,7 @@ mod tests {
         // A plain square with an ordinary stepover: rings alone, and no plunges added.
         let o = pocket_of(vec![Path::closed(rect([30.0, 30.0], 40.0, 40.0, 0.0))], 3.175, 0.4);
         let field = Field::build_to(&o.paths, o.tool.dia, 900, o.tool.dia / 64.0).unwrap();
-        let mut e = Emit { moves: Vec::new(), m: M, project: None, top: 0.0 };
+        let mut e = Emit { moves: Vec::new(), m: M, project: None, top: 0.0, same_spot: SAME_SPOT_MM };
         let mut level = o.tool.dia / 2.0;
         while !field.contours(level).is_empty() {
             for pts in field.contours(level) {
@@ -4223,6 +4237,20 @@ mod tests {
         o.last_thickness = 1.0;
         o.passes = vec![1.5, 5.0];
         assert_eq!(pass_list(&o), [1.5, 5.0]);
+    }
+
+    #[test]
+    fn going_to_where_the_tool_already_is_does_not_lift_it() {
+        let mut e = Emit { moves: Vec::new(), m: M, project: None, top: 0.0, same_spot: SAME_SPOT_MM };
+        e.feed(5.0, 5.0, -0.25);
+        e.go_to(5.0, 5.0, -0.5);
+        assert_eq!(e.moves.len(), 2);
+        assert!(!e.moves[1].rapid && e.moves[1].p[2] == -0.5);
+        e.go_to(5.0, 5.0, -0.5);
+        assert_eq!(e.moves.len(), 2, "already there");
+        // Anywhere else, up and across.
+        e.go_to(9.0, 5.0, -0.5);
+        assert!(e.moves[2].rapid && e.moves[2].p == [5.0, 5.0, M.safe_z]);
     }
 
     #[test]
