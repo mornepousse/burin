@@ -26,3 +26,7 @@ Aucun fichier de travail réel n'est inclus : `.gitignore` écarte les projets e
 ## Licence
 
 Aucune pour l'instant : tous droits réservés.
+
+## Faire une release
+
+`release/build.sh` fabrique l'AppImage Linux et le `.exe` Windows dans `dist/`. Il ne demande que Nix.

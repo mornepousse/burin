@@ -92,16 +92,16 @@ impl App {
         };
         if order.len() <= curves_wanted {
             return Err(match curves_wanted {
-                0 => "Select the object to distort.".to_string(),
-                1 => "Select the object, then one open line under it.".to_string(),
-                _ => "Select the object, then two open lines.".to_string(),
+                0 => crate::i18n::tr("Select the object to distort.").to_string(),
+                1 => crate::i18n::tr("Select the object, then one open line under it.").to_string(),
+                _ => crate::i18n::tr("Select the object, then two open lines.").to_string(),
             });
         }
         let (objects, curves) = order.split_at(order.len() - curves_wanted);
         for id in curves {
             let v = self.doc.vectors.iter().find(|v| v.id == *id).unwrap();
             if v.paths.len() != 1 || v.paths[0].closed || v.paths[0].pts.len() < 2 {
-                return Err("The last selected shapes must be open lines.".to_string());
+                return Err(crate::i18n::tr("The last selected shapes must be open lines.").to_string());
             }
         }
         Ok((objects.to_vec(), curves.to_vec()))
@@ -156,7 +156,7 @@ impl App {
             a.redraw_envelope();
         });
         self.selected = objects;
-        self.status = "Distortion applied.".into();
+        self.status = crate::i18n::tr("Distortion applied.").into();
         true
     }
 

@@ -28,7 +28,22 @@ pub struct Project {
     pub shapes: Vec<(usize, Path)>,
     /// The mark each shape goes by, which toolpaths refer to it with.
     pub marks: Vec<[u8; 16]>,
+    /// The groups on the sheet, with what is inside each.
+    pub groups: Vec<SavedGroup>,
     pub toolpaths: Vec<SavedToolpath>,
+}
+
+/// A group of shapes in the drawing, on its layer if the file says which.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SavedGroup {
+    pub layer: Option<usize>,
+    pub items: Vec<SavedItem>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SavedItem {
+    Shape([u8; 16]),
+    Group(SavedGroup),
 }
 
 /// How a saved toolpath was cut with.
@@ -111,6 +126,7 @@ pub struct SavedOptions {
     /// What's left for the last pass, if it was asked for.
     pub last_thickness: Option<f64>,
     pub keep_exact: bool,
+    pub zigzag_open: bool,
     /// A pocket cleared with a second tool, which makes a toolpath of its own.
     pub area_clear: bool,
     /// The ways of ordering the shapes that were ticked: 10 order of selection, 0 left to right,
@@ -193,6 +209,7 @@ fn read_options(settings: &[(String, Setting)], kind: &str) -> SavedOptions {
         raster_allowance: num("_pkpdRasterAllowance"),
         last_thickness: if flag("_mctddUseLastPassThickness") { num("_mctddLastPassThickness") } else { None },
         keep_exact: flag("_mctddKeepToolStepdown"),
+        zigzag_open: flag("_ppdZigZagOpen"),
         area_clear: flag("_pkpdUseAreaClearTool"),
         sequence: text("_mcsdSequenceOptions").map_or_else(Vec::new, sequence_list),
         selection_order: flag(if pocket { "_pkpdUseSelectionOrder" } else if drill { "_dpdUseSelectionOrder" } else { "_ppdUseSelectionOrder" }),
@@ -836,6 +853,7 @@ fn window_has(window: &[u8], mark: &[u8; 16]) -> bool {
 struct Object {
     at: usize,
     mark: [u8; 16],
+    layer: [u8; 16],
     /// How many objects follow that belong to this one, when it is a group.
     children: Option<usize>,
 }
@@ -875,7 +893,8 @@ fn find_objects(d: &[u8], layers: &[[u8; 16]]) -> Vec<Object> {
         };
         let count = after_head.and_then(|p| Some((u32_at(d, p)? as usize, p + 4))).filter(|(n, _)| (1..1_000_000).contains(n));
         let children = count.filter(|(_, next)| record_after(d, *next).is_some_and(|r| is_object(d, r, layers))).map(|(n, _)| n);
-        out.push(Object { at, mark, children });
+        let layer: [u8; 16] = d[at + 20..at + 36].try_into().unwrap_or([0; 16]);
+        out.push(Object { at, mark, layer, children });
         at += 44;
     }
     out
@@ -906,17 +925,44 @@ fn group_members(objects: &[Object]) -> std::collections::HashMap<[u8; 16], Vec<
     members
 }
 
+/// The groups on the sheet: those not inside another. The objects a group owns follow it in order.
+fn group_tree(objects: &[Object], layer_of: &dyn Fn(&[u8; 16]) -> Option<usize>) -> Vec<SavedGroup> {
+    fn item(objects: &[Object], k: usize, layer_of: &dyn Fn(&[u8; 16]) -> Option<usize>) -> Option<(SavedItem, usize)> {
+        let object = objects.get(k)?;
+        let Some(count) = object.children else {
+            return Some((SavedItem::Shape(object.mark), k + 1));
+        };
+        let mut items = Vec::new();
+        let mut next = k + 1;
+        for _ in 0..count {
+            let Some((inner, after)) = item(objects, next, layer_of) else { break };
+            items.push(inner);
+            next = after;
+        }
+        Some((SavedItem::Group(SavedGroup { layer: layer_of(&object.layer), items }), next))
+    }
+    let mut groups = Vec::new();
+    let mut k = 0;
+    while let Some((found, next)) = item(objects, k, layer_of) {
+        if let SavedItem::Group(group) = found {
+            groups.push(group);
+        }
+        k = next;
+    }
+    groups
+}
+
 pub fn read(bytes: &[u8]) -> Result<Project, String> {
-    let file = Compound::open(bytes).ok_or("This is not a project file this program can read.")?;
-    let size = file.stream("VectorData", "MaterialSize").ok_or("This project has no material size.")?;
-    let d = file.stream("VectorData", "2dDataV2").ok_or("This project is in a version this program can't read: it has no drawing where expected.")?;
+    let file = Compound::open(bytes).ok_or(crate::i18n::tr("This is not a project file this program can read."))?;
+    let size = file.stream("VectorData", "MaterialSize").ok_or(crate::i18n::tr("This project has no material size."))?;
+    let d = file.stream("VectorData", "2dDataV2").ok_or(crate::i18n::tr("This project is in a version this program can't read: it has no drawing where expected."))?;
     let number = |i: usize| f64_at(&size, 6 + i * 8);
     let (Some(a), Some(b), Some(c), Some(e), Some(f), Some(g)) = (number(0), number(1), number(2), number(3), number(4), number(5)) else {
-        return Err("The material size in this project can't be read.".into());
+        return Err(crate::i18n::tr("The material size in this project can't be read.").into());
     };
     let datum = u32_at(&size, 54).unwrap_or(0);
     if !(e > a && f > b && g > c) {
-        return Err("The material size in this project can't be read.".into());
+        return Err(crate::i18n::tr("The material size in this project can't be read.").into());
     }
     let found = read_layers(&d);
     let mut shapes: Vec<(usize, Path)> = Vec::new();
@@ -992,11 +1038,13 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
     }
     let mut toolpaths = file.stream("Toolpaths", "ToolpathData").map_or_else(Vec::new, |t| read_toolpaths(&t));
     // A toolpath can name a whole group: it means the shapes in it.
+    let layer_of = |mark: &[u8; 16]| found.iter().position(|(_, m, _)| m == mark).map(|p| map[p]).filter(|l| *l != usize::MAX);
+    let tree = group_tree(&objects, &layer_of);
     let groups = group_members(&objects);
     for t in &mut toolpaths {
         t.sources = t.sources.iter().flat_map(|s| groups.get(s).cloned().unwrap_or_else(|| vec![*s])).collect();
     }
-    Ok(Project { min: [a, b, c], max: [e, f, g], datum, layers, shapes, marks, toolpaths })
+    Ok(Project { min: [a, b, c], max: [e, f, g], datum, layers, shapes, marks, groups: tree, toolpaths })
 }
 
 #[cfg(test)]
@@ -1321,6 +1369,23 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_groups_on_the_sheet_are_read_with_what_is_inside_them() {
+        let mut d = Vec::new();
+        d.extend(object(7, 0xB9, 1, None, false));
+        d.extend(object(7, 0xA0, 1, Some(2), true));
+        d.extend(object(7, 0xA1, 1, Some(2), true));
+        d.extend(object(7, 0xB0, 1, None, false));
+        d.extend(object(7, 0xB1, 1, None, false));
+        d.extend(object(7, 0xB2, 1, None, false));
+        d.extend(object(7, 0xB3, 1, None, false));
+        let objects = find_objects(&d, &[[1; 16]]);
+        let tree = group_tree(&objects, &|m| (*m == [1; 16]).then_some(4));
+        let shape = |n: u8| SavedItem::Shape([n; 16]);
+        let inner = SavedGroup { layer: Some(4), items: vec![shape(0xB0), shape(0xB1)] };
+        assert_eq!(tree, [SavedGroup { layer: Some(4), items: vec![SavedItem::Group(inner), shape(0xB2)] }], "the shapes either side are outside it");
+    }
+
+    #[test]
     fn a_group_inside_a_group_gives_all_its_shapes() {
         let mut d = Vec::new();
         d.extend(object(7, 0xA0, 1, Some(2), true));
@@ -1404,6 +1469,7 @@ pub(crate) mod tests {
         let o = read_options(&list(vec![
             ("_ppdCutDirection", Setting::Whole(1)),
             ("_ppdUseTabs", Setting::Flag(true)),
+            ("_ppdZigZagOpen", Setting::Flag(true)),
             ("_ppdTabLength", Setting::Number(12.0)),
             ("_mcrdDoRamping", Setting::Flag(false)),
             ("_mcldDoRamping", Setting::Flag(true)),
@@ -1414,6 +1480,7 @@ pub(crate) mod tests {
         assert_eq!(o.climb, Some(false), "1 is the conventional way round");
         assert!(o.tabs && o.lead && o.lead_circular && !o.ramp, "{o:?}");
         assert_eq!((o.tab_length, o.lead_length, o.overcut), (Some(12.0), Some(25.0), None));
+        assert!(o.zigzag_open);
         // A pocket reads its own names, even with a neighbouring profile's in reach.
         let climb = read_options(&list(vec![("_ppdCutDirection", Setting::Whole(1)), ("_pkpdCutDirection", Setting::Whole(0)), ("_mcrdDoRamping", Setting::Flag(false)), ("_pkpdDoRamping", Setting::Flag(true)), ("_pkpdRampDistance", Setting::Number(3.0))]), "Pocket");
         assert_eq!((climb.climb, climb.ramp, climb.ramp_distance), (Some(true), true, Some(3.0)));

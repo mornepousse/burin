@@ -31,13 +31,13 @@ pub struct Tool {
 
 impl Tool {
     pub fn label(&self) -> String {
-        let unit = if self.metric { "mm" } else { "inch" };
+        let unit = if self.metric { "mm" } else { crate::i18n::tr("inch") };
         let kind = match self.kind {
-            ToolKind::EndMill => "End Mill",
-            ToolKind::BallNose => "Ball Nose",
-            ToolKind::VBit => "V-Bit",
-            ToolKind::Drill => "Drill",
-            ToolKind::Engraving => "Engraving",
+            ToolKind::EndMill => crate::i18n::tr("End Mill"),
+            ToolKind::BallNose => crate::i18n::tr("Ball Nose"),
+            ToolKind::VBit => crate::i18n::tr("V-Bit"),
+            ToolKind::Drill => crate::i18n::tr("Drill"),
+            ToolKind::Engraving => crate::i18n::tr("Engraving"),
         };
         match self.kind {
             ToolKind::VBit | ToolKind::Engraving => format!("{kind} ({:.0} deg {} {unit})", self.angle, trim(self.dia)),
@@ -133,34 +133,34 @@ pub enum OpKind {
 impl OpKind {
     pub fn title(self) -> &'static str {
         match self {
-            OpKind::Profile => "2D Profile Toolpath",
-            OpKind::Pocket => "Pocket Toolpath",
-            OpKind::Drill => "Drilling Toolpath",
-            OpKind::Engrave => "Quick Engrave",
-            OpKind::VCarve => "V-Carve / Engraving Toolpath",
-            OpKind::Rough3D => "Rough Machining Toolpath",
-            OpKind::Finish3D => "Finish Machining Toolpath",
-            OpKind::Prism => "Prism Carving Toolpath",
-            OpKind::Texture => "Texture Toolpath",
-            OpKind::Moulding => "Moulding Toolpath",
-            OpKind::Flute => "Fluting Toolpath",
-            OpKind::Chamfer => "Chamfer Toolpath",
+            OpKind::Profile => crate::i18n::tr("2D Profile Toolpath"),
+            OpKind::Pocket => crate::i18n::tr("Pocket Toolpath"),
+            OpKind::Drill => crate::i18n::tr("Drilling Toolpath"),
+            OpKind::Engrave => crate::i18n::tr("Quick Engrave"),
+            OpKind::VCarve => crate::i18n::tr("V-Carve / Engraving Toolpath"),
+            OpKind::Rough3D => crate::i18n::tr("Rough Machining Toolpath"),
+            OpKind::Finish3D => crate::i18n::tr("Finish Machining Toolpath"),
+            OpKind::Prism => crate::i18n::tr("Prism Carving Toolpath"),
+            OpKind::Texture => crate::i18n::tr("Texture Toolpath"),
+            OpKind::Moulding => crate::i18n::tr("Moulding Toolpath"),
+            OpKind::Flute => crate::i18n::tr("Fluting Toolpath"),
+            OpKind::Chamfer => crate::i18n::tr("Chamfer Toolpath"),
         }
     }
     pub fn base_name(self) -> &'static str {
         match self {
-            OpKind::Profile => "Profile",
-            OpKind::Pocket => "Pocket",
-            OpKind::Drill => "Drill",
-            OpKind::Engrave => "Quick Engrave",
-            OpKind::VCarve => "V-Carve",
-            OpKind::Rough3D => "3D Roughing",
-            OpKind::Finish3D => "3D Finish",
-            OpKind::Prism => "Prism Carve",
-            OpKind::Texture => "Texture",
-            OpKind::Moulding => "Swept Profile",
-            OpKind::Flute => "Flute",
-            OpKind::Chamfer => "Chamfer",
+            OpKind::Profile => crate::i18n::tr("Profile"),
+            OpKind::Pocket => crate::i18n::tr("Pocket"),
+            OpKind::Drill => crate::i18n::tr("Drill"),
+            OpKind::Engrave => crate::i18n::tr("Quick Engrave"),
+            OpKind::VCarve => crate::i18n::tr("V-Carve"),
+            OpKind::Rough3D => crate::i18n::tr("3D Roughing"),
+            OpKind::Finish3D => crate::i18n::tr("3D Finish"),
+            OpKind::Prism => crate::i18n::tr("Prism Carve"),
+            OpKind::Texture => crate::i18n::tr("Texture"),
+            OpKind::Moulding => crate::i18n::tr("Swept Profile"),
+            OpKind::Flute => crate::i18n::tr("Flute"),
+            OpKind::Chamfer => crate::i18n::tr("Chamfer"),
         }
     }
     pub fn uses_model(self) -> bool {
@@ -376,6 +376,9 @@ pub struct Op {
     /// Passes keep to the tool's pass depth, with a shorter last one, rather than being shared evenly.
     #[serde(default)]
     pub keep_exact: bool,
+    /// Open lines are cut there and back, one pass each way, without lifting.
+    #[serde(default)]
+    pub zigzag_open: bool,
     /// How much further from the walls raster rows stop, when an outline pass cleans up after them.
     #[serde(default)]
     pub raster_allowance: f64,
@@ -412,6 +415,9 @@ pub struct Op {
     /// The shapes this path was made from.
     #[serde(default)]
     pub source: Vec<u64>,
+    /// Made by merging other toolpaths: its moves are all there is, and it can't be worked out again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub merged: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -889,6 +895,12 @@ fn sharp_offset(path: &Path, d: f64) -> Vec<P> {
 }
 
 /// Cuts along a loop at depth `z`, optionally ramping in and leaving tabs.
+/// How far along its path the tool stays up to leave a tab of the length asked for: its width takes
+/// half of itself out of the material at each end.
+fn tab_reach(op: &Op) -> f64 {
+    op.tab_length + op.tool.dia
+}
+
 fn walk(e: &mut Emit, pts: &[P], closed: bool, z: f64, op: &Op, ramp_from: Option<f64>, tab_z: Option<f64>) {
     let ramp_length = ramp_from.map_or(0.0, |from| ramp_distance(op, from, z));
     if pts.len() < 2 {
@@ -910,7 +922,7 @@ fn walk(e: &mut Emit, pts: &[P], closed: bool, z: f64, op: &Op, ramp_from: Optio
         Some(_) if op.tab_count > 0 => (0..op.tab_count)
             .map(|i| {
                 let mid = total * (i as f64 + 0.5) / op.tab_count as f64;
-                (mid - op.tab_length / 2.0, mid + op.tab_length / 2.0)
+                (mid - tab_reach(op) / 2.0, mid + tab_reach(op) / 2.0)
             })
             .collect(),
         _ => Vec::new(),
@@ -1366,12 +1378,9 @@ fn order_level(items: &[Placed], level: &[usize], choices: OrderChoices, from: P
     best
 }
 
-/// The order to cut shapes in. Each is sequenced among its neighbours, with what lies inside it cut
-/// just before it: a part cut free before its holes would shift under the tool.
-fn sequence_order(all: &[(Vec<P>, bool)], choices: OrderChoices, from: [f64; 3]) -> Vec<usize> {
-    let items: Vec<Placed> = all.iter().map(placed).collect();
+/// The smallest closed shape around each one is what holds it.
+fn holders(all: &[(Vec<P>, bool)], items: &[Placed]) -> Vec<Option<usize>> {
     let area = |i: usize| (items[i].hi[0] - items[i].lo[0]) * (items[i].hi[1] - items[i].lo[1]);
-    // The smallest closed shape around each is what holds it.
     let closed: Vec<usize> = (0..all.len()).filter(|j| all[*j].1).collect();
     let mut parent: Vec<Option<usize>> = vec![None; all.len()];
     for i in 0..all.len() {
@@ -1383,6 +1392,14 @@ fn sequence_order(all: &[(Vec<P>, bool)], choices: OrderChoices, from: [f64; 3])
             }
         }
     }
+    parent
+}
+
+/// The order to cut shapes in. Each is sequenced among its neighbours, with what lies inside it cut
+/// just before it: a part cut free before its holes would shift under the tool.
+fn sequence_order(all: &[(Vec<P>, bool)], choices: OrderChoices, from: [f64; 3]) -> Vec<usize> {
+    let items: Vec<Placed> = all.iter().map(placed).collect();
+    let parent = holders(all, &items);
     let mut held: Vec<Vec<usize>> = vec![Vec::new(); all.len()];
     for (k, p) in parent.iter().enumerate() {
         if let Some(p) = p {
@@ -1429,10 +1446,22 @@ fn sort_paths(mut items: Vec<(Vec<P>, bool)>, order: Order, from: [f64; 3]) -> V
     }
 }
 
+/// What a profile's cut is doing, when a separate last pass splits it in two.
+#[derive(Clone, Copy, PartialEq)]
+enum Stage {
+    Whole,
+    /// Stays at depth at the end if the finish follows without a lift.
+    Rough { stay_down: bool },
+    /// Linked: comes straight across from the rough loop at depth.
+    Finish { linked: bool },
+}
+
 fn profile_like(e: &mut Emit, op: &Op, side: Side) {
     let radius = op.tool.dia / 2.0 + op.allowance;
-    let extra = if op.last_pass { op.last_allowance } else { 0.0 };
     let zs = depths(op);
+    // No allowance, or just one pass, means no separate last pass at all.
+    let separate_last = op.last_pass && op.last_allowance > 0.0 && side != Side::On && zs.len() >= 2;
+    let extra = if separate_last { op.last_allowance } else { 0.0 };
     let margin = radius + extra + op.tool.dia;
     // Each set of shapes on its own grid; a set inside another shape counts its inside the other way round.
     let fields: Vec<(Field, bool)> = if side == Side::On {
@@ -1453,6 +1482,7 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
     let separate = closed.iter().enumerate().all(|(i, p)| closed.iter().enumerate().all(|(j, q)| i == j || !inside_even_odd(std::slice::from_ref(*q), p.pts[0])));
     let sharp = op.sharp_corners && side == Side::Outside && separate;
     let keep_click_order = op.order == Order::AsDrawn || op.order_choices.is_some_and(|c| c.selection);
+    let source = |l: &[P]| (0..op.paths.len()).min_by(|a, b| distance_to_path(l[0], &op.paths[*a]).total_cmp(&distance_to_path(l[0], &op.paths[*b]))).unwrap_or(0);
     let loops_at = |off: f64| -> Vec<(Vec<P>, bool)> {
         let mut out = Vec::new();
         // A square corner in a notch narrower than the tool, or by a close neighbour, would cut into the part.
@@ -1475,7 +1505,6 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
         }
         // Worked-out outlines come back in no special order, so put them in the order of their shapes.
         if keep_click_order {
-            let source = |l: &[P]| (0..op.paths.len()).min_by(|a, b| distance_to_path(l[0], &op.paths[*a]).total_cmp(&distance_to_path(l[0], &op.paths[*b]))).unwrap_or(0);
             out.sort_by_key(|item: &(Vec<P>, bool)| source(&item.0));
         }
         // Open lines can only be followed.
@@ -1493,17 +1522,22 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
     let start = if op.start_at == StartAt::Keep && op.start_mid_span { StartAt::Optimize } else { op.start_at };
     // With leads or ramps, the start isn't moved to suit the tool: only a chosen point moves it.
     let start = if start == StartAt::Optimize && (op.lead || op.ramp) { StartAt::Keep } else { start };
-    let run = |e: &mut Emit, mut items: Vec<(Vec<P>, bool)>, pass_zs: &[f64]| {
-        let from = e.last();
-        // The order is settled with each shape starting where it was drawn to, and only then is
-        // the start moved.
+    // The order is settled with each shape starting where it was drawn to, and only then is
+    // the start moved.
+    let settle = |mut items: Vec<(Vec<P>, bool)>, from: [f64; 3]| {
         // Twice the offset, as a worked-out loop on a curve can sit a little further off than that.
         start_from_shapes(&mut items, &op.paths, 2.0 * (radius.abs() + extra.abs()) + 1e-3);
-        let mut ordered = match op.order_choices {
+        match op.order_choices {
             Some(choices) => best_order(items, choices, from),
             None => sort_paths(items, op.order, from),
-        };
-        match start {
+        }
+    };
+    let run = |e: &mut Emit, items: Vec<(Vec<P>, bool)>, pass_zs: &[f64], stage: Stage| {
+        let from = e.last();
+        let finish = matches!(stage, Stage::Finish { .. });
+        // A finish loop always starts at its point nearest the tool, whatever start was chosen.
+        let mut ordered = if finish { items } else { settle(items, from) };
+        match if finish { StartAt::Optimize } else { start } {
             StartAt::Keep => {}
             StartAt::Near(place) => {
                 for (pts, closed) in &mut ordered {
@@ -1526,7 +1560,7 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                 }
             }
         }
-        for (pts, closed) in ordered {
+        for (mut pts, closed) in ordered {
             let mut route = pts.clone();
             if closed {
                 route.push(pts[0]);
@@ -1541,10 +1575,15 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
             let lead_in = if has_lead { lead_points(pts[0], unit_dir(route[0], route[1]), side_sign, op, false) } else { Vec::new() };
             let mut previous = -op.start_depth;
             for (i, z) in pass_zs.iter().enumerate() {
+                // Back the way it came, from where the last pass ended.
+                if i > 0 && op.zigzag_open && !closed && !has_lead {
+                    pts.reverse();
+                    route.reverse();
+                }
                 let tab_z = (op.tabs && closed && *z < tab_top).then_some(tab_top);
                 // Moves added at full depth near the start must stop short of the first tab.
                 let before_tab = match tab_z {
-                    Some(_) if op.tab_count > 0 => (total / (2.0 * op.tab_count as f64) - op.tab_length / 2.0).max(0.0),
+                    Some(_) if op.tab_count > 0 => (total / (2.0 * op.tab_count as f64) - tab_reach(op) / 2.0).max(0.0),
                     _ => f64::MAX,
                 };
                 let depth = (previous - *z).abs();
@@ -1564,6 +1603,10 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                         e.feed(q[0], q[1], h);
                     }
                     e.feed(pts[0][0], pts[0][1], if ramp_on_lead { *z } else { plunge_z });
+                } else if i == 0 && stage == (Stage::Finish { linked: true }) {
+                    // Across from the rough loop at the height it finished at, then down.
+                    e.feed(pts[0][0], pts[0][1], e.last()[2]);
+                    e.feed(pts[0][0], pts[0][1], plunge_z);
                 } else if i == 0 || !closed {
                     // Stay down between passes on a closed loop.
                     e.go_to(pts[0][0], pts[0][1], plunge_z);
@@ -1584,7 +1627,8 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                 previous = *z;
                 if has_lead || !closed || i + 1 == pass_zs.len() {
                     // Running on past the start leaves no mark where the cut closes.
-                    if closed && op.overcut > 0.0 {
+                    // The finish takes away any mark left where a rough loop closes.
+                    if closed && op.overcut > 0.0 && (has_lead || !matches!(stage, Stage::Rough { .. })) {
                         let n = (route.len() * 2).max(2);
                         let reach = op.overcut.min(total).min(before_tab);
                         for k in 1..=n {
@@ -1608,18 +1652,45 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                     }
                 }
             }
-            e.retract();
+            if stage != (Stage::Rough { stay_down: true }) {
+                e.retract();
+            }
         }
     };
-    run(e, loops_at(radius + extra), &zs);
-    if op.last_pass && side != Side::On {
+    if separate_last {
+        // Shape by shape: rough loops down to the depth before the last, then the finish at the last.
+        let rough = settle(loops_at(radius + extra), e.last());
         let mut last = loops_at(radius);
         if op.last_reverse {
             for (pts, _) in &mut last {
                 pts.reverse();
             }
         }
-        run(e, last, &zs[zs.len() - 1..]);
+        // A ramp the whole way round only cuts flat at the last depth, so the rough loop goes there too.
+        let spiral = op.ramp && op.ramp_kind == RampKind::Spiral;
+        let upper = if spiral { &zs[..] } else { &zs[..zs.len() - 1] };
+        let bottom = &zs[zs.len() - 1..];
+        let mut shapes: Vec<usize> = Vec::new();
+        for item in &rough {
+            let shape = source(&item.0);
+            if !shapes.contains(&shape) {
+                shapes.push(shape);
+            }
+        }
+        for shape in shapes {
+            let own: Vec<_> = rough.iter().filter(|item| source(&item.0) == shape).cloned().collect();
+            let (finish, others): (Vec<_>, Vec<_>) = last.into_iter().partition(|item: &(Vec<P>, bool)| source(&item.0) == shape);
+            last = others;
+            let linked = !upper.is_empty() && !op.ramp && !op.lead && own.len() == 1 && finish.len() == 1 && own[0].1 && finish[0].1;
+            if !upper.is_empty() {
+                run(e, own, upper, Stage::Rough { stay_down: linked });
+            }
+            run(e, finish, bottom, Stage::Finish { linked });
+        }
+        // A finish with no rough loop of its own: the offset can close up before reaching the shape.
+        run(e, last, bottom, Stage::Finish { linked: false });
+    } else {
+        run(e, loops_at(radius + extra), &zs, Stage::Whole);
     }
 }
 
@@ -2335,53 +2406,53 @@ pub struct JobSize {
 /// Builds the moves of a cutting path; returns an explanation when it can't be made.
 pub fn generate(op: &Op, machine: Machine, job: &JobSize, model: Option<&Grid>) -> Result<Vec<Move>, String> {
     if op.tool.dia <= 0.0 {
-        return Err("The tool's diameter must be more than zero.".into());
+        return Err(crate::i18n::tr("The tool's diameter must be more than zero.").into());
     }
     if op.tool.feed <= 0.0 || op.tool.plunge <= 0.0 {
-        return Err("The tool's feed and plunge rates must be more than zero.".into());
+        return Err(crate::i18n::tr("The tool's feed and plunge rates must be more than zero.").into());
     }
     if op.tool.rpm < 0.0 {
-        return Err("The tool's spindle speed can't be below zero.".into());
+        return Err(crate::i18n::tr("The tool's spindle speed can't be below zero.").into());
     }
     if op.kind == OpKind::Pocket && (step_of(op) <= 0.0 || step_of(op) > op.tool.dia) {
-        return Err("The stepover must be more than zero and no more than the tool's diameter.".into());
+        return Err(crate::i18n::tr("The stepover must be more than zero and no more than the tool's diameter.").into());
     }
     if op.kind == OpKind::Profile && op.tabs && op.tab_length <= 0.0 {
-        return Err("The tabs need a length of more than zero.".into());
+        return Err(crate::i18n::tr("The tabs need a length of more than zero.").into());
     }
     if op.kind.uses_model() {
         if model.is_none() {
-            return Err("Create a 3D shape on the Modeling tab first.".into());
+            return Err(crate::i18n::tr("Create a 3D shape on the Modeling tab first.").into());
         }
     } else if op.paths.is_empty() && op.kind != OpKind::Texture {
-        return Err("Select the shapes to cut in the 2D view first.".into());
+        return Err(crate::i18n::tr("Select the shapes to cut in the 2D view first.").into());
     }
     let needs_closed = matches!(op.kind, OpKind::Pocket | OpKind::VCarve | OpKind::Prism);
     if needs_closed && !op.paths.iter().any(|p| p.closed) {
-        return Err("This cut needs closed shapes. The selection only has open lines.".into());
+        return Err(crate::i18n::tr("This cut needs closed shapes. The selection only has open lines.").into());
     }
     if op.kind == OpKind::Moulding && op.paths.len() < 2 {
-        return Err("Select the drive rail first, then the profile shape last.".into());
+        return Err(crate::i18n::tr("Select the drive rail first, then the profile shape last.").into());
     }
     if op.tool.dia <= 0.0 {
-        return Err("The tool needs a diameter above zero.".into());
+        return Err(crate::i18n::tr("The tool needs a diameter above zero.").into());
     }
     if op.kind == OpKind::Chamfer {
         if !matches!(op.tool.kind, ToolKind::VBit | ToolKind::Engraving) {
-            return Err("A chamfer is cut with a V-bit. Select one for this toolpath.".into());
+            return Err(crate::i18n::tr("A chamfer is cut with a V-bit. Select one for this toolpath.").into());
         }
         if op.chamfer_width <= 0.0 {
-            return Err("The chamfer needs a width above zero.".into());
+            return Err(crate::i18n::tr("The chamfer needs a width above zero.").into());
         }
         if op.chamfer_width > op.tool.dia / 2.0 {
-            return Err(format!("This V-bit can cut a chamfer {} wide at most.", trim(op.tool.dia / 2.0)));
+            return Err(tf!("This V-bit can cut a chamfer {} wide at most.", trim(op.tool.dia / 2.0)));
         }
     }
     if op.kind == OpKind::Flute && op.cut_depth <= op.start_depth {
-        return Err("The flute depth must be deeper than the start depth.".into());
+        return Err(crate::i18n::tr("The flute depth must be deeper than the start depth.").into());
     }
     if op.kind == OpKind::Drill && op.cut_depth <= op.start_depth {
-        return Err("Cut depth must be deeper than start depth.".into());
+        return Err(crate::i18n::tr("Cut depth must be deeper than start depth.").into());
     }
     let top = model.map_or(0.0, |g| machine.model_top(job.thickness, g.max() as f64));
     let project = if op.project && !op.kind.uses_model() { model } else { None };
@@ -2404,7 +2475,7 @@ pub fn generate(op: &Op, machine: Machine, job: &JobSize, model: Option<&Grid>) 
     e.retract();
     e.rapid(home);
     if !e.moves.iter().any(|m| !m.rapid) {
-        return Err(format!("No path fits: the {} is too wide for these shapes.", op.tool.label().to_lowercase()));
+        return Err(tf!("No path fits: the {} is too wide for these shapes.", op.tool.label().to_lowercase()));
     }
     Ok(e.moves)
 }
@@ -2456,6 +2527,162 @@ pub fn route_in_file(moves: &[Move], steps: Option<&[Step]>, home: [f64; 3], fir
         exact
     });
     (route, exact)
+}
+
+/// One stretch of cutting: where the tool arrives by fast move, then everything until it next moves fast.
+#[derive(Clone, Debug)]
+pub struct Cut {
+    pub toolpath: usize,
+    pub number: usize,
+    pub moves: Vec<Move>,
+}
+
+/// The stretches of cutting in a toolpath, in order.
+pub fn cuts_of(moves: &[Move], toolpath: usize) -> Vec<Cut> {
+    let mut cuts: Vec<Cut> = Vec::new();
+    let mut open = false;
+    let mut last: Option<[f64; 3]> = None;
+    for m in working_moves(moves) {
+        if m.rapid {
+            open = false;
+        } else {
+            if !open {
+                let number = cuts.len();
+                cuts.push(Cut { toolpath, number, moves: vec![Move { p: last.unwrap_or(m.p), rapid: true }] });
+                open = true;
+            }
+            if let Some(cut) = cuts.last_mut() {
+                cut.moves.push(*m);
+            }
+        }
+        last = Some(m.p);
+    }
+    cuts
+}
+
+/// A cut seen from above, for ordering: once round if it comes back to where it began.
+fn seen_from_above(cut: &Cut, same_spot: f64) -> (Vec<P>, bool) {
+    let mut pts: Vec<P> = Vec::with_capacity(cut.moves.len());
+    for m in &cut.moves[1..] {
+        let p = [m.p[0], m.p[1]];
+        if pts.last().is_none_or(|l| (l[0] - p[0]).hypot(l[1] - p[1]) >= same_spot) {
+            pts.push(p);
+        }
+    }
+    if pts.is_empty() {
+        pts.push([cut.moves[0].p[0], cut.moves[0].p[1]]);
+    }
+    let start = pts[0];
+    match (3..pts.len()).find(|k| (pts[*k][0] - start[0]).hypot(pts[*k][1] - start[1]) < same_spot) {
+        Some(k) => {
+            pts.truncate(k);
+            (pts, true)
+        }
+        None => (pts, false),
+    }
+}
+
+/// Whether a part comes before another when no order was asked for: at the first toolpath they both
+/// have cuts in, the earlier cut goes first; with none in common, the part in the earlier toolpath.
+fn part_before(a: &[i64], b: &[i64]) -> bool {
+    if let Some(k) = (0..a.len()).find(|k| a[*k] >= 0 && b[*k] >= 0) {
+        return a[k] < b[k];
+    }
+    for k in 0..a.len() {
+        if a[k] < 0 && b[k] >= 0 {
+            return false;
+        }
+        if b[k] < 0 && a[k] >= 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// The order to make the cuts of several toolpaths in. With `by_part`, what lies inside a closed cut
+/// stays with it, and within a part the toolpaths keep their order.
+fn merge_order(cuts: &[Cut], toolpaths: usize, choices: OrderChoices, by_part: bool, from: [f64; 3], same_spot: f64) -> Vec<usize> {
+    let shapes: Vec<(Vec<P>, bool)> = cuts.iter().map(|c| seen_from_above(c, same_spot)).collect();
+    let items: Vec<Placed> = shapes.iter().map(placed).collect();
+    let spot = [from[0], from[1]];
+    if !by_part {
+        let all: Vec<usize> = (0..cuts.len()).collect();
+        return order_level(&items, &all, choices, spot);
+    }
+    let parent = holders(&shapes, &items);
+    let top_of = |mut i: usize| {
+        while let Some(p) = parent[i] {
+            i = p;
+        }
+        i
+    };
+    let tops: Vec<usize> = (0..cuts.len()).filter(|i| parent[*i].is_none()).collect();
+    let mut parts: Vec<Vec<usize>> = order_level(&items, &tops, choices, spot)
+        .into_iter()
+        .map(|t| {
+            let mut part: Vec<usize> = (0..cuts.len()).filter(|i| top_of(*i) == t).collect();
+            part.sort_by_key(|i| (cuts[*i].toolpath, cuts[*i].number));
+            part
+        })
+        .collect();
+    let none_chosen = !(choices.left_to_right || choices.bottom_to_top || choices.grid || choices.shortest);
+    if none_chosen {
+        let row = |part: &Vec<usize>| {
+            let mut r = vec![-1i64; toolpaths];
+            for i in part {
+                let t = cuts[*i].toolpath;
+                let n = cuts[*i].number as i64;
+                if r[t] < 0 || r[t] > n {
+                    r[t] = n;
+                }
+            }
+            r
+        };
+        // One at a time: these comparisons don't make a strict ranking when parts share no toolpath.
+        let mut sorted: Vec<(Vec<i64>, Vec<usize>)> = Vec::with_capacity(parts.len());
+        for part in parts {
+            let r = row(&part);
+            let at = sorted.iter().position(|(other, _)| part_before(&r, other)).unwrap_or(sorted.len());
+            sorted.insert(at, (r, part));
+        }
+        parts = sorted.into_iter().map(|(_, part)| part).collect();
+    }
+    parts.into_iter().flatten().collect()
+}
+
+/// The moves of several toolpaths as one, joined the way the tool gets to any other cut.
+pub fn merged_moves(lists: &[&[Move]], choices: OrderChoices, by_part: bool, machine: Machine, metric: bool) -> Vec<Move> {
+    let same_spot = if metric { SAME_SPOT_MM } else { SAME_SPOT_MM / 25.4 };
+    let cuts: Vec<Cut> = lists.iter().enumerate().flat_map(|(t, moves)| cuts_of(moves, t)).collect();
+    let order = merge_order(&cuts, lists.len(), choices, by_part, machine.home, same_spot);
+    let safe = machine.safe_z;
+    let mut out = vec![Move { p: machine.home, rapid: true }];
+    let mut at = machine.home;
+    for i in order {
+        let cut = &cuts[i];
+        let entry = cut.moves[0].p;
+        let apart = (at[0] - entry[0]).powi(2) + (at[1] - entry[1]).powi(2) + (at[2] - entry[2]).powi(2);
+        if apart >= 0.00000001 {
+            if at[2] < safe && (at[0] - entry[0]).hypot(at[1] - entry[1]) < same_spot {
+                out.push(Move { p: entry, rapid: false });
+            } else {
+                if at[2] < safe {
+                    out.push(Move { p: [at[0], at[1], safe], rapid: true });
+                }
+                out.push(Move { p: [entry[0], entry[1], safe], rapid: true });
+                if entry[2] != safe {
+                    out.push(Move { p: entry, rapid: true });
+                }
+            }
+        }
+        out.extend_from_slice(&cut.moves[1..]);
+        at = cut.moves[cut.moves.len() - 1].p;
+    }
+    if at[2] < safe {
+        out.push(Move { p: [at[0], at[1], safe], rapid: true });
+    }
+    out.push(Move { p: machine.home, rapid: true });
+    out
 }
 
 /// The original's usual allowance: time spent cutting and lifting counts this many times over.
@@ -2523,6 +2750,12 @@ pub const POSTS: [(&str, &str, bool); 7] = [
     (crate::planetcnc::NAME, "gcode", true),
 ];
 
+/// A name as it can stand inside a G-code comment: LinuxCNC refuses a file with one comment inside
+/// another, and a tool's name often has brackets of its own.
+fn in_comment(name: &str) -> String {
+    name.chars().map(|c| match c { '(' => '[', ')' => ']', '\n' | '\r' => ' ', c => c }).collect()
+}
+
 /// Plain G-code for a list of cutting paths.
 pub fn gcode(paths: &[PostPath], post: &PostSettings) -> String {
     let mut s = String::new();
@@ -2532,10 +2765,11 @@ pub fn gcode(paths: &[PostPath], post: &PostSettings) -> String {
     let mut current: Option<&Tool> = None;
     for path in paths {
         let (tool, moves) = (path.tool, path.moves);
-        let _ = writeln!(s, "(Toolpath: {})", path.name);
+        let _ = writeln!(s, "(Toolpath: {})", in_comment(path.name));
         if current != Some(tool) {
-            let _ = writeln!(s, "(Tool: {})", tool.name);
-            let _ = writeln!(s, "M5\nM0 (Fit tool: {})\nS{:.0} M3", tool.name, tool.rpm);
+            let name = in_comment(&tool.name);
+            let _ = writeln!(s, "(Tool: {name})");
+            let _ = writeln!(s, "M5\nM0 (Fit tool: {name})\nS{:.0} M3", tool.rpm);
             current = Some(tool);
         }
         let mut was_rapid = None;
@@ -2653,6 +2887,7 @@ pub fn blank_op(kind: OpKind, name: String, tool: Tool, depth: f64, paths: Vec<P
         raster_allowance: 0.0,
         last_thickness: 0.0,
         keep_exact: false,
+        zigzag_open: false,
         stepover: if matches!(kind, OpKind::Finish3D | OpKind::Texture | OpKind::Engrave) { (tool.dia * tool.stepover).max(0.002 * unit) } else { 0.0 },
         retract_gap: 0.0,
         retract_to_start: true,
@@ -2668,6 +2903,7 @@ pub fn blank_op(kind: OpKind, name: String, tool: Tool, depth: f64, paths: Vec<P
         tex_variation: 0.3,
         gap: 0.0,
         source: Vec::new(),
+        merged: false,
         tool,
     }
 }
@@ -3502,6 +3738,72 @@ mod tests {
     }
 
     #[test]
+    fn an_open_line_can_be_cut_there_and_back_without_lifting() {
+        let line = vec![Path::open(vec![[2.0, 2.0], [8.0, 2.0]])];
+        let mut o = op(OpKind::Profile, line);
+        o.side = Side::On;
+        o.tool.pass_depth = 0.25;
+        o.cut_depth = 0.75;
+        let start = |m: &[Move]| m.iter().filter(|m| !m.rapid && m.p[2] < -1e-9).map(|m| m.p).collect::<Vec<_>>();
+        let one_way = generate(&o, M, &J, None).unwrap();
+        let (first, last) = (start(&one_way)[0], *start(&one_way).last().unwrap());
+        assert!((first[0] - last[0]).abs() > 5.0, "each pass goes the same way: {first:?} {last:?}");
+        assert!(one_way.iter().filter(|m| m.rapid).count() > 4, "and lifts to go back");
+
+        o.zigzag_open = true;
+        let both = generate(&o, M, &J, None).unwrap();
+        let cuts = start(&both);
+        let at_depth = |z: f64| cuts.iter().filter(|p| (p[2] - z).abs() < 1e-9).map(|p| p[0]).collect::<Vec<_>>();
+        assert_eq!(*at_depth(-0.25).last().unwrap(), 8.0);
+        assert_eq!(*at_depth(-0.5).last().unwrap(), 2.0, "the second pass comes back");
+        assert_eq!(*at_depth(-0.75).last().unwrap(), 8.0);
+        // Nothing fast between the first cut and the last.
+        let a = both.iter().position(|m| !m.rapid && m.p[2] < -1e-9).unwrap();
+        let b = both.iter().rposition(|m| !m.rapid && m.p[2] < -1e-9).unwrap();
+        assert!(both[a..=b].iter().all(|m| !m.rapid), "{:?}", &both[a..=b]);
+    }
+
+    #[test]
+    fn a_closed_shape_is_not_cut_there_and_back() {
+        let mut o = op(OpKind::Profile, vec![Path::closed(rect([5.0, 5.0], 4.0, 4.0, 0.0))]);
+        o.side = Side::Outside;
+        o.tool.pass_depth = 0.25;
+        o.cut_depth = 0.75;
+        let plain = generate(&o, M, &J, None).unwrap();
+        o.zigzag_open = true;
+        assert_eq!(generate(&o, M, &J, None).unwrap(), plain);
+    }
+
+    #[test]
+    fn a_tab_keeps_its_whole_length_after_the_width_of_the_tool() {
+        let mut o = ring_op();
+        o.start_at = StartAt::Keep;
+        o.cut_depth = 0.5;
+        o.tabs = true;
+        o.tab_count = 4;
+        o.tab_length = 0.5;
+        o.tab_thickness = 0.1;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let top = -(o.cut_depth - o.tab_thickness);
+        // The lengths the tool travels at the top of a tab.
+        let (mut spans, mut run) = (Vec::new(), 0.0);
+        for w in moves.windows(2) {
+            if !w[1].rapid && (w[0].p[2] - top).abs() < 1e-9 && (w[1].p[2] - top).abs() < 1e-9 {
+                run += (w[0].p[0] - w[1].p[0]).hypot(w[0].p[1] - w[1].p[1]);
+            } else {
+                if run > 0.0 {
+                    spans.push(run);
+                }
+                run = 0.0;
+            }
+        }
+        assert_eq!(spans.len(), 4, "{spans:?}");
+        for s in &spans {
+            assert!((s - (o.tab_length + o.tool.dia)).abs() < 1e-6, "{spans:?}");
+        }
+    }
+
+    #[test]
     fn ramps_and_overcuts_leave_the_tabs_standing() {
         for kind in [RampKind::Smooth, RampKind::ZigZag, RampKind::Spiral] {
             let mut o = ring_op();
@@ -4251,6 +4553,167 @@ mod tests {
         // Anywhere else, up and across.
         e.go_to(9.0, 5.0, -0.5);
         assert!(e.moves[2].rapid && e.moves[2].p == [5.0, 5.0, M.safe_z]);
+    }
+
+    #[test]
+    fn names_never_put_one_comment_inside_another() {
+        let mut o = op(OpKind::Profile, vec![Path::closed(rect([10.0, 10.0], 4.0, 4.0, 0.0))]);
+        o.tool.name = "End Mill (6 mm)".into();
+        o.name = "Outside (top)".into();
+        let moves = generate(&o, M, &J, None).unwrap();
+        let path = PostPath { name: &o.name, tool: &o.tool, moves: &moves, dwell: 0.0, steps: None };
+        let text = gcode(&[path], &PostSettings { inches: false, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None });
+        for line in text.lines() {
+            let mut open = 0;
+            for c in line.chars() {
+                match c {
+                    '(' => open += 1,
+                    ')' => open -= 1,
+                    _ => {}
+                }
+                assert!((0..=1).contains(&open), "{line}");
+            }
+            assert_eq!(open, 0, "{line}");
+        }
+        assert!(text.contains("(Tool: End Mill [6 mm])"), "{text}");
+    }
+
+    #[test]
+    fn a_separate_last_pass_finishes_each_shape_before_the_next() {
+        let squares = vec![Path::closed(rect([10.0, 10.0], 4.0, 4.0, 0.0)), Path::closed(rect([30.0, 10.0], 4.0, 4.0, 0.0))];
+        let mut o = op(OpKind::Profile, squares);
+        o.side = Side::Outside;
+        o.tool.pass_depth = 0.25;
+        o.cut_depth = 0.75;
+        o.last_pass = true;
+        o.last_allowance = 0.05;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let cuts: Vec<[f64; 3]> = moves.iter().filter(|m| !m.rapid && m.p[2] < -1e-9).map(|m| m.p).collect();
+        let shape = |p: &[f64; 3]| if p[0] < 20.0 { 0 } else { 1 };
+        // All of one shape, then all of the other.
+        let turns = cuts.windows(2).filter(|w| shape(&w[0]) != shape(&w[1])).count();
+        assert_eq!(turns, 1, "{cuts:?}");
+        // The rough loop stops a depth short: the last depth is only cut on the finish loop.
+        let r = o.tool.dia / 2.0;
+        let mut links = 0;
+        for p in &cuts {
+            let c = if shape(p) == 0 { 10.0 } else { 30.0 };
+            // Distance from the square itself, so the rounded corners count the same as the sides.
+            let off = ((p[0] - c).abs() - 2.0).max(0.0).hypot(((p[1] - 10.0).abs() - 2.0).max(0.0));
+            if (p[2] + 0.75).abs() < 1e-9 {
+                assert!((off - r).abs() < 0.02, "bottom only at the finish: {p:?} {off}");
+            } else if (off - r).abs() < 0.02 {
+                // The one move across to the finish loop, still at the height above it.
+                links += 1;
+            } else {
+                assert!((off - r - 0.05).abs() < 0.02, "above that with the allowance: {p:?} {off}");
+            }
+        }
+        assert_eq!(links, 2);
+    }
+
+    #[test]
+    fn the_finish_follows_the_rough_loop_without_a_lift() {
+        let mut o = op(OpKind::Profile, vec![Path::closed(rect([10.0, 10.0], 4.0, 4.0, 0.0))]);
+        o.side = Side::Outside;
+        o.tool.pass_depth = 0.25;
+        o.cut_depth = 0.75;
+        o.last_pass = true;
+        o.last_allowance = 0.05;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let first = moves.iter().position(|m| !m.rapid && m.p[2] < -1e-9).unwrap();
+        let bottom = moves.iter().position(|m| (m.p[2] + 0.75).abs() < 1e-9).unwrap();
+        assert!(moves[first..bottom].iter().all(|m| !m.rapid && m.p[2] < -1e-9), "stays in the cut: {:?}", &moves[first..=bottom]);
+        // Across at the height it was at, and only then down.
+        assert!((moves[bottom - 1].p[2] + 0.5).abs() < 1e-9);
+        assert_eq!(moves[bottom - 1].p[..2], moves[bottom].p[..2]);
+        assert!(moves[bottom..].iter().skip_while(|m| !m.rapid).all(|m| m.rapid || m.p[2] > -1e-9));
+
+        // A ramp or a lead brings its own way in, so the tool lifts first.
+        o.ramp = true;
+        o.ramp_distance = 0.5;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let bottom = moves.iter().position(|m| (m.p[2] + 0.75).abs() < 1e-9).unwrap();
+        assert!(moves[..bottom].iter().rev().take_while(|m| m.p[2] < 1e-9).count() < bottom);
+        assert!(moves[..bottom].iter().rev().any(|m| m.rapid));
+    }
+
+    #[test]
+    fn the_finish_starts_where_the_tool_is_and_can_run_the_other_way() {
+        let mut o = op(OpKind::Profile, vec![Path::closed(rect([10.0, 10.0], 4.0, 4.0, 0.0))]);
+        o.side = Side::Outside;
+        o.tool.pass_depth = 0.25;
+        o.cut_depth = 0.5;
+        o.last_pass = true;
+        o.last_allowance = 0.05;
+        let area = |moves: &[Move], at_bottom: bool| {
+            let pts: Vec<[f64; 3]> = moves.iter().filter(|m| !m.rapid && ((m.p[2] + 0.5).abs() < 1e-9) == at_bottom && m.p[2] < -1e-9).map(|m| m.p).collect();
+            (0..pts.len()).map(|i| pts[i][0] * pts[(i + 1) % pts.len()][1] - pts[(i + 1) % pts.len()][0] * pts[i][1]).sum::<f64>()
+        };
+        let same = generate(&o, M, &J, None).unwrap();
+        assert!(area(&same, false) * area(&same, true) > 0.0, "same way round");
+        // The way across is no longer than the allowance plus the gap to the nearest corner point.
+        let bottom = same.iter().position(|m| (m.p[2] + 0.5).abs() < 1e-9).unwrap();
+        let (a, b) = (same[bottom - 2].p, same[bottom - 1].p);
+        assert!((a[0] - b[0]).hypot(a[1] - b[1]) < 0.2, "{a:?} {b:?}");
+        o.last_reverse = true;
+        let back = generate(&o, M, &J, None).unwrap();
+        assert!(area(&back, false) * area(&back, true) < 0.0, "the other way round");
+    }
+
+    #[test]
+    fn a_whole_way_ramp_takes_the_rough_loop_to_the_last_depth_too() {
+        let mut o = op(OpKind::Profile, vec![Path::closed(rect([10.0, 10.0], 4.0, 4.0, 0.0))]);
+        o.side = Side::Outside;
+        o.tool.pass_depth = 0.25;
+        o.cut_depth = 0.5;
+        o.last_pass = true;
+        o.last_allowance = 0.05;
+        o.ramp = true;
+        o.ramp_kind = RampKind::Spiral;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let r = o.tool.dia / 2.0;
+        let gap = |p: &[f64; 3]| ((p[0] - 10.0).abs() - 2.0).max(0.0).hypot(((p[1] - 10.0).abs() - 2.0).max(0.0)) - r;
+        let at_bottom: Vec<f64> = moves.iter().filter(|m| !m.rapid && (m.p[2] + 0.5).abs() < 1e-9).map(|m| gap(&m.p)).collect();
+        assert!(at_bottom.iter().any(|g| (g - 0.05).abs() < 0.02), "rough at the last depth");
+        assert!(at_bottom.iter().any(|g| g.abs() < 0.02), "finish at the last depth");
+    }
+
+    #[test]
+    fn no_allowance_means_no_separate_last_pass() {
+        let mut o = op(OpKind::Profile, vec![Path::closed(rect([10.0, 10.0], 4.0, 4.0, 0.0))]);
+        o.side = Side::Outside;
+        o.tool.pass_depth = 0.25;
+        o.cut_depth = 0.5;
+        let plain = generate(&o, M, &J, None).unwrap();
+        o.last_pass = true;
+        o.last_allowance = 0.0;
+        assert_eq!(generate(&o, M, &J, None).unwrap().len(), plain.len());
+    }
+
+    #[test]
+    fn with_one_pass_a_separate_last_pass_changes_nothing() {
+        let mut o = op(OpKind::Profile, vec![Path::closed(rect([10.0, 10.0], 4.0, 4.0, 0.0))]);
+        o.side = Side::Outside;
+        o.tool.pass_depth = 10.0;
+        o.cut_depth = 0.25;
+        let plain = generate(&o, M, &J, None).unwrap();
+        o.last_pass = true;
+        o.last_allowance = 0.05;
+        assert_eq!(generate(&o, M, &J, None).unwrap(), plain);
+    }
+
+    #[test]
+    fn a_single_pass_with_a_separate_last_pass_is_just_the_finish() {
+        let mut o = op(OpKind::Profile, vec![Path::closed(rect([10.0, 10.0], 4.0, 4.0, 0.0))]);
+        o.side = Side::Outside;
+        o.tool.pass_depth = 10.0;
+        o.cut_depth = 0.25;
+        o.last_pass = true;
+        o.last_allowance = 0.05;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let r = o.tool.dia / 2.0;
+        assert!(moves.iter().filter(|m| !m.rapid && m.p[2] < -1e-9).all(|m| (((m.p[0] - 10.0).abs() - 2.0).max(0.0).hypot(((m.p[1] - 10.0).abs() - 2.0).max(0.0)) - r).abs() < 0.02));
     }
 
     #[test]

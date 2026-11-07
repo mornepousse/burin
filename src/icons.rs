@@ -9,7 +9,7 @@ pub enum Icon {
     Circle, Ellipse, Rect, Polygon, Star,
     Lines, Arc, Curve, Spiral, Text, Measure,
     Move, Scale, Rotate, Mirror, Align,
-    Select, Nodes, Group, Ungroup, Join, Close, Weld, Subtract, Intersect, Delete,
+    Select, Nodes, Group, Ungroup, UngroupAll, MakePiece, SelectPiece, AdjustPiece, ReleasePiece, Join, Close, Weld, Subtract, Intersect, Delete,
     Offset, BlockCopy, CircularCopy,
     Dome, Layer, Up, Down,
     TpProfile, TpPocket, TpDrill, TpEngrave, TpVCarve, TpRough, TpFinish,
@@ -34,6 +34,7 @@ const INK: Color32 = Color32::from_rgb(40, 34, 28);
 const PAPER: Color32 = Color32::from_rgb(92, 100, 114);
 const WOOD: Color32 = Color32::from_rgb(214, 160, 104);
 const WOOD_DARK: Color32 = Color32::from_rgb(142, 92, 52);
+const TEAL: Color32 = Color32::from_rgb(70, 205, 190);
 const FOLDER: Color32 = Color32::from_rgb(244, 208, 96);
 
 fn faded(c: Color32) -> Color32 {
@@ -267,14 +268,59 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
             }
         }
         Icon::Group => {
-            boxed(-9.0, -9.0, 9.0, 9.0, Color32::from_gray(190), 1.0);
-            boxed(-6.0, -6.0, 1.0, 1.0, BLUE, 1.3);
-            ring(3.0, 3.0, 3.5, BLUE, 1.3);
+            // Two shapes held inside one frame.
+            boxed(-10.0, -10.0, 10.0, 10.0, YELLOW, 1.2);
+            boxed(-7.0, -7.0, -0.5, -0.5, BLUE, 1.4);
+            ring(3.5, 3.5, 3.4, BLUE, 1.4);
         }
-        Icon::Ungroup => {
-            boxed(-9.0, -9.0, -1.0, -1.0, BLUE, 1.3);
-            ring(5.0, 5.0, 4.0, BLUE, 1.3);
-            line(&[(-9.0, 9.0), (9.0, -9.0)], RED, 1.0);
+        Icon::Ungroup | Icon::UngroupAll => {
+            // The group's frame broken open, around one shape to a side, or more when it's every level.
+            line(&[(-10.5, -4.0), (-10.5, -10.5), (-4.0, -10.5)], RED, 1.5);
+            line(&[(4.0, -10.5), (10.5, -10.5), (10.5, -4.0)], RED, 1.5);
+            line(&[(10.5, 4.0), (10.5, 10.5), (4.0, 10.5)], RED, 1.5);
+            line(&[(-4.0, 10.5), (-10.5, 10.5), (-10.5, 4.0)], RED, 1.5);
+            if icon == Icon::Ungroup {
+                boxed(-7.0, -7.0, -0.5, -0.5, BLUE, 1.4);
+                ring(3.5, 3.5, 3.4, BLUE, 1.4);
+            } else {
+                boxed(-7.0, -7.0, -2.0, -2.0, BLUE, 1.3);
+                ring(4.5, -4.5, 2.5, BLUE, 1.3);
+                ring(-4.5, 4.5, 2.5, BLUE, 1.3);
+                boxed(2.0, 2.0, 7.0, 7.0, BLUE, 1.3);
+            }
+        }
+        Icon::MakePiece => {
+            boxed(-10.0, -4.0, 8.0, 10.0, TEAL, 1.4);
+            ring(-5.0, 3.0, 2.0, BLUE, 1.2);
+            ring(3.0, 3.0, 2.0, BLUE, 1.2);
+            line(&[(7.5, -11.0), (7.5, -3.0)], YELLOW, 1.8);
+            line(&[(3.5, -7.0), (11.5, -7.0)], YELLOW, 1.8);
+        }
+        Icon::SelectPiece => {
+            boxed(-11.0, -10.0, 7.0, 4.0, TEAL, 1.4);
+            ring(-6.5, -3.0, 2.0, BLUE, 1.2);
+            ring(1.5, -3.0, 2.0, BLUE, 1.2);
+            fill(&[(1.0, 0.0), (9.0, 7.5), (4.5, 8.0)], PAPER);
+            closed(&[(1.0, 0.0), (9.5, 7.0), (6.0, 7.5), (8.0, 11.0), (6.0, 12.0), (4.0, 8.5), (1.5, 10.5)], BLACK, 1.1);
+        }
+        Icon::AdjustPiece => {
+            boxed(-11.0, -8.0, 11.0, 8.0, TEAL, 1.4);
+            ring(-5.5, 0.0, 2.2, BLUE, 1.2);
+            // The one shape moving on its own, with arrows out of it.
+            ring(4.0, 0.0, 2.4, RED, 1.5);
+            line(&[(4.0, -6.0), (4.0, -3.4)], RED, 1.3);
+            line(&[(4.0, 3.4), (4.0, 6.0)], RED, 1.3);
+            line(&[(-1.5, 0.0), (0.6, 0.0)], RED, 1.3);
+            line(&[(7.4, 0.0), (9.5, 0.0)], RED, 1.3);
+        }
+        Icon::ReleasePiece => {
+            // The piece's outline broken open.
+            line(&[(-10.5, -2.5), (-10.5, -8.0), (-4.5, -8.0)], TEAL, 1.5);
+            line(&[(4.5, -8.0), (10.5, -8.0), (10.5, -2.5)], TEAL, 1.5);
+            line(&[(10.5, 2.5), (10.5, 8.0), (4.5, 8.0)], TEAL, 1.5);
+            line(&[(-4.5, 8.0), (-10.5, 8.0), (-10.5, 2.5)], TEAL, 1.5);
+            ring(-4.0, 0.0, 2.2, BLUE, 1.2);
+            ring(4.0, 0.0, 2.2, BLUE, 1.2);
         }
         Icon::Join => {
             line(&[(-9.0, 6.0), (-3.0, 0.0)], BLUE, 1.6);

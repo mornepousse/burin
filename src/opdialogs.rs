@@ -113,23 +113,23 @@ impl App {
             return;
         }
         let (unit, thick, board, allowed) = (self.doc.job.unit(), self.doc.job.thickness, self.doc.job.spoil_board, self.doc.job.deepest_allowed());
-        let what = if board > 0.0 { "the sacrificial board" } else { "the material" };
+        let what = if board > 0.0 { crate::i18n::tr("the sacrificial board") } else { crate::i18n::tr("the material") };
         const SHOWN: usize = 12;
-        let mut list: Vec<String> = deep.iter().take(SHOWN).map(|(name, d)| format!("{name}: cuts to {} {unit}, {} {unit} past {what}", toolpath::trim(*d), toolpath::trim(*d - allowed))).collect();
+        let mut list: Vec<String> = deep.iter().take(SHOWN).map(|(name, d)| tf!("{name}: cuts to {} {unit}, {} {unit} past {what}", toolpath::trim(*d), toolpath::trim(*d - allowed))).collect();
         if deep.len() > SHOWN {
-            list.push(format!("and {} more", deep.len() - SHOWN));
+            list.push(tf!("and {} more", deep.len() - SHOWN));
         }
         let (heading, sizes, advice) = if board > 0.0 {
             (
-                "Tool will cut through the sacrificial board",
-                format!("Material: {} {unit} + board: {} {unit} = {} {unit}", toolpath::trim(thick), toolpath::trim(board), toolpath::trim(allowed)),
-                "Nothing is left under the tool here: it can damage the machine bed.",
+                crate::i18n::tr("Tool will cut through the sacrificial board"),
+                tf!("Material: {} {unit} + board: {} {unit} = {} {unit}", toolpath::trim(thick), toolpath::trim(board), toolpath::trim(allowed)),
+                crate::i18n::tr("Nothing is left under the tool here: it can damage the machine bed."),
             )
         } else {
             (
-                "Tool will cut through the material",
-                format!("Material thickness: {} {unit}", toolpath::trim(thick)),
-                "Check that a sacrificial board is under the material and can take this depth. Without one, the tool can damage the machine bed. If there is one, enter its thickness in the job's settings.",
+                crate::i18n::tr("Tool will cut through the material"),
+                tf!("Material thickness: {} {unit}", toolpath::trim(thick)),
+                crate::i18n::tr("Check that a sacrificial board is under the material and can take this depth. Without one, the tool can damage the machine bed. If there is one, enter its thickness in the job's settings."),
             )
         };
         self.message = Some(format!("{heading}\n\n{sizes}\n\n{}\n\n{advice}", list.join("\n")));
@@ -145,30 +145,30 @@ impl App {
         let Some(deepest) = self.through_warning else { return };
         let (unit, thick, board, allowed) = (self.doc.job.unit(), self.doc.job.thickness, self.doc.job.spoil_board, self.doc.job.deepest_allowed());
         let mut answer = None;
-        let title = if board > 0.0 { "Tool will cut through the sacrificial board" } else { "Tool will cut through the material" };
+        let title = if board > 0.0 { crate::i18n::tr("Tool will cut through the sacrificial board") } else { crate::i18n::tr("Tool will cut through the material") };
         egui::Window::new(title).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
             ui.set_width(330.0);
-            let headline = if board > 0.0 { "This toolpath goes deeper than the material and its board." } else { "This toolpath goes deeper than the material is thick." };
+            let headline = if board > 0.0 { crate::i18n::tr("This toolpath goes deeper than the material and its board.") } else { crate::i18n::tr("This toolpath goes deeper than the material is thick.") };
             ui.label(RichText::new(headline).strong().color(theme::ERROR));
             ui.add_space(6.0);
-            ui.label(format!("Material thickness: {} {unit}", toolpath::trim(thick)));
+            ui.label(tf!("Material thickness: {} {unit}", toolpath::trim(thick)));
             if board > 0.0 {
-                ui.label(format!("Sacrificial board: {} {unit}, {} {unit} in all", toolpath::trim(board), toolpath::trim(allowed)));
+                ui.label(tf!("Sacrificial board: {} {unit}, {} {unit} in all", toolpath::trim(board), toolpath::trim(allowed)));
             }
-            ui.label(format!("Deepest cut: {} {unit}", toolpath::trim(deepest)));
+            ui.label(tf!("Deepest cut: {} {unit}", toolpath::trim(deepest)));
             ui.add_space(6.0);
             ui.label(if board > 0.0 {
-                "Nothing is left under the tool here: it can damage the machine bed."
+                crate::i18n::tr("Nothing is left under the tool here: it can damage the machine bed.")
             } else {
-                "Without a sacrificial layer under the material, the tool can damage the machine bed. If there is one, enter its thickness in the job's settings."
+                crate::i18n::tr("Without a sacrificial layer under the material, the tool can damage the machine bed. If there is one, enter its thickness in the job's settings.")
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button("Calculate Anyway").clicked() {
+                if ui.button(crate::i18n::tr("Calculate Anyway")).clicked() {
                     answer = Some(true);
                 }
                 ui.add_space((ui.available_width() - 74.0).max(0.0));
-                if primary(ui, "Cancel", 74.0).clicked() {
+                if primary(ui, crate::i18n::tr("Cancel"), 74.0).clicked() {
                     answer = Some(false);
                 }
             });
@@ -192,10 +192,10 @@ impl App {
         let (start, total, tool_pass) = (op.start_depth, op.cut_depth, op.tool.pass_depth);
         let unit = self.doc.job.unit();
         let mut close = None;
-        egui::Window::new("Edit Passes").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
+        egui::Window::new(crate::i18n::tr("Edit Passes")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.horizontal(|ui| {
-                bold(ui, "Total depth");
+                bold(ui, crate::i18n::tr("Total depth"));
                 ui.label(format!("{} {unit}", toolpath::trim(total)));
             });
             ui.separator();
@@ -213,23 +213,23 @@ impl App {
                     });
                 });
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Double click the bar to add or remove a pass. Click it, or the list, to choose one.").size(11.5).color(theme::MUTED));
+                    ui.label(RichText::new(crate::i18n::tr("Double click the bar to add or remove a pass. Click it, or the list, to choose one.")).size(11.5).color(theme::MUTED));
                     ui.horizontal(|ui| {
-                        ui.label(format!("Pass {}", d.selected + 1));
-                        ui.label("Depth:");
+                        ui.label(tf!("Pass {}", d.selected + 1));
+                        ui.label(crate::i18n::tr("Depth:"));
                         number(ui, &mut d.depth, 54.0);
                         ui.label(unit);
                     });
                     let before = if d.selected == 0 { start } else { d.list[d.selected - 1] };
-                    ui.label(format!("From previous: {} {unit}", toolpath::trim((d.depth - before).max(0.0))));
+                    ui.label(tf!("From previous: {} {unit}", toolpath::trim((d.depth - before).max(0.0))));
                     ui.horizontal(|ui| {
                         // The full depth is the job of the form, so the last pass stays.
-                        if ui.add_enabled(d.selected + 1 < d.list.len(), egui::Button::new("Delete")).clicked() {
+                        if ui.add_enabled(d.selected + 1 < d.list.len(), egui::Button::new(crate::i18n::tr("Delete"))).clicked() {
                             d.list.remove(d.selected);
                             d.selected = d.selected.min(d.list.len() - 1);
                             d.depth = d.list[d.selected];
                         }
-                        if ui.add_enabled(d.selected + 1 < d.list.len(), egui::Button::new("Apply Depth")).clicked() {
+                        if ui.add_enabled(d.selected + 1 < d.list.len(), egui::Button::new(crate::i18n::tr("Apply Depth"))).clicked() {
                             let value = d.depth;
                             d.list[d.selected] = value;
                             tidy_passes(&mut d.list, start, total);
@@ -237,7 +237,7 @@ impl App {
                             d.depth = d.list[d.selected];
                         }
                     });
-                    if ui.button("Clear All Passes").clicked() {
+                    if ui.button(crate::i18n::tr("Clear All Passes")).clicked() {
                         d.list = vec![total];
                         d.selected = 0;
                         d.depth = total;
@@ -246,11 +246,11 @@ impl App {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.checkbox(&mut d.last_on, "Set Last Pass Thickness");
+                ui.checkbox(&mut d.last_on, crate::i18n::tr("Set Last Pass Thickness"));
                 ui.add_enabled_ui(d.last_on, |ui| {
                     number(ui, &mut d.last_thickness, 50.0);
                     ui.label(unit);
-                    if ui.button("Apply Thickness").clicked() && d.last_thickness > 0.0 && d.last_thickness < total - start {
+                    if ui.button(crate::i18n::tr("Apply Thickness")).clicked() && d.last_thickness > 0.0 && d.last_thickness < total - start {
                         d.list = toolpath::passes_with_last(total - start, tool_pass, d.last_thickness).into_iter().map(|v| start + v).collect();
                         d.selected = 0;
                         d.depth = d.list[0];
@@ -258,24 +258,24 @@ impl App {
                 });
             });
             ui.separator();
-            bold(ui, "Fill the list");
+            bold(ui, crate::i18n::tr("Fill the list"));
             let by_depth = passes_by_depth(start, total, tool_pass, d.exact);
-            ui.label(RichText::new(format!("From the tool's pass depth of {} {unit}: {} passes", toolpath::trim(tool_pass), by_depth.len())).size(12.0));
+            ui.label(RichText::new(tf!("From the tool's pass depth of {} {unit}: {} passes", toolpath::trim(tool_pass), by_depth.len())).size(12.0));
             ui.horizontal(|ui| {
-                ui.checkbox(&mut d.exact, "Keep exactly to the tool's pass depth");
+                ui.checkbox(&mut d.exact, crate::i18n::tr("Keep exactly to the tool's pass depth"));
                 ui.add_space((ui.available_width() - 76.0).max(0.0));
-                if ui.button("Use Tool Depth").clicked() {
+                if ui.button(crate::i18n::tr("Use Tool Depth")).clicked() {
                     d.list = by_depth.clone();
                     d.selected = 0;
                     d.depth = d.list[0];
                 }
             });
             ui.horizontal(|ui| {
-                ui.label("Number of passes");
+                ui.label(crate::i18n::tr("Number of passes"));
                 crate::ui::count_box(ui, &mut d.count, 44.0);
-                ui.label(RichText::new(format!("{} {unit} each", toolpath::trim((total - start) / d.count.max(1) as f64))).size(12.0).color(theme::MUTED));
+                ui.label(RichText::new(tf!("{} {unit} each", toolpath::trim((total - start) / d.count.max(1) as f64))).size(12.0).color(theme::MUTED));
                 ui.add_space((ui.available_width() - 76.0).max(0.0));
-                if ui.button("Use Number").clicked() {
+                if ui.button(crate::i18n::tr("Use Number")).clicked() {
                     d.list = passes_by_count(start, total, d.count);
                     d.selected = 0;
                     d.depth = d.list[0];
@@ -287,7 +287,7 @@ impl App {
                     close = Some(true);
                 }
                 ui.add_space((ui.available_width() - 76.0).max(0.0));
-                if ui.button("Cancel").clicked() {
+                if ui.button(crate::i18n::tr("Cancel")).clicked() {
                     close = Some(false);
                 }
             });
@@ -330,40 +330,40 @@ impl App {
         let names: Vec<String> = self.doc.layers.iter().map(|l| l.name.clone()).collect();
         let before = f.clone();
         let mut close = false;
-        egui::Window::new("Vector Selector").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
+        egui::Window::new(crate::i18n::tr("Vector Selector")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
             ui.set_width(470.0);
-            ui.label(RichText::new("Selects shapes by filter. With Associate, the filter is applied again each time the toolpath is calculated.").size(11.5).color(theme::MUTED));
+            ui.label(RichText::new(crate::i18n::tr("Selects shapes by filter. With Associate, the filter is applied again each time the toolpath is calculated.")).size(11.5).color(theme::MUTED));
             ui.horizontal(|ui| {
-                bold(ui, "Selection:");
+                bold(ui, crate::i18n::tr("Selection:"));
                 ui.label(match self.selected.len() {
-                    0 => "No objects selected".to_string(),
-                    1 => "1 object selected".to_string(),
-                    n => format!("{n} objects selected"),
+                    0 => crate::i18n::tr("No objects selected").to_string(),
+                    1 => crate::i18n::tr("1 object selected").to_string(),
+                    n => tf!("{n} objects selected"),
                 });
             });
             ui.separator();
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(250.0);
-                    bold(ui, "Type of vectors to select ...");
-                    ui.checkbox(&mut f.open, "Open Vectors");
-                    ui.checkbox(&mut f.closed, "Closed Vectors ...");
+                    bold(ui, crate::i18n::tr("Type of vectors to select ..."));
+                    ui.checkbox(&mut f.open, crate::i18n::tr("Open Vectors"));
+                    ui.checkbox(&mut f.closed, crate::i18n::tr("Closed Vectors ..."));
                     ui.add_enabled_ui(f.closed, |ui| {
                         ui.indent("closed", |ui| {
-                            ui.radio_value(&mut f.only_circles, false, "All Closed Vectors");
-                            ui.radio_value(&mut f.only_circles, true, "Only Circles");
+                            ui.radio_value(&mut f.only_circles, false, crate::i18n::tr("All Closed Vectors"));
+                            ui.radio_value(&mut f.only_circles, true, crate::i18n::tr("Only Circles"));
                             ui.add_enabled_ui(f.only_circles, |ui| {
                                 ui.indent("circles", |ui| {
-                                    ui.radio_value(&mut f.circle_match, 0, "Select ALL Circles");
-                                    ui.radio_value(&mut f.circle_match, 1, "Select Circles Matching Tool Diameter");
-                                    ui.radio_value(&mut f.circle_match, 2, "Select Circles Matching ...");
+                                    ui.radio_value(&mut f.circle_match, 0, crate::i18n::tr("Select ALL Circles"));
+                                    ui.radio_value(&mut f.circle_match, 1, crate::i18n::tr("Select Circles Matching Tool Diameter"));
+                                    ui.radio_value(&mut f.circle_match, 2, crate::i18n::tr("Select Circles Matching ..."));
                                     ui.horizontal(|ui| {
-                                        ui.label("Circle Diameter");
+                                        ui.label(crate::i18n::tr("Circle Diameter"));
                                         number(ui, &mut f.diameter, 54.0);
                                         ui.label(unit);
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("Tolerance");
+                                        ui.label(crate::i18n::tr("Tolerance"));
                                         number(ui, &mut f.tolerance, 54.0);
                                         ui.label(unit);
                                     });
@@ -372,14 +372,14 @@ impl App {
                         });
                     });
                     ui.add_space(4.0);
-                    ui.checkbox(&mut f.associate, "Associate with toolpath");
+                    ui.checkbox(&mut f.associate, crate::i18n::tr("Associate with toolpath"));
                 });
                 // A separator here would stretch to the window's height and make it grow every frame.
                 ui.add_space(10.0);
                 ui.vertical(|ui| {
-                    bold(ui, "Select vectors on ...");
-                    ui.radio_value(&mut f.visible_layers, true, "All visible layers");
-                    ui.radio_value(&mut f.visible_layers, false, "Selected layers only");
+                    bold(ui, crate::i18n::tr("Select vectors on ..."));
+                    ui.radio_value(&mut f.visible_layers, true, crate::i18n::tr("All visible layers"));
+                    ui.radio_value(&mut f.visible_layers, false, crate::i18n::tr("Selected layers only"));
                     ui.add_enabled_ui(!f.visible_layers, |ui| {
                         egui::ScrollArea::vertical().id_salt("selector_layers").max_height(180.0).show(ui, |ui| {
                             for (i, name) in names.iter().enumerate() {
@@ -398,7 +398,7 @@ impl App {
             });
             ui.separator();
             ui.vertical_centered(|ui| {
-                if primary(ui, "Close", 74.0).clicked() {
+                if primary(ui, crate::i18n::tr("Close"), 74.0).clicked() {
                     close = true;
                 }
             });

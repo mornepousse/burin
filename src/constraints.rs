@@ -99,54 +99,54 @@ pub enum Want {
 impl Kind {
     pub fn name(self) -> &'static str {
         match self {
-            Kind::Coincident => "Coincident",
-            Kind::Concentric => "Concentric",
-            Kind::Horizontal => "Horizontal",
-            Kind::Vertical => "Vertical",
-            Kind::Parallel => "Parallel",
-            Kind::Perpendicular => "Perpendicular",
-            Kind::Equal => "Equal",
-            Kind::Tangent => "Tangent",
-            Kind::Midpoint => "Midpoint",
-            Kind::Fixed => "Fixed",
-            Kind::Distance => "Distance",
-            Kind::Diameter => "Diameter",
-            Kind::Angle => "Angle",
-            Kind::Collinear => "Collinear",
-            Kind::PointOnLine => "Point on Line",
-            Kind::PointOnCircle => "Point on Circle",
-            Kind::Symmetric => "Symmetric",
-            Kind::DistanceX => "Horizontal Distance",
-            Kind::DistanceY => "Vertical Distance",
-            Kind::LineDistance => "Distance to Line",
-            Kind::Radius => "Radius",
-            Kind::Keep => "Fillet Size",
+            Kind::Coincident => crate::i18n::tr("Coincident"),
+            Kind::Concentric => crate::i18n::tr("Concentric"),
+            Kind::Horizontal => crate::i18n::tr("Horizontal"),
+            Kind::Vertical => crate::i18n::tr("Vertical"),
+            Kind::Parallel => crate::i18n::tr("Parallel"),
+            Kind::Perpendicular => crate::i18n::tr("Perpendicular"),
+            Kind::Equal => crate::i18n::tr("Equal"),
+            Kind::Tangent => crate::i18n::tr("Tangent"),
+            Kind::Midpoint => crate::i18n::tr("Midpoint"),
+            Kind::Fixed => crate::i18n::tr("Fixed"),
+            Kind::Distance => crate::i18n::tr("Distance"),
+            Kind::Diameter => crate::i18n::tr("Diameter"),
+            Kind::Angle => crate::i18n::tr("Angle"),
+            Kind::Collinear => crate::i18n::tr("Collinear"),
+            Kind::PointOnLine => crate::i18n::tr("Point on Line"),
+            Kind::PointOnCircle => crate::i18n::tr("Point on Circle"),
+            Kind::Symmetric => crate::i18n::tr("Symmetric"),
+            Kind::DistanceX => crate::i18n::tr("Horizontal Distance"),
+            Kind::DistanceY => crate::i18n::tr("Vertical Distance"),
+            Kind::LineDistance => crate::i18n::tr("Distance to Line"),
+            Kind::Radius => crate::i18n::tr("Radius"),
+            Kind::Keep => crate::i18n::tr("Fillet Size"),
         }
     }
 
     pub fn prompt(self) -> &'static str {
         match self {
-            Kind::Coincident => "Click two points to join them.",
-            Kind::Concentric => "Click two circles to share one centre.",
-            Kind::Horizontal => "Click a line, or two points, to level them.",
-            Kind::Vertical => "Click a line, or two points, to line them up vertically.",
-            Kind::Parallel => "Click two lines.",
-            Kind::Perpendicular => "Click two lines to set them square.",
-            Kind::Equal => "Click two lines or two circles to make them the same size.",
-            Kind::Tangent => "Click a line and a circle, or two circles, to make them touch.",
-            Kind::Midpoint => "Click a point, then the line whose middle it should sit on.",
-            Kind::Fixed => "Click a point or a circle to lock it where it is.",
-            Kind::Distance => "Click two points, or one line, to set a distance.",
-            Kind::Diameter => "Click a circle to set its diameter.",
-            Kind::Angle => "Click two lines to set the angle between them.",
-            Kind::Collinear => "Click two lines to put them on one straight line.",
-            Kind::PointOnLine => "Click a point, then a line it should stay on.",
-            Kind::PointOnCircle => "Click a point, then a circle it should stay on.",
-            Kind::Symmetric => "Click two points, then the line they mirror across.",
-            Kind::DistanceX => "Click two points to set how far apart they are across.",
-            Kind::DistanceY => "Click two points to set how far apart they are up and down.",
-            Kind::LineDistance => "Click a point, then a line, to set the gap between them.",
-            Kind::Radius => "Click a circle to set its radius.",
+            Kind::Coincident => crate::i18n::tr("Click two points to join them."),
+            Kind::Concentric => crate::i18n::tr("Click two circles to share one centre."),
+            Kind::Horizontal => crate::i18n::tr("Click a line, or two points, to level them."),
+            Kind::Vertical => crate::i18n::tr("Click a line, or two points, to line them up vertically."),
+            Kind::Parallel => crate::i18n::tr("Click two lines."),
+            Kind::Perpendicular => crate::i18n::tr("Click two lines to set them square."),
+            Kind::Equal => crate::i18n::tr("Click two lines or two circles to make them the same size."),
+            Kind::Tangent => crate::i18n::tr("Click a line and a circle, or two circles, to make them touch."),
+            Kind::Midpoint => crate::i18n::tr("Click a point, then the line whose middle it should sit on."),
+            Kind::Fixed => crate::i18n::tr("Click a point or a circle to lock it where it is."),
+            Kind::Distance => crate::i18n::tr("Click two points, or one line, to set a distance."),
+            Kind::Diameter => crate::i18n::tr("Click a circle to set its diameter."),
+            Kind::Angle => crate::i18n::tr("Click two lines to set the angle between them."),
+            Kind::Collinear => crate::i18n::tr("Click two lines to put them on one straight line."),
+            Kind::PointOnLine => crate::i18n::tr("Click a point, then a line it should stay on."),
+            Kind::PointOnCircle => crate::i18n::tr("Click a point, then a circle it should stay on."),
+            Kind::Symmetric => crate::i18n::tr("Click two points, then the line they mirror across."),
+            Kind::DistanceX => crate::i18n::tr("Click two points to set how far apart they are across."),
+            Kind::DistanceY => crate::i18n::tr("Click two points to set how far apart they are up and down."),
+            Kind::LineDistance => crate::i18n::tr("Click a point, then a line, to set the gap between them."),
+            Kind::Radius => crate::i18n::tr("Click a circle to set its radius."),
             Kind::Keep => "",
         }
     }
@@ -926,7 +926,7 @@ fn write_back(doc: &mut Doc, x: &Vars, rules: &[Constraint]) -> bool {
 }
 
 fn arc_fit_path(path: &Path) -> Option<(P, f64)> {
-    let probe = Vector { id: 0, paths: vec![path.clone()], layer: 0, prim: Prim::Free, construction: false };
+    let probe = Vector { id: 0, paths: vec![path.clone()], layer: 0, prim: Prim::Free, construction: false, members: Vec::new(), piece: None };
     arc_fit(&probe)
 }
 
@@ -1219,7 +1219,7 @@ impl App {
         let kept: Vec<Constraint> = doc.constraints.iter().filter(|c| c.valid(doc)).cloned().collect();
         self.doc.constraints = kept;
         if self.doc.constraints.len() != before {
-            self.status = format!("Removed {} rule(s) whose shapes changed.", before - self.doc.constraints.len());
+            self.status = tf!("Removed {} rule(s) whose shapes changed.", before - self.doc.constraints.len());
         }
         let dragging = !matches!(self.drag, Drag::None);
         if !dragging {
@@ -1242,15 +1242,10 @@ impl App {
             self.constraint_conflict = !solved;
             if solved {
                 self.failed_print = None;
-                self.relink_due = true;
             } else {
                 self.failed_print = Some(print);
-                self.status = "The rules can't all be met. Undo the last change, or remove a rule.".into();
+                self.status = crate::i18n::tr("The rules can't all be met. Undo the last change, or remove a rule.").into();
             }
-        }
-        if self.relink_due && !dragging {
-            self.relink_due = false;
-            self.relink_toolpaths();
         }
     }
 
@@ -1286,7 +1281,7 @@ impl App {
                     let picks = std::mem::take(&mut self.picks);
                     self.make_dimension(&picks, f.dim_mode);
                 }
-                None => self.status = "Click a line, a circle, or two points to dimension them.".into(),
+                None => self.status = crate::i18n::tr("Click a line, a circle, or two points to dimension them.").into(),
             }
         } else if let Some(kind) = f.constraint {
             self.pick_for_constraint(kind, at, reach);
@@ -1317,7 +1312,7 @@ impl App {
             [e] if is_line(*e) => (linear, vec![*e]),
             [e @ Elem::Round { .. }] => (Kind::Diameter, vec![*e]),
             [_] => {
-                self.status = "Pick a second point to measure to.".into();
+                self.status = crate::i18n::tr("Pick a second point to measure to.").into();
                 return false;
             }
             [a, b] if is_line(*a) && is_line(*b) => (Kind::Angle, vec![*a, *b]),
@@ -1348,7 +1343,7 @@ impl App {
         let Some(kind) = self.doc.constraints.get(i).map(|c| c.kind) else { return false };
         let lowest = if kind == Kind::Angle { 0.0 } else { 1e-6 };
         if !value.is_finite() || value < lowest {
-            self.status = "A dimension needs a value above zero.".into();
+            self.status = crate::i18n::tr("A dimension needs a value above zero.").into();
             return false;
         }
         // Try it on a copy first: a value the other rules can't allow is simply refused.
@@ -1359,7 +1354,7 @@ impl App {
         let pins = self.current_pins();
         self.dim_anchor = saved;
         if !solve(&mut trial, &pins) && !solve(&mut trial, &Pins::default()) {
-            self.status = format!("{} can't be {} with the other rules. Remove a rule to free it.", kind.name(), crate::toolpath::trim(value));
+            self.status = tf!("{} can't be {} with the other rules. Remove a rule to free it.", kind.name(), crate::toolpath::trim(value));
             return false;
         }
         self.checkpoint();
@@ -1374,7 +1369,7 @@ impl App {
         let mut ids: Vec<u64> = self.picks.iter().map(|e| e.vector()).collect();
         ids.extend(self.selected.iter().copied());
         if ids.is_empty() {
-            self.status = "Pick the shapes to change first.".into();
+            self.status = crate::i18n::tr("Pick the shapes to change first.").into();
             return;
         }
         self.checkpoint();
@@ -1383,8 +1378,7 @@ impl App {
             v.construction = on;
             n += 1;
         }
-        self.status = if on { format!("{n} shape(s) are now construction: they guide the drawing but are never cut.") } else { format!("{n} shape(s) are now normal.") };
-        self.relink_due = true;
+        self.status = if on { tf!("{n} shape(s) are now construction: they guide the drawing but are never cut.") } else { tf!("{n} shape(s) are now normal.") };
     }
 
     /// A dimension's lines and label, in screen positions.
@@ -1505,9 +1499,9 @@ impl App {
         };
         let kind = c.kind;
         let at = self.dim_parts(c).map_or(pos2(400.0, 300.0), |p| p.label + vec2(14.0, 12.0));
-        let unit = if kind == Kind::Angle { "degrees" } else { self.doc.job.unit() };
+        let unit = if kind == Kind::Angle { crate::i18n::tr("degrees") } else { self.doc.job.unit() };
         let mut done: Option<bool> = None;
-        egui::Window::new("Modify").title_bar(false).resizable(false).fixed_pos(at).show(ctx, |ui| {
+        egui::Window::new(crate::i18n::tr("Modify")).title_bar(false).resizable(false).fixed_pos(at).show(ctx, |ui| {
             crate::ui::bold(ui, kind.name());
             ui.horizontal(|ui| {
                 let edit = ui.add(egui::TextEdit::singleline(&mut self.dim_text).desired_width(70.0));
@@ -1525,10 +1519,10 @@ impl App {
                 ui.colored_label(theme::ERROR, why);
             }
             ui.horizontal(|ui| {
-                if ui.button("Set Value").clicked() {
+                if ui.button(crate::i18n::tr("Set Value")).clicked() {
                     done = Some(true);
                 }
-                if ui.button("Keep As Is").clicked() {
+                if ui.button(crate::i18n::tr("Keep As Is")).clicked() {
                     done = Some(false);
                 }
             });
@@ -1540,7 +1534,7 @@ impl App {
                     self.dim_error = None;
                 }
                 Ok(_) => self.dim_error = Some(self.status.clone()),
-                Err(_) => self.dim_error = Some("Type a number, for example 4 or 12.5.".into()),
+                Err(_) => self.dim_error = Some(crate::i18n::tr("Type a number, for example 4 or 12.5.").into()),
             },
             Some(false) => {
                 self.dim_edit = None;
@@ -1776,7 +1770,7 @@ impl App {
         self.doc.constraints = kept;
         self.failed_print = None;
         if dropped > 0 {
-            self.status = format!("{dropped} rule(s) on the part that changed were removed.");
+            self.status = tf!("{dropped} rule(s) on the part that changed were removed.");
         }
     }
 
@@ -1940,28 +1934,27 @@ impl App {
             false
         };
         if self.doc.constraints.iter().any(same) {
-            return refuse(self, format!("This {} rule is already there.", kind.name().to_lowercase()));
+            return refuse(self, tf!("This {} rule is already there.", kind.name().to_lowercase()));
         }
         // Keeping a rectangle square may have just made this very rule.
         if !trial.constraints.iter().any(same) {
             let rule = Constraint { kind, items: items.clone(), value, at, place: [0.0, 0.0] };
             if is_implied(&trial, &rule) {
-                return refuse(self, format!("No need for a {} rule: the others already make this true.", kind.name().to_lowercase()));
+                return refuse(self, tf!("No need for a {} rule: the others already make this true.", kind.name().to_lowercase()));
             }
             let before = trial.clone();
             trial.constraints.push(rule);
             if !solve(&mut trial, &Pins::default()) {
-                return refuse(self, format!("A {} rule can't hold together with the rules already there.", kind.name().to_lowercase()));
+                return refuse(self, tf!("A {} rule can't hold together with the rules already there.", kind.name().to_lowercase()));
             }
             if collapses(&before, &trial) {
-                return refuse(self, format!("A {} rule here would shrink a line to nothing.", kind.name().to_lowercase()));
+                return refuse(self, tf!("A {} rule here would shrink a line to nothing.", kind.name().to_lowercase()));
             }
         }
         self.checkpoint();
         self.doc = trial;
         self.sketch_note = None;
-        self.relink_due = true;
-        self.status = format!("Added the {} rule.", kind.name().to_lowercase());
+        self.status = tf!("Added the {} rule.", kind.name().to_lowercase());
         true
     }
 
@@ -2032,8 +2025,7 @@ impl App {
         if same {
             self.undo.pop();
         } else {
-            self.relink_due = true;
-        }
+            }
     }
 
     /// Where a rule's badge goes for one of the things it holds, and which way to shift when crowded.
@@ -2200,13 +2192,13 @@ impl App {
             return None;
         }
         if self.constraint_conflict {
-            return Some(("Over defined: the rules disagree".into(), theme::ERROR));
+            return Some((crate::i18n::tr("Over defined: the rules disagree").into(), theme::ERROR));
         }
         let open = self.defined.values().filter(|fully| !**fully).count();
         Some(if open == 0 && !self.defined.is_empty() {
-            ("Fully defined".into(), Color32::from_rgb(120, 214, 140))
+            (crate::i18n::tr("Fully defined").into(), Color32::from_rgb(120, 214, 140))
         } else {
-            (format!("Under defined: {open} shape(s) can still move"), Color32::from_rgb(120, 170, 250))
+            (tf!("Under defined: {open} shape(s) can still move"), Color32::from_rgb(120, 170, 250))
         })
     }
 
@@ -2225,11 +2217,11 @@ impl App {
         }
         // What to do next, where it can't be missed.
         let prompt = match (f.smart, f.constraint) {
-            (true, _) if self.picks.is_empty() => "Click a line or a circle, or two things to measure between.".to_string(),
-            (true, _) => "Click empty sheet for this one, or a second thing.".to_string(),
+            (true, _) if self.picks.is_empty() => crate::i18n::tr("Click a line or a circle, or two things to measure between.").to_string(),
+            (true, _) => crate::i18n::tr("Click empty sheet for this one, or a second thing.").to_string(),
             (false, Some(kind)) => kind.prompt().to_string(),
-            _ if self.picks.is_empty() => "Click things on the sheet, or drag them to see what can still move. The rules that fit stay lit.".to_string(),
-            _ => format!("{} picked. Choose a rule, or click empty sheet to start over.", self.picks.len()),
+            _ if self.picks.is_empty() => crate::i18n::tr("Click things on the sheet, or drag them to see what can still move. The rules that fit stay lit.").to_string(),
+            _ => tf!("{} picked. Choose a rule, or click empty sheet to start over.", self.picks.len()),
         };
         let note = self.sketch_note.clone();
         egui::Frame::new().fill(if note.is_some() { Color32::from_rgb(92, 44, 40) } else { theme::ACCENT_SOFT }).corner_radius(4).inner_margin(egui::Margin::symmetric(7, 5)).show(ui, |ui| {
@@ -2238,7 +2230,7 @@ impl App {
         });
         card(ui, |ui| {
             let wide = ui.available_width();
-            if ui.add(egui::Button::new("Smart Dimension").selected(f.smart).min_size(vec2(wide, 24.0))).on_hover_text("Line: length. Circle: diameter. Two points: distance. Two lines: angle.").clicked() {
+            if ui.add(egui::Button::new(crate::i18n::tr("Smart Dimension")).selected(f.smart).min_size(vec2(wide, 24.0))).on_hover_text(crate::i18n::tr("Line: length. Circle: diameter. Two points: distance. Two lines: angle.")).clicked() {
                 f.smart = !f.smart;
                 f.constraint = None;
                 self.picks.clear();
@@ -2246,15 +2238,15 @@ impl App {
             }
             if f.smart {
                 ui.horizontal(|ui| {
-                    ui.radio_value(&mut f.dim_mode, DimMode::Smart, "Aligned");
-                    ui.radio_value(&mut f.dim_mode, DimMode::Horizontal, "Across");
-                    ui.radio_value(&mut f.dim_mode, DimMode::Vertical, "Up");
+                    ui.radio_value(&mut f.dim_mode, DimMode::Smart, crate::i18n::tr("Aligned"));
+                    ui.radio_value(&mut f.dim_mode, DimMode::Horizontal, crate::i18n::tr("Across"));
+                    ui.radio_value(&mut f.dim_mode, DimMode::Vertical, crate::i18n::tr("Up"));
                 });
             }
         });
         let mut apply: Option<(Kind, Vec<Elem>)> = None;
         card(ui, |ui| {
-            bold(ui, "Relations");
+            bold(ui, crate::i18n::tr("Relations"));
             ui.spacing_mut().button_padding.x = 3.0;
             egui::Grid::new("constraint_kinds").num_columns(2).spacing([2.0, 2.0]).show(ui, |ui| {
                 for (i, kind) in RELATIONS.iter().enumerate() {
@@ -2282,7 +2274,7 @@ impl App {
                     }
                 }
             });
-            if f.constraint.is_some() && ui.small_button("Stop this relation").clicked() {
+            if f.constraint.is_some() && ui.small_button(crate::i18n::tr("Stop this relation")).clicked() {
                 f.constraint = None;
                 self.picks.clear();
             }
@@ -2295,14 +2287,14 @@ impl App {
         let mut changed = false;
         card(ui, |ui| {
             ui.horizontal(|ui| {
-                bold(ui, &format!("Rules in this drawing: {}", self.doc.constraints.len()));
+                bold(ui, &tf!("Rules in this drawing: {}", self.doc.constraints.len()));
             });
-            ui.checkbox(&mut self.show_constraints, "Show the rules on the sheet");
+            ui.checkbox(&mut self.show_constraints, crate::i18n::tr("Show the rules on the sheet"));
             if self.constraint_conflict {
-                ui.colored_label(theme::ERROR, "These rules can't all be met.");
+                ui.colored_label(theme::ERROR, crate::i18n::tr("These rules can't all be met."));
             }
             if self.doc.constraints.is_empty() {
-                ui.label(egui::RichText::new("None yet. Pick a rule above, then click on the drawing.").size(11.5).color(theme::MUTED));
+                ui.label(egui::RichText::new(crate::i18n::tr("None yet. Pick a rule above, then click on the drawing.")).size(11.5).color(theme::MUTED));
             }
             // Dimensions first: those are the numbers worth reaching for.
             let mut order: Vec<usize> = (0..self.doc.constraints.len()).filter(|i| self.doc.constraints[*i].kind != Kind::Keep).collect();
@@ -2328,8 +2320,8 @@ impl App {
                                 ui.label(if kind == Kind::Angle { "deg" } else { unit });
                             }
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let response = ui.small_button("x").on_hover_text("Remove this rule");
-                                crate::ui::label_widget(&response, &format!("Remove rule {}", i + 1));
+                                let response = ui.small_button("x").on_hover_text(crate::i18n::tr("Remove this rule"));
+                                crate::ui::label_widget(&response, &tf!("Remove rule {}", i + 1));
                                 if response.clicked() {
                                     remove = Some(i);
                                 }
@@ -2341,7 +2333,7 @@ impl App {
                     }
                 }
             });
-            if !self.doc.constraints.is_empty() && ui.button("Remove All Rules").clicked() {
+            if !self.doc.constraints.is_empty() && ui.button(crate::i18n::tr("Remove All Rules")).clicked() {
                 self.checkpoint();
                 self.doc.constraints.clear();
                 self.selected_rule = None;
@@ -2360,17 +2352,17 @@ impl App {
             }
         }
         card(ui, |ui| {
-            bold(ui, "Line Type");
+            bold(ui, crate::i18n::tr("Line Type"));
             let some = !self.picks.is_empty() || !self.selected.is_empty();
             ui.horizontal(|ui| {
-                if ui.add_enabled(some, egui::Button::new("Normal")).clicked() {
+                if ui.add_enabled(some, egui::Button::new(crate::i18n::tr("Normal"))).clicked() {
                     self.set_construction(false);
                 }
-                if ui.add_enabled(some, egui::Button::new("Construction")).on_hover_text("Construction lines guide the drawing and are never cut.").clicked() {
+                if ui.add_enabled(some, egui::Button::new(crate::i18n::tr("Construction"))).on_hover_text(crate::i18n::tr("Construction lines guide the drawing and are never cut.")).clicked() {
                     self.set_construction(true);
                 }
             });
-            ui.checkbox(&mut self.doc.new_construction, "Draw new shapes as construction");
+            ui.checkbox(&mut self.doc.new_construction, crate::i18n::tr("Draw new shapes as construction"));
         });
     }
 
@@ -2700,7 +2692,7 @@ mod tests {
     }
 
     #[test]
-    fn toolpaths_follow_shapes_moved_by_a_rule() {
+    fn toolpaths_wait_for_recalculate_when_a_rule_moves_their_shapes() {
         let mut a = app();
         let d1 = disc(&mut a, [2.0, 5.0], 0.5);
         let d2 = disc(&mut a, [7.0, 5.0], 0.5);
@@ -2711,6 +2703,9 @@ mod tests {
         assert!(a.add_constraint(Kind::Fixed, vec![Elem::Centre { v: d1 }]));
         assert!(a.add_constraint(Kind::Concentric, vec![Elem::Round { v: d2 }, Elem::Round { v: d1 }]));
         a.maintain_constraints();
+        let drilled = a.doc.toolpaths[0].moves.iter().find(|m| !m.rapid).unwrap().p;
+        assert!((drilled[0] - 7.0).abs() < 1e-3, "not on its own: {drilled:?}");
+        a.recalculate_all();
         let drilled = a.doc.toolpaths[0].moves.iter().find(|m| !m.rapid).unwrap().p;
         assert!((drilled[0] - 2.0).abs() < 1e-3, "the drill went with the hole: {drilled:?}");
     }

@@ -33,10 +33,10 @@ pub struct Image {
 
 impl Image {
     pub fn load(file: &FilePath) -> Result<Image, String> {
-        let decoded = image::open(file).map_err(|e| format!("Could not read this picture: {e}"))?.to_rgba8();
+        let decoded = image::open(file).map_err(|e| tf!("Could not read this picture: {e}"))?.to_rgba8();
         let (w, h) = (decoded.width() as usize, decoded.height() as usize);
         if w == 0 || h == 0 {
-            return Err("This picture is empty.".into());
+            return Err(crate::i18n::tr("This picture is empty.").into());
         }
         Ok(Image { w, h, rgba: Arc::new(decoded.into_raw()) })
     }
@@ -333,7 +333,7 @@ impl App {
                     self.bitmap_pixels.insert(file.clone(), img);
                 }
                 Err(_) => {
-                    self.status = format!("The picture {file} can't be found.");
+                    self.status = tf!("The picture {file} can't be found.");
                     self.bitmap_missing.insert(file);
                     return None;
                 }
@@ -380,7 +380,7 @@ impl App {
         let colors = self.traced_loops(f);
         let total: usize = colors.iter().map(Vec::len).sum();
         if total == 0 {
-            self.status = "Nothing to trace with these settings. Tick a colour, or lower the noise filter.".into();
+            self.status = crate::i18n::tr("Nothing to trace with these settings. Tick a colour, or lower the noise filter.").into();
             return 0;
         }
         self.checkpoint();
@@ -396,18 +396,18 @@ impl App {
                 }
             }
         }
-        self.status = format!("Traced {total} outlines.");
+        self.status = tf!("Traced {total} outlines.");
         total
     }
 
     pub fn trace_form(&mut self, ui: &mut Ui, mut f: TraceForm) {
         self.refresh_sorting(&mut f);
         let has_bitmap = self.doc.bitmaps.get(self.active_bitmap).is_some();
-        title_card(ui, Icon::Trace, "Trace Bitmap");
+        title_card(ui, Icon::Trace, crate::i18n::tr("Trace Bitmap"));
         let unit = self.doc.job.unit();
         card(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            bold(ui, "Bitmap");
+            bold(ui, crate::i18n::tr("Bitmap"));
             if self.doc.bitmaps.len() > 1 {
                 let names: Vec<String> = self.doc.bitmaps.iter().map(|b| b.name.clone()).collect();
                 let shown = names.get(self.active_bitmap).cloned().unwrap_or_default();
@@ -420,14 +420,14 @@ impl App {
                 ui.add(egui::Label::new(b.name.as_str()).truncate());
             }
             ui.horizontal(|ui| {
-                if ui.button("Import Bitmap ...").clicked() {
-                    if let Some(path) = rfd::FileDialog::new().add_filter("Picture", &["png", "jpg", "jpeg", "bmp"]).pick_file() {
+                if ui.button(crate::i18n::tr("Import Bitmap ...")).clicked() {
+                    if let Some(path) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png", "jpg", "jpeg", "bmp"]).pick_file() {
                         if let Err(e) = self.import_bitmap(&path) {
                             self.message = Some(e);
                         }
                     }
                 }
-                if ui.add_enabled(has_bitmap, egui::Button::new("Remove")).clicked() {
+                if ui.add_enabled(has_bitmap, egui::Button::new(crate::i18n::tr("Remove"))).clicked() {
                     self.checkpoint();
                     self.doc.bitmaps.remove(self.active_bitmap);
                     self.active_bitmap = 0;
@@ -442,7 +442,7 @@ impl App {
                     labelled_from(ui, "X", 10.0, &mut b.at[0], zero[0], 52.0, "");
                     labelled_from(ui, "Y", 10.0, &mut b.at[1], zero[1], 52.0, "");
                 });
-                labelled(ui, "Width", 34.0, &mut b.width, 60.0, unit);
+                labelled(ui, crate::i18n::tr("Width"), 34.0, &mut b.width, 60.0, unit);
                 b.width = b.width.max(1e-3);
                 if was != (b.at, b.width) {
                     f.preview = Arc::new(Vec::new());
@@ -451,11 +451,11 @@ impl App {
         });
         card(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            bold(ui, "Type of tracing to use");
-            ui.radio_value(&mut f.color, true, "Color");
-            ui.radio_value(&mut f.color, false, "Black / White");
+            bold(ui, crate::i18n::tr("Type of tracing to use"));
+            ui.radio_value(&mut f.color, true, crate::i18n::tr("Color"));
+            ui.radio_value(&mut f.color, false, crate::i18n::tr("Black / White"));
             if f.color {
-                bold(ui, "Number of Colors");
+                bold(ui, crate::i18n::tr("Number of Colors"));
                 let mut n = f.colors as f32;
                 ui.spacing_mut().slider_width = 150.0;
                 slider_ends(ui, "Min", "Max");
@@ -463,12 +463,12 @@ impl App {
                     f.colors = n as usize;
                 }
             } else {
-                bold(ui, "Threshold");
+                bold(ui, crate::i18n::tr("Threshold"));
                 ui.spacing_mut().slider_width = 150.0;
-                slider_ends(ui, "Dark", "Light");
+                slider_ends(ui, crate::i18n::tr("Dark"), crate::i18n::tr("Light"));
                 ui.add(egui::Slider::new(&mut f.threshold, 0.02..=0.98).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)));
             }
-            bold(ui, "Colors to fit vectors to ...");
+            bold(ui, crate::i18n::tr("Colors to fit vectors to ..."));
             match &f.sorted {
                 Some(s) => {
                     let palette = s.palette.clone();
@@ -488,8 +488,8 @@ impl App {
                     });
                 }
                 None => {
-                    bold(ui, "No bitmap selected");
-                    ui.label(RichText::new("Import a picture to fit vectors to.").color(theme::MUTED));
+                    bold(ui, crate::i18n::tr("No bitmap selected"));
+                    ui.label(RichText::new(crate::i18n::tr("Import a picture to fit vectors to.")).color(theme::MUTED));
                 }
             }
         });
@@ -498,39 +498,39 @@ impl App {
             ui.spacing_mut().item_spacing.y = 3.0;
             ui.spacing_mut().slider_width = 130.0;
             ui.horizontal(|ui| {
-                bold(ui, "Corner Fit");
+                bold(ui, crate::i18n::tr("Corner Fit"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Default Corner Fit").clicked() {
+                    if ui.button(crate::i18n::tr("Default Corner Fit")).clicked() {
                         f.corner = DEFAULT_CORNER;
                     }
                 });
             });
-            slider_ends(ui, "Loose", "Tight");
+            slider_ends(ui, crate::i18n::tr("Loose"), crate::i18n::tr("Tight"));
             ui.add(egui::Slider::new(&mut f.corner, 0.0..=1.0).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)));
             ui.separator();
             ui.horizontal(|ui| {
-                bold(ui, "Noise Filter");
+                bold(ui, crate::i18n::tr("Noise Filter"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Default Noise").clicked() {
+                    if ui.button(crate::i18n::tr("Default Noise")).clicked() {
                         f.noise = DEFAULT_NOISE;
                     }
                 });
             });
-            slider_ends(ui, "1 Pixel", "10 Pixels");
+            slider_ends(ui, crate::i18n::tr("1 Pixel"), crate::i18n::tr("10 Pixels"));
             ui.add(egui::Slider::new(&mut f.noise, 1.0..=10.0).step_by(1.0).fixed_decimals(0));
             ui.separator();
             let i = self.active_bitmap;
             ui.horizontal(|ui| {
-                bold(ui, "Bitmap");
+                bold(ui, crate::i18n::tr("Bitmap"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add_enabled(has_bitmap, egui::Button::new("Default Fading")).clicked() {
+                    if ui.add_enabled(has_bitmap, egui::Button::new(crate::i18n::tr("Default Fading"))).clicked() {
                         if let Some(b) = self.doc.bitmaps.get_mut(i) {
                             b.fade = DEFAULT_FADE;
                         }
                     }
                 });
             });
-            slider_ends(ui, "None", "Full");
+            slider_ends(ui, crate::i18n::tr("None"), crate::i18n::tr("Full"));
             let mut fade = self.doc.bitmaps.get(i).map_or(DEFAULT_FADE, |b| b.fade);
             if ui.add_enabled(has_bitmap, egui::Slider::new(&mut fade, 0.0..=1.0).custom_formatter(|v, _| format!("{:.0}%", v * 100.0))).changed() {
                 if let Some(b) = self.doc.bitmaps.get_mut(i) {
@@ -538,22 +538,22 @@ impl App {
                 }
             }
             ui.separator();
-            ui.checkbox(&mut f.group, "Group vectors");
+            ui.checkbox(&mut f.group, crate::i18n::tr("Group vectors"));
         });
         if before.0 != f.corner || before.1 != f.noise {
             f.preview = Arc::new(Vec::new());
         }
         let ready = has_bitmap && f.sorted.is_some();
-        if ui.add_enabled(ready, egui::Button::new("Preview").min_size(vec2(ui.available_width() - 4.0, 20.0))).clicked() {
+        if ui.add_enabled(ready, egui::Button::new(crate::i18n::tr("Preview")).min_size(vec2(ui.available_width() - 4.0, 20.0))).clicked() {
             f.preview = Arc::new(self.traced_loops(&f).into_iter().flatten().collect());
-            self.status = format!("{} outlines would be made.", f.preview.len());
+            self.status = tf!("{} outlines would be made.", f.preview.len());
         }
         let mut close = false;
         let mut apply = false;
         ui.horizontal(|ui| {
-            close = wide(ui, "Close", 74.0).clicked();
+            close = wide(ui, crate::i18n::tr("Close"), 74.0).clicked();
             ui.add_space((ui.available_width() - 80.0).max(0.0));
-            apply = ui.add_enabled(ready, egui::Button::new(RichText::new("Apply").color(theme::ON_ACCENT).strong()).fill(theme::ACCENT).min_size(vec2(74.0, 22.0))).clicked();
+            apply = ui.add_enabled(ready, egui::Button::new(RichText::new(crate::i18n::tr("Apply")).color(theme::ON_ACCENT).strong()).fill(theme::ACCENT).min_size(vec2(74.0, 22.0))).clicked();
         });
         if apply && self.apply_trace(&f) > 0 {
             f.preview = Arc::new(Vec::new());

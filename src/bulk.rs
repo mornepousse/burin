@@ -81,9 +81,9 @@ impl Class {
     pub fn describe(&self, unit: &str) -> String {
         let n = |v: f64| toolpath::trim((v * 10_000.0).round() / 10_000.0);
         match self {
-            Class::Circle { d } => format!("Circle, diameter {} {unit}", n(*d)),
-            Class::Rectangle { w, h } => format!("Rectangle {} x {} {unit}", n(*w), n(*h)),
-            Class::Other { w, h } => format!("Shape {} x {} {unit}", n(*w), n(*h)),
+            Class::Circle { d } => tf!("Circle, diameter {} {unit}", n(*d)),
+            Class::Rectangle { w, h } => tf!("Rectangle {} x {} {unit}", n(*w), n(*h)),
+            Class::Other { w, h } => tf!("Shape {} x {} {unit}", n(*w), n(*h)),
         }
     }
 }
@@ -118,7 +118,7 @@ impl App {
     pub fn select_similar(&mut self, tol: f64) {
         let seeds: Vec<Class> = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id)).filter_map(classify).collect();
         if seeds.is_empty() {
-            self.status = "Select one shape first, then its look-alikes can be found.".into();
+            self.status = crate::i18n::tr("Select one shape first, then its look-alikes can be found.").into();
             return;
         }
         let matches: Vec<u64> = self
@@ -128,7 +128,7 @@ impl App {
             .filter(|v| self.editable(v) && classify(v).is_some_and(|c| seeds.iter().any(|s| s.same_as(&c, tol))))
             .map(|v| v.id)
             .collect();
-        self.status = format!("{} similar shapes selected.", matches.len());
+        self.status = tf!("{} similar shapes selected.", matches.len());
         self.selected = matches;
     }
 
@@ -141,7 +141,7 @@ impl App {
     /// A value of `None` leaves that size as it is.
     pub fn resize_each(&mut self, d: Option<f64>, w: Option<f64>, h: Option<f64>, anchor: Datum) -> usize {
         if d.is_some_and(|v| v <= 0.0) || w.is_some_and(|v| v <= 0.0) || h.is_some_and(|v| v <= 0.0) {
-            self.status = "Sizes must be above zero.".into();
+            self.status = crate::i18n::tr("Sizes must be above zero.").into();
             return 0;
         }
         self.checkpoint();
@@ -181,21 +181,8 @@ impl App {
             };
             changed += 1;
         }
-        let paths = self.relink_toolpaths();
-        self.status = if paths > 0 { format!("Changed {changed} shapes and recalculated {paths} toolpaths.") } else { format!("Changed {changed} shapes.") };
+        self.status = tf!("Changed {changed} shapes.");
         changed
-    }
-
-    /// Rebuilds toolpaths from the current shapes they were made from; returns how many changed.
-    pub fn relink_toolpaths(&mut self) -> usize {
-        if self.recalc.is_some() {
-            return 0;
-        }
-        let tasks = self.follow_tasks();
-        if tasks.is_empty() {
-            return 0;
-        }
-        self.run_tasks(tasks, crate::recalc::Finish::Follow, self.background_recalc)
     }
 
     /// The toolpaths whose shapes have changed, each with its settings and its shapes as they are now.
@@ -206,11 +193,12 @@ impl App {
             self.doc.toolpaths[i].op.source = ids;
         }
         let mut tasks = Vec::new();
+        let shapes = self.doc.current_paths();
         for (i, tp) in self.doc.toolpaths.iter().enumerate() {
-            if tp.op.source.is_empty() {
+            if tp.op.source.is_empty() || tp.op.merged {
                 continue;
             }
-            let paths: Vec<Path> = tp.op.source.iter().filter_map(|id| self.doc.vectors.iter().find(|v| v.id == *id && !v.construction)).flat_map(|v| v.paths.iter().cloned()).collect();
+            let paths: Vec<Path> = tp.op.source.iter().filter_map(|id| shapes.get(id)).flat_map(|lines| lines.iter().cloned()).collect();
             if !paths.is_empty() && paths != tp.op.paths {
                 let mut op = tp.op.clone();
                 op.paths = paths;
@@ -220,11 +208,13 @@ impl App {
         tasks
     }
 
-    /// Toolpaths follow their shapes whichever way the drawing was changed, once the change is over.
-    pub fn follow_shapes(&mut self) -> usize {
+    /// Toolpaths stay as they are until Recalculate is pressed: this only notes which are out of date,
+    /// once the change is over, and says so.
+    pub fn note_changed_shapes(&mut self) {
+        self.doc.tidy_pieces();
         let dragging = !matches!(self.drag, crate::canvas::Drag::None);
-        if dragging || self.nudging || self.recalc.is_some() || !self.doc.toolpaths.iter().any(|t| !t.op.source.is_empty() || t.op.selector.is_some()) {
-            return 0;
+        if dragging || self.nudging || self.recalc.is_some() {
+            return;
         }
         let mut print = 0xcbf2_9ce4_8422_2325u64;
         let mut eat = |v: u64| {
@@ -240,12 +230,22 @@ impl App {
                 eat(q[1].to_bits());
             }
         }
+        for t in &self.doc.toolpaths {
+            eat(std::sync::Arc::as_ptr(&t.moves) as usize as u64);
+        }
+        eat(u64::from(self.all_behind));
         if self.shapes_print == Some(print) {
-            return 0;
+            return;
         }
         self.shapes_print = Some(print);
-        let redone = self.relink_toolpaths();
-        redone
+        let before = self.behind.len();
+        self.behind = self.follow_tasks().into_iter().map(|(i, _)| i).collect();
+        if self.all_behind {
+            self.behind = (0..self.doc.toolpaths.len()).collect();
+        }
+        if self.behind.len() > before {
+            self.status = tf!("{} toolpath(s) no longer match their shapes. Use Recalculate when you're ready.", self.behind.len());
+        }
     }
 }
 
@@ -358,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn toolpaths_follow_the_resized_holes() {
+    fn toolpaths_wait_for_recalculate_after_resizing_holes() {
         let mut a = app();
         let ids: Vec<u64> = (0..2).map(|i| hole(&mut a, [2.0 + i as f64 * 3.0, 3.0], 1.0)).collect();
         a.selected = ids;
@@ -368,7 +368,8 @@ mod tests {
         let widest = |a: &App| a.doc.toolpaths[0].moves.iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| m.p[0]).fold(0.0, f64::max);
         let before = widest(&a);
         a.resize_each(Some(2.0), None, None, Datum::Centre);
+        assert_eq!(widest(&a), before, "not on its own");
+        a.recalculate_all();
         assert!((widest(&a) - before - 0.5).abs() < 0.02, "{} -> {}", before, widest(&a));
-        assert!(a.status.contains("recalculated 1"), "{}", a.status);
     }
 }

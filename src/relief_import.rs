@@ -44,7 +44,7 @@ pub fn parse_stl(bytes: &[u8]) -> Result<Vec<Triangle>, String> {
     }
     let tris: Vec<Triangle> = corners.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
     if tris.is_empty() {
-        return Err("This file has no 3D surface this program can read.".into());
+        return Err(crate::i18n::tr("This file has no 3D surface this program can read.").into());
     }
     Ok(tris)
 }
@@ -73,7 +73,7 @@ pub fn top_view(tris: &[Triangle], max_side: usize) -> Result<TopView, String> {
     }
     let size = [(hi[0] - lo[0]) as f64, (hi[1] - lo[1]) as f64, (hi[2] - lo[2]) as f64];
     if !(size[0] > 0.0 && size[1] > 0.0) {
-        return Err("This model has no width seen from above.".into());
+        return Err(crate::i18n::tr("This model has no width seen from above.").into());
     }
     let cell = size[0].max(size[1]) / max_side as f64;
     let w = ((size[0] / cell).ceil() as usize).max(1);
@@ -226,19 +226,19 @@ impl App {
     }
 
     pub fn dialog_import_model(&mut self) {
-        let Some(file) = rfd::FileDialog::new().add_filter("3D model", &["stl"]).pick_file() else { return };
+        let Some(file) = rfd::FileDialog::new().add_filter(crate::i18n::tr("3D model"), &["stl"]).pick_file() else { return };
         if let Err(why) = self.open_model_file(&file) {
             self.message = Some(why);
         }
     }
 
     pub fn open_model_file(&mut self, file: &Path) -> Result<(), String> {
-        let bytes = std::fs::read(file).map_err(|e| format!("Could not read {}: {e}", file.display()))?;
+        let bytes = std::fs::read(file).map_err(|e| tf!("Could not read {}: {e}", file.display()))?;
         self.open_model_bytes(short_name(file), &bytes)
     }
 
     pub fn dialog_relief_picture(&mut self) {
-        let Some(file) = rfd::FileDialog::new().add_filter("Picture", &["png", "jpg", "jpeg", "bmp"]).pick_file() else { return };
+        let Some(file) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png", "jpg", "jpeg", "bmp"]).pick_file() else { return };
         match Image::load(&file) {
             Ok(img) => self.open_relief_picture(short_name(&file), &img),
             Err(why) => self.message = Some(why),
@@ -267,11 +267,11 @@ impl App {
         self.sim = None;
         self.view3d = true;
         self.left = LeftForm::None;
-        self.status = format!("Added {} as a 3D shape.", f.name);
+        self.status = tf!("Added {} as a 3D shape.", f.name);
     }
 
     pub fn relief_form_ui(&mut self, ui: &mut Ui, mut f: ReliefForm) {
-        let title = if f.is_picture { "3D Relief from Picture" } else { "Import 3D Model" };
+        let title = if f.is_picture { crate::i18n::tr("3D Relief from Picture") } else { crate::i18n::tr("Import 3D Model") };
         title_card(ui, if f.is_picture { Icon::ReliefPicture } else { Icon::ImportModel }, title);
         let unit = self.doc.job.unit();
         let zero = self.doc.job.origin();
@@ -279,37 +279,37 @@ impl App {
             ui.spacing_mut().item_spacing.y = 3.0;
             ui.add(egui::Label::new(f.name.as_str()).truncate());
             ui.add_space(2.0);
-            bold(ui, "Position and Size");
+            bold(ui, crate::i18n::tr("Position and Size"));
             ui.horizontal(|ui| {
                 labelled_from(ui, "X", 10.0, &mut f.at[0], zero[0], 52.0, "");
                 labelled_from(ui, "Y", 10.0, &mut f.at[1], zero[1], 52.0, "");
             });
-            labelled(ui, "Width", 44.0, &mut f.width, 60.0, unit);
+            labelled(ui, crate::i18n::tr("Width"), 44.0, &mut f.width, 60.0, unit);
             f.width = f.width.max(1e-3);
-            ui.label(RichText::new(format!("Depth (Y): {} {unit}", crate::toolpath::trim(f.width * f.h as f64 / f.w as f64))).color(theme::MUTED));
+            ui.label(RichText::new(tf!("Depth (Y): {} {unit}", crate::toolpath::trim(f.width * f.h as f64 / f.w as f64))).color(theme::MUTED));
         });
         card(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            bold(ui, "Height");
-            labelled(ui, "Height", 44.0, &mut f.height, 60.0, unit);
-            labelled(ui, "Base", 44.0, &mut f.base, 60.0, unit);
+            bold(ui, crate::i18n::tr("Height"));
+            labelled(ui, crate::i18n::tr("Height"), 44.0, &mut f.height, 60.0, unit);
+            labelled(ui, crate::i18n::tr("Base"), 44.0, &mut f.base, 60.0, unit);
             f.height = f.height.max(0.0);
             f.base = f.base.max(0.0);
             if let Some(r) = f.true_ratio {
                 let natural = r * f.width;
-                ui.label(RichText::new(format!("True proportions: {} {unit}", crate::toolpath::trim(natural))).color(theme::MUTED));
-                if ui.button("Use True Proportions").clicked() {
+                ui.label(RichText::new(tf!("True proportions: {} {unit}", crate::toolpath::trim(natural))).color(theme::MUTED));
+                if ui.button(crate::i18n::tr("Use True Proportions")).clicked() {
                     f.height = natural;
                 }
             }
             if f.is_picture {
                 ui.add_space(3.0);
-                ui.radio_value(&mut f.invert, false, "Light is high");
-                ui.radio_value(&mut f.invert, true, "Dark is high (lithophane)");
+                ui.radio_value(&mut f.invert, false, crate::i18n::tr("Light is high"));
+                ui.radio_value(&mut f.invert, true, crate::i18n::tr("Dark is high (lithophane)"));
             }
             let mut smooth = f.smooth as f32;
             ui.add_space(3.0);
-            ui.label("Smoothing");
+            ui.label(crate::i18n::tr("Smoothing"));
             ui.spacing_mut().slider_width = 130.0;
             if ui.add(egui::Slider::new(&mut smooth, 0.0..=8.0).step_by(1.0).fixed_decimals(0)).changed() {
                 f.smooth = smooth as usize;
@@ -317,17 +317,17 @@ impl App {
         });
         card(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            bold(ui, "Combine");
-            for (mode, label) in [(Combine::Add, "Add"), (Combine::Subtract, "Subtract"), (Combine::Merge, "Merge"), (Combine::Low, "Low")] {
+            bold(ui, crate::i18n::tr("Combine"));
+            for (mode, label) in [(Combine::Add, crate::i18n::tr("Add")), (Combine::Subtract, crate::i18n::tr("Subtract")), (Combine::Merge, crate::i18n::tr("Merge")), (Combine::Low, crate::i18n::tr("Low"))] {
                 ui.radio_value(&mut f.combine, mode, label);
             }
         });
         if !f.is_picture {
             card(ui, |ui| {
-                ui.label(RichText::new("The model is read from straight above: what is hidden underneath is filled in.").color(theme::MUTED));
+                ui.label(RichText::new(crate::i18n::tr("The model is read from straight above: what is hidden underneath is filled in.")).color(theme::MUTED));
             });
         }
-        if self.form_buttons(ui, "Apply") {
+        if self.form_buttons(ui, crate::i18n::tr("Apply")) {
             self.apply_relief(&f);
         } else if matches!(self.left, LeftForm::Relief(_)) {
             self.left = LeftForm::Relief(Box::new(f));

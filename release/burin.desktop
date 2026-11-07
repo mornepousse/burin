@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Burin
+Comment=Design, model and cut for CNC carving
+Exec=burin
+Icon=burin
+Categories=Graphics;Engineering;
+Terminal=false

@@ -17,8 +17,6 @@ type Outcome = (usize, Op, Result<Vec<Move>, String>);
 
 /// What the results are for.
 pub enum Finish {
-    /// Toolpaths whose shapes changed.
-    Follow,
     /// The Recalculate button, and how many toolpaths it left as they were.
     All { unchanged: usize, no_shapes: usize, warn: bool },
     /// The Calculate button of a toolpath form.
@@ -115,32 +113,21 @@ impl App {
 
     fn finish_tasks(&mut self, results: Vec<Outcome>, finish: Finish, stopped: bool) -> usize {
         match finish {
-            Finish::Follow => {
-                let redone: Vec<usize> = results.iter().filter(|(_, _, made)| made.is_ok()).map(|(at, ..)| *at).collect();
-                let done = self.keep_results(results);
-                self.warn_if_too_deep(&redone);
-                if stopped {
-                    self.status = "Stopped. Some toolpaths haven't followed their shapes yet: Recalculate finishes them.".into();
-                } else if done > 0 {
-                    self.status = format!("Recalculated {done} toolpath(s) to follow their shapes.");
-                }
-                done
-            }
             Finish::All { unchanged, no_shapes, warn } => {
                 let tried = results.len();
                 let done = self.keep_results(results);
-                let mut told = format!("Recalculated {done} toolpath(s).");
+                let mut told = tf!("Recalculated {done} toolpath(s).");
                 if unchanged > 0 {
-                    told += &format!(" {unchanged} from the project file kept as saved: their shapes have not changed.");
+                    told += &tf!(" {unchanged} from the project file kept as saved: their shapes have not changed.");
                 }
                 if no_shapes > 0 {
-                    told += &format!(" {no_shapes} can't follow the drawing: a shape it was made from has gone, or it is a V-carve. Edit it to choose its shapes.");
+                    told += &tf!(" {no_shapes} can't follow the drawing: a shape it was made from has gone, or it is a V-carve. Edit it to choose its shapes.");
                 }
                 if tried > done {
-                    told += &format!(" {} could not be recalculated.", tried - done);
+                    told += &tf!(" {} could not be recalculated.", tried - done);
                 }
                 if stopped {
-                    told = format!("Stopped after {done} toolpath(s). The others still have their old moves: Recalculate finishes them.");
+                    told = tf!("Stopped after {done} toolpath(s). The others still have their old moves: Recalculate finishes them.");
                 }
                 self.status = told;
                 if !self.doc.toolpaths.is_empty() {
@@ -155,7 +142,7 @@ impl App {
             }
             Finish::Calculate { form, editing, tab } => {
                 if stopped {
-                    self.status = "Stopped. The toolpath wasn't changed.".into();
+                    self.status = crate::i18n::tr("Stopped. The toolpath wasn't changed.").into();
                     return 0;
                 }
                 let mut made = Vec::with_capacity(results.len());
@@ -193,7 +180,7 @@ impl App {
                     tp.kept_steps = None;
                     done += 1;
                 }
-                Err(_) => self.status = format!("{} no longer fits its shapes. Check its tool.", op.name),
+                Err(_) => self.status = tf!("{} no longer fits its shapes. Check its tool.", op.name),
             }
         }
         // What was carved in the preview was carved with the old moves.
@@ -219,16 +206,16 @@ impl App {
         let mut stop = false;
         egui::Modal::new(Id::NULL.with("recalc")).show(ctx, |ui| {
             ui.set_width(340.0);
-            ui.label(RichText::new("Calculating toolpaths").strong());
+            ui.label(RichText::new(crate::i18n::tr("Calculating toolpaths")).strong());
             ui.add_space(6.0);
-            let text = format!("Toolpath {} of {total}: {name}", (done + 1).min(total));
+            let text = tf!("Toolpath {} of {total}: {name}", (done + 1).min(total));
             ui.add(egui::ProgressBar::new(done as f32 / total.max(1) as f32).animate(true).desired_width(340.0));
             ui.add(egui::Label::new(text).truncate());
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new(format!("{} s", waited.as_secs())).size(11.5).color(crate::theme::MUTED));
                 ui.add_space((ui.available_width() - 66.0).max(0.0));
-                stop = ui.button("Stop").clicked();
+                stop = ui.button(crate::i18n::tr("Stop")).clicked();
             });
         });
         if stop {
