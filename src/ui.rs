@@ -412,6 +412,7 @@ impl App {
         self.template_window(&ctx);
         self.support_window(&ctx);
         self.notes_window(&ctx);
+        self.backups_window(&ctx);
         self.feedback_window(&ctx);
         self.crash_window(&ctx);
         self.after_crash_window(&ctx);

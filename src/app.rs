@@ -1133,6 +1133,9 @@ pub struct App {
     /// The person put off deciding about the last copy: it stays as it is for next time.
     pub recovery_left: bool,
     pub notes_open: bool,
+    /// Earlier versions kept beside each project, and the window that lists them.
+    pub backup_settings: crate::backups::Settings,
+    pub backups_open: bool,
     pub recent_wanted: Option<PathBuf>,
     /// The picture on the first screen, once it has been shown.
     pub start_logo: Option<egui::TextureHandle>,
@@ -1361,6 +1364,8 @@ impl Default for App {
             recovery_written: false,
             recovery_left: false,
             notes_open: false,
+            backup_settings: crate::backups::load_settings(),
+            backups_open: false,
             recent_wanted: None,
             start_logo: None,
             save_piece: None,
@@ -1666,6 +1671,8 @@ impl App {
 
     pub fn save_to(&mut self, path: PathBuf) -> Result<(), String> {
         let text = serde_json::to_string(&self.doc).map_err(|e| e.to_string())?;
+        // The version being replaced is kept first. If that fails, the save still goes ahead.
+        let no_backup = self.backup_before_saving(&path, text.as_bytes());
         // Written beside it first: a full disk or a crash must not cost the copy already there.
         let beside = path.with_extension("burin-saving");
         let written = std::fs::write(&beside, text).and_then(|()| std::fs::rename(&beside, &path));
@@ -1674,6 +1681,9 @@ impl App {
             return Err(tf!("Could not save {}: {e}", path.display()));
         }
         self.status = tf!("Saved {}", path.display());
+        if let Some(why) = no_backup {
+            self.status = format!("{}. {why}", self.status);
+        }
         self.remember(path.clone());
         self.path = Some(path);
         self.dirty = false;
@@ -1812,6 +1822,8 @@ impl App {
         let text = std::fs::read_to_string(&path).map_err(|e| tf!("Could not open {}: {e}", path.display()))?;
         let doc: Doc = serde_json::from_str(&text)
             .map_err(|_| tf!("{} is not a project made by this program.", path.display()))?;
+        // Notes starting with a dot ask to be read each time the job is opened (`0x1402923d0`).
+        self.notes_open = doc.notes.starts_with('.');
         self.doc = doc;
         self.reset_state();
         self.screen = Screen::Work;
@@ -2672,6 +2684,7 @@ impl App {
                 home: machine.home,
                 safe_z: machine.safe_z,
                 file_name,
+                notes: &self.doc.notes,
                 date,
                 time,
             };

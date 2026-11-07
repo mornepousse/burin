@@ -513,7 +513,7 @@ fn a_loaded_post_processor_shows_in_the_save_form_with_its_limits() {
     h.get_by_label("Load a Folder ...");
     h.get_by_label("Writes .tap files in the job's unit (inches).");
     h.get_by_label("Arcs are written as short straight lines.");
-    h.get_by_label("SUBSTITUTE is not applied.");
+    assert!(h.query_by_label("SUBSTITUTE is not applied.").is_none());
     click(&mut h, "Remove This One");
     assert!(h.state().loaded_posts.is_empty());
     assert_eq!(h.state().post_index, 0);
@@ -3724,7 +3724,7 @@ fn out_of_place(state: &str) -> Vec<String> {
 #[test]
 fn french_wordings_stay_inside_their_panels() {
     let mut too_wide = Vec::new();
-    for state in ["feedback", "crashes", "merge", "rotate", "support", "missinglayers", "pieces", "savepiece", "3d", "align", "array", "board", "boardalert", "boardmaterial", "carved", "chamfer", "circle", "clipart", "corners", "cut", "distort", "distorted", "drawing", "drill", "editcircle", "engrave", "finish", "flute", "grid", "grid3d", "grouped", "handles", "job", "layers", "leads", "lines", "material", "material-changed", "millimetres", "model", "modeling", "move", "order", "origin", "origin_set", "passes", "paths2d", "piece", "pocket", "posts", "preferences", "profile", "progress", "ramp", "relief", "relief3d", "rough", "rules", "save", "selector", "sharp3d", "sharp3dfar", "similar", "sketch", "startat", "sweep", "tabs", "tabs-before", "tee_after", "tee_before", "through", "toodeep", "toolrates", "tools", "trace", "traced", "trim_after", "trim_before", "unsaved", "vcarve", "zero"] {
+    for state in ["backups", "feedback", "crashes", "merge", "rotate", "support", "missinglayers", "pieces", "savepiece", "3d", "align", "array", "board", "boardalert", "boardmaterial", "carved", "chamfer", "circle", "clipart", "corners", "cut", "distort", "distorted", "drawing", "drill", "editcircle", "engrave", "finish", "flute", "grid", "grid3d", "grouped", "handles", "job", "layers", "leads", "lines", "material", "material-changed", "millimetres", "model", "modeling", "move", "order", "origin", "origin_set", "passes", "paths2d", "piece", "pocket", "posts", "preferences", "profile", "progress", "ramp", "relief", "relief3d", "rough", "rules", "save", "selector", "sharp3d", "sharp3dfar", "similar", "sketch", "startat", "sweep", "tabs", "tabs-before", "tee_after", "tee_before", "through", "toodeep", "toolrates", "tools", "trace", "traced", "trim_after", "trim_before", "unsaved", "vcarve", "zero"] {
         let english = out_of_place(state).len();
         let french = {
             let _french = InFrench::start();
@@ -4881,5 +4881,80 @@ fn notes_stay_with_the_job_and_go_on_its_sheet() {
     assert!(!h.state().job_sheet_html("x").contains("<h2>Notes</h2>"));
     h.state_mut().notes_open = true;
     h.run();
-    h.get_by_label("Saved with the job, and printed on its job sheet.");
+    h.get_by_label("Saved with the job, printed on its job sheet, and written where a post processor asks for them. Start with a dot to see them each time the job opens.");
+}
+
+#[test]
+fn notes_starting_with_a_dot_open_with_the_job() {
+    let dir = scratch_folder("dot");
+    let mut h = job_with_square([3.0, 3.0]);
+    let file = dir.join("job.burin");
+    h.state_mut().doc.notes = "Plain notes".into();
+    h.state_mut().save_to(file.clone()).unwrap();
+    let mut other = harness();
+    other.state_mut().open_path(file.clone()).unwrap();
+    assert!(!other.state().notes_open);
+    h.state_mut().doc.notes = ".Read me first".into();
+    h.state_mut().save_to(file.clone()).unwrap();
+    other.state_mut().open_path(file).unwrap();
+    assert!(other.state().notes_open);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn saving_keeps_the_earlier_version_and_it_can_be_opened_again() {
+    let dir = scratch_folder("versions");
+    let file = dir.join("wheel.burin");
+    let mut h = job_with_square([3.0, 3.0]);
+    h.state_mut().save_to(file.clone()).unwrap();
+    assert!(crate::backups::list(&file).is_empty(), "nothing before the first save");
+    let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle([6.0, 6.0], 1.0))], Prim::Free);
+    h.state_mut().save_to(file.clone()).unwrap();
+    let versions = crate::backups::list(&file);
+    assert_eq!(versions.len(), 1);
+    assert!(!std::fs::read_to_string(&versions[0].file).unwrap().contains(&format!("\"id\":{id},")), "the version before the circle");
+
+    // From the window: the old one comes back unsaved, under the project's own name.
+    h.state_mut().dirty = false;
+    h.state_mut().backups_open = true;
+    h.run();
+    click(&mut h, "Open This Version");
+    assert_eq!(h.state().doc.vectors.len(), 1);
+    assert!(h.state().dirty);
+    assert_eq!(h.state().path.as_ref(), Some(&file));
+    assert!(!h.state().backups_open);
+
+    // Saving it keeps the one with the circle, so nothing is lost either way.
+    h.state_mut().save_to(file.clone()).unwrap();
+    let versions = crate::backups::list(&file);
+    assert_eq!(versions.len(), 2);
+    let texts: Vec<String> = versions.iter().map(|v| std::fs::read_to_string(&v.file).unwrap()).collect();
+    assert!(texts.iter().any(|t| t.contains(&format!("\"id\":{id},"))));
+
+    // Unsaved changes aren't thrown away by opening a version.
+    h.state_mut().dirty = true;
+    h.state_mut().backups_open = true;
+    h.run();
+    let shapes = h.state().doc.vectors.len();
+    h.get_all_by_label("Open This Version").next().unwrap().click();
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), shapes);
+    assert!(h.state().message.as_ref().unwrap().contains("first"));
+
+    // Turned off, nothing more is kept.
+    h.state_mut().message = None;
+    h.state_mut().backup_settings.on = false;
+    h.state_mut().doc.vectors.clear();
+    h.state_mut().save_to(file.clone()).unwrap();
+    assert_eq!(crate::backups::list(&file).len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_backups_window_says_what_to_do_without_a_file() {
+    let mut h = job_with_square([3.0, 3.0]);
+    h.state_mut().backups_open = true;
+    h.run();
+    h.get_by_label("Save the project first: its backups are kept beside its file.");
+    h.get_by_label("Keep the earlier version each time a project is saved");
 }

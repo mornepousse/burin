@@ -51,6 +51,8 @@ pub struct PostDef {
     pub blocks: HashMap<String, Vec<String>>,
     /// Things in the file this program doesn't act on, to show the user.
     pub notes: Vec<String>,
+    /// Characters a text field must not contain, and what goes in their place.
+    pub substitute: Vec<(char, char)>,
     pub source: Option<PathBuf>,
     /// Comes down fast to just above the material. If not, the whole way down is at the plunge rate.
     pub rapid_plunge: bool,
@@ -85,6 +87,31 @@ fn parse_format(body: &str) -> Option<(String, NumberFormat)> {
     Some((token, NumberFormat { always, prefix, digits, decimals, plus, scale }))
 }
 
+/// `SUBSTITUTE`'s pairs: each character, then what it becomes. A number in brackets is a character code.
+fn parse_substitutions(text: &str) -> Vec<(char, char)> {
+    let text = unquote(text);
+    let mut chars: Vec<char> = Vec::new();
+    let mut rest = text.as_str();
+    while let Some(c) = rest.chars().next() {
+        let code = rest.strip_prefix('[').and_then(|r| r.split_once(']')).and_then(|(n, after)| n.trim().parse::<u8>().ok().map(|n| (n, after)));
+        if let Some((n, after)) = code {
+            chars.push(n as char);
+            rest = after;
+        } else {
+            chars.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    chars.chunks_exact(2).map(|p| (p[0], p[1])).collect()
+}
+
+/// The lines of a multi-line variable: blank ones go, and a line stops at a carriage return. With
+/// nothing in it there is still one line, empty (`0x140854090`).
+fn note_lines(text: &str) -> Vec<&str> {
+    let lines: Vec<&str> = text.split('\n').map(|l| l.split('\r').next().unwrap_or("")).filter(|l| !l.is_empty()).collect();
+    if lines.is_empty() { vec![""] } else { lines }
+}
+
 fn parse_line_ending(text: &str) -> String {
     let mut out = String::new();
     for piece in text.split('[').skip(1) {
@@ -104,8 +131,7 @@ fn unquote(text: &str) -> String {
     t.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(t).to_string()
 }
 
-const SETTINGS_WITHOUT_EFFECT: [&str; 6] = [
-    "SUBSTITUTE",
+const SETTINGS_WITHOUT_EFFECT: [&str; 5] = [
     "DIRECT_OUTPUT",
     "ROTARY_WRAP_X",
     "ROTARY_WRAP_Y",
@@ -148,6 +174,7 @@ impl PostDef {
             formats: HashMap::new(),
             blocks: HashMap::new(),
             notes: Vec::new(),
+            substitute: Vec::new(),
             source: None,
             rapid_plunge: true,
         };
@@ -214,6 +241,7 @@ impl PostDef {
                 "LINE_NUMBER_INCREMENT" => def.line_step = value.trim().parse().unwrap_or(1.0),
                 "LINE_NUMBER_MAXIMUM" => def.line_max = value.trim().parse().unwrap_or(999_999.0),
                 "POST_BASE" => {}
+                "SUBSTITUTE" => def.substitute = parse_substitutions(&value),
                 "RAPID_PLUNGE_TO_STARTZ" => def.rapid_plunge = !value.trim().eq_ignore_ascii_case("NO"),
                 k if SETTINGS_WITHOUT_EFFECT.contains(&k) => def.notes.push(tf!("{k} is not applied.")),
                 _ => {}
@@ -287,7 +315,7 @@ fn is_known_field(token: &str) -> bool {
     matches!(
         token,
         "I" | "J" | "IA" | "JA" | "R" | "X" | "Y" | "Z" | "XH" | "YH" | "ZH" | "F" | "FC" | "FP" | "S" | "N" | "T" | "SAFEZ" | "DWELL" | "XMIN" | "XMAX" | "YMIN" | "YMAX" | "ZMIN" | "ZMAX" | "XLENGTH" | "YLENGTH" | "ZLENGTH"
-            | "TP_FILENAME" | "TP_DIR" | "TP_EXT" | "PATHNAME" | "TOOLPATH_NAME" | "TOOLPATHS_OUTPUT" | "TOOLNAME" | "TOOL_NAME" | "TOOL_DIAMETER" | "DATE" | "TIME" | "PRODUCT" | "FILE_NOTES" | "TOOLPATH_NOTES" | "UNITS"
+            | "TP_FILENAME" | "TP_DIR" | "TP_EXT" | "PATHNAME" | "TOOLPATH_NAME" | "TOOLPATHS_OUTPUT" | "TOOLNAME" | "TOOL_NAME" | "TOOL_DIAMETER" | "DATE" | "TIME" | "PRODUCT" | "FILE_NOTES" | "TOOLPATH_NOTES" | "TOOL_NOTES" | "UNITS"
     )
 }
 
@@ -303,6 +331,8 @@ pub struct PostJob<'a> {
     pub home: [f64; 3],
     pub safe_z: f64,
     pub file_name: &'a str,
+    /// The job's notes.
+    pub notes: &'a str,
     pub date: String,
     pub time: String,
 }
@@ -337,6 +367,8 @@ struct Writer<'a> {
     dwell: f64,
     /// While an arc is written: its centre, and how far that is from where it starts.
     arc: Option<ArcFields>,
+    /// Which line of a multi-line variable is being written.
+    note_line: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -411,7 +443,11 @@ impl Writer<'_> {
             return text;
         }
         let tool = self.tool;
-        match token {
+        let text = match token {
+            "FILE_NOTES" => return self.note(self.job.notes),
+            "TOOL_NOTES" => return self.note(tool.map_or("", |t| t.notes.as_str())),
+            // Burin's toolpaths have no notes of their own.
+            "TOOLPATH_NOTES" => return self.note(""),
             "TP_FILENAME" | "PATHNAME" => self.job.file_name.to_string(),
             "TP_DIR" => String::new(),
             "TP_EXT" => self.def.extension.clone(),
@@ -423,31 +459,63 @@ impl Writer<'_> {
             "PRODUCT" => "Burin".to_string(),
             "UNITS" => if self.def.metric == Some(false) { "inch".to_string() } else { "mm".to_string() },
             _ => String::new(),
-        }
+        };
+        self.substituted(&text)
+    }
+
+    /// Text fields go through the file's own list of characters to change.
+    fn substituted(&self, text: &str) -> String {
+        text.chars().map(|c| self.def.substitute.iter().find(|(from, _)| *from == c).map_or(c, |(_, to)| *to)).collect()
+    }
+
+    /// One line of notes. They're the person's own words and usually land inside a G-code comment:
+    /// a bracket closing it early would turn the rest of the line into a command. So a file with no
+    /// list of its own still gets these two changed, which the original doesn't do.
+    fn note(&self, text: &str) -> String {
+        let line = note_lines(text).get(self.note_line).copied().unwrap_or("");
+        let done = self.substituted(line);
+        if self.def.substitute.is_empty() { done.replace('(', "[").replace(')', "]") } else { done }
+    }
+
+    /// How many times a line of the file has to be written, for the notes in it.
+    fn times_for(&self, line: &str) -> usize {
+        let tool = self.tool.map_or("", |t| t.notes.as_str());
+        tokens_in(line)
+            .iter()
+            .map(|t| match t.as_str() {
+                "FILE_NOTES" => note_lines(self.job.notes).len(),
+                "TOOL_NOTES" => note_lines(tool).len(),
+                _ => 1,
+            })
+            .max()
+            .unwrap_or(1)
     }
 
     fn write_block(&mut self, names: &[&str]) {
         let Some(lines) = names.iter().find_map(|n| self.def.blocks.get(*n)) else { return };
         for line in lines.clone() {
-            let mut text = String::new();
-            let mut rest = line.as_str();
-            while let Some(start) = rest.find('[') {
-                text.push_str(&rest[..start]);
-                let after = &rest[start + 1..];
-                match after.find(']') {
-                    Some(end) => {
-                        text.push_str(&self.field(&after[..end].trim().to_uppercase()));
-                        rest = &after[end + 1..];
-                    }
-                    None => {
-                        text.push('[');
-                        rest = after;
+            for note_line in 0..self.times_for(&line) {
+                self.note_line = note_line;
+                let mut text = String::new();
+                let mut rest = line.as_str();
+                while let Some(start) = rest.find('[') {
+                    text.push_str(&rest[..start]);
+                    let after = &rest[start + 1..];
+                    match after.find(']') {
+                        Some(end) => {
+                            text.push_str(&self.field(&after[..end].trim().to_uppercase()));
+                            rest = &after[end + 1..];
+                        }
+                        None => {
+                            text.push('[');
+                            rest = after;
+                        }
                     }
                 }
+                text.push_str(rest);
+                self.out.push_str(&text);
+                self.out.push_str(&self.def.line_ending);
             }
-            text.push_str(rest);
-            self.out.push_str(&text);
-            self.out.push_str(&self.def.line_ending);
         }
     }
 }
@@ -468,6 +536,7 @@ pub fn render(def: &PostDef, paths: &[PostPath], job: &PostJob, arcs: Option<f64
         path_name: "",
         dwell: 0.0,
         arc: None,
+        note_line: 0,
     };
     let arcs = arcs.filter(|_| def.can_write_arcs());
     for (i, path) in paths.iter().enumerate() {
@@ -724,6 +793,7 @@ begin FOOTER
             home: [0.0, 0.0, 20.0],
             safe_z: 5.0,
             file_name: "plate",
+            notes: "",
             date: "2026-11-04".into(),
             time: "12:00".into(),
         }
@@ -759,9 +829,35 @@ begin FOOTER
     }
 
     #[test]
+    fn notes_go_in_line_by_line_and_cannot_close_a_comment() {
+        let text = "POST_NAME = \"x\"\nFILE_EXTENSION = \"nc\"\nbegin HEADER\n\"([FILE_NOTES])\"\n\"[TOOL_NOTES]!\"\n\"G0 X1\"\nbegin RAPID_MOVE\n\"G0\"\nbegin FEED_MOVE\n\"G1\"\nbegin FOOTER\n\"M30\"\n";
+        let tool = crate::toolpath::Tool { notes: "One\nTwo".into(), ..crate::toolpath::default_tools().remove(0) };
+        let moves = [Move { p: [0.0, 0.0, 5.0], rapid: true }];
+        let paths = [PostPath { name: "a", tool: &tool, moves: &moves, dwell: 0.0, steps: None }];
+        let written = |def: &PostDef, notes: &str| render(def, &paths, &PostJob { notes, ..job() }, None);
+
+        // No list in the file: brackets still can't end the comment early.
+        let plain = PostDef::parse(text, &|_| None).unwrap();
+        let out = written(&plain, "First (see below) M30\r\n\nSecond\n");
+        assert!(out.contains("(First [see below] M30)\n(Second)\n"), "{out}");
+        assert!(out.contains("One!\nTwo!\n"), "{out}");
+        assert_eq!(out.matches("G0 X1").count(), 1, "only lines with notes repeat");
+
+        // Nothing to say: the line still comes once, as the original does.
+        assert!(written(&plain, "").contains("()\n"));
+
+        // A list in the file is used instead, and on names as well.
+        let own = PostDef::parse(&format!("SUBSTITUTE = \"(<)>e[51]\"\n{text}"), &|_| None).unwrap();
+        assert_eq!(own.substitute, [('(', '<'), (')', '>'), ('e', '3')]);
+        let out = written(&own, "see (me)");
+        assert!(out.contains("(s33 <m3>)"), "{out}");
+    }
+
+    #[test]
     fn what_can_not_be_honoured_is_listed() {
         let d = def();
-        assert!(d.notes.iter().any(|n| n.contains("SUBSTITUTE")), "{:?}", d.notes);
+        assert!(!d.notes.iter().any(|n| n.contains("SUBSTITUTE")), "this one is applied now: {:?}", d.notes);
+        assert_eq!(d.substitute, [('(', '['), (')', ']')]);
         assert!(d.notes.iter().any(|n| n.contains("[MYSTERY]")), "{:?}", d.notes);
         assert!(!d.notes.iter().any(|n| n.contains("ARCS_ARE_NOT_CHECKED")), "arc blocks are never written");
     }
@@ -773,7 +869,8 @@ begin FOOTER
         let text = render(&def(), &[PostPath { name: "Profile 1", tool: &t, moves: &m, dwell: 0.0, steps: None }], &job(), None);
         let l = lines(&text);
         assert_eq!(l[0], "( plate.tap by Burin )");
-        assert_eq!(l[1], format!("( Tool: {} D=2.000 )", t.name));
+        // The file's SUBSTITUTE keeps the brackets in a tool's name from closing the comment early.
+        assert_eq!(l[1], format!("( Tool: {} D=2.000 )", t.name.replace('(', "[").replace(')', "]")));
         assert_eq!(l[2], "N100 G21 G90");
         assert_eq!(l[3], format!("N110 T{} M6 ", t.number), "an unknown field is left blank");
         assert_eq!(l[4], "N120 S18000 M3");
