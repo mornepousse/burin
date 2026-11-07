@@ -417,6 +417,9 @@ impl App {
         if entry(ui, "Save As...", work, Some(keys.text(Action::SaveAs))) {
             self.dialog_save(true);
         }
+        if entry(ui, "Project Backups...", work, None) {
+            self.backups_open = true;
+        }
         if entry(ui, "Increment and Save", work, Some(keys.text(Action::IncrementSave))) {
             self.increment_and_save();
         }

@@ -45,7 +45,7 @@ impl App {
         let before = self.doc.notes.clone();
         egui::Window::new(tr("Notes")).id(egui::Id::unique("notes")).open(&mut open).collapsible(false).default_width(440.0).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
             ui.add(egui::TextEdit::multiline(&mut self.doc.notes).desired_width(f32::INFINITY).desired_rows(10));
-            ui.label(egui::RichText::new(tr("Saved with the job, and printed on its job sheet.")).size(12.0).color(crate::theme::MUTED));
+            ui.label(egui::RichText::new(tr("Saved with the job, printed on its job sheet, and written where a post processor asks for them. Start with a dot to see them each time the job opens.")).size(12.0).color(crate::theme::MUTED));
         });
         if self.doc.notes != before {
             self.dirty = true;

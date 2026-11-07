@@ -20,6 +20,7 @@ mod icons;
 mod keys;
 mod menus;
 mod merge;
+mod backups;
 mod crash;
 mod feedback;
 mod linuxmenu;
@@ -725,6 +726,23 @@ fn open_state(app: &mut App, state: &str) {
             let id = app.doc.vectors[0].id;
             app.selected = vec![id];
             app.handles_on = Some(vec![id]);
+        }
+        "backups" => {
+            app.load_sample();
+            app.view3d = false;
+            let dir = std::env::temp_dir().join("burin-sample-backups");
+            let _ = std::fs::remove_dir_all(&dir);
+            let _ = std::fs::create_dir_all(&dir);
+            let file = dir.join("exemple.burin");
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            for (i, ago) in [180u64, 2400, 9000, 90000, 400000].iter().enumerate() {
+                let text = serde_json::to_string(&app.doc).unwrap_or_default() + &" ".repeat(i);
+                let _ = std::fs::write(&file, text);
+                let _ = backups::keep_before_saving(&file, b"", now - ago, backups::Settings::default());
+            }
+            app.path = Some(file);
+            app.dirty = false;
+            app.backups_open = true;
         }
         "feedback" => {
             app.load_sample();
