@@ -21,7 +21,7 @@ pub enum Drag {
     #[default]
     None,
     Box(Pos2),
-    Move { last: P },
+    Move { last: P, start: P },
     Scale { anchor: P, middle: P, start: P, orig: Vec<(u64, Vec<Path>)> },
     Rotate { centre: P, start: P, orig: Vec<(u64, Vec<Path>)> },
     RotateCentre,
@@ -785,18 +785,22 @@ impl App {
                             self.selected = vec![id];
                         }
                         self.checkpoint();
-                        self.drag = Drag::Move { last: self.snapped(self.to_world(p)) };
+                        let at = self.snapped(self.to_world(p));
+                        self.drag = Drag::Move { last: at, start: at };
                     }
                     None => self.drag = Drag::Box(p),
                 }
             }
         }
+        if self.typed_value(&response.ctx) {
+            return;
+        }
         let Some(p) = pointer else { return };
         match self.drag.clone() {
-            Drag::Move { last } => {
+            Drag::Move { last, start } => {
                 let now = self.snapped(self.to_world(p));
                 self.translate_selected(now[0] - last[0], now[1] - last[1]);
-                self.drag = Drag::Move { last: now };
+                self.drag = Drag::Move { last: now, start };
             }
             Drag::Scale { anchor, middle, start, orig } => {
                 let alt = response.ctx.input(|i| i.modifiers.alt);
@@ -821,17 +825,7 @@ impl App {
                 let alt = response.ctx.input(|i| i.modifiers.alt);
                 let now = self.to_world(p);
                 let degrees = turned_degrees(centre, start, now, alt);
-                let (s, k) = degrees.to_radians().sin_cos();
-                for (id, paths) in &orig {
-                    if let Some(v) = self.doc.vectors.iter_mut().find(|v| v.id == *id) {
-                        v.paths = paths.clone();
-                        for q in v.paths.iter_mut().flat_map(|q| q.pts.iter_mut()) {
-                            let (x, y) = (q[0] - centre[0], q[1] - centre[1]);
-                            *q = [centre[0] + x * k - y * s, centre[1] + x * s + y * k];
-                        }
-                        v.prim = Prim::Free;
-                    }
-                }
+                self.turn_from(&orig, centre, degrees);
                 self.status = tf!("Turned {:.1} degrees", degrees);
             }
             Drag::RotateCentre => {
@@ -1000,6 +994,14 @@ impl App {
                 painter.rect_filled(r, 0.0, Color32::WHITE);
                 painter.rect_stroke(r, 0.0, Stroke::new(1.0, theme::SHEET_INK), StrokeKind::Inside);
             }
+            if matches!(self.drag, Drag::Move { .. } | Drag::Rotate { .. } | Drag::Scale { .. }) {
+                if let Some(at) = ui.ctx().pointer_latest_pos() {
+                    let shown = if self.typed.is_empty() { crate::i18n::tr("Type a value, then Enter").to_string() } else { self.typed.clone() };
+                    let r = painter.text(at + vec2(16.0, 18.0), egui::Align2::LEFT_TOP, shown, egui::FontId::proportional(12.5), theme::TEXT);
+                    painter.rect_filled(r.expand(4.0), 4.0, theme::CARD);
+                    painter.text(at + vec2(16.0, 18.0), egui::Align2::LEFT_TOP, if self.typed.is_empty() { crate::i18n::tr("Type a value, then Enter").to_string() } else { self.typed.clone() }, egui::FontId::proportional(12.5), theme::TEXT);
+                }
+            }
             let turning = self.rotate_handles();
             for h in &turning {
                 painter.circle(*h, 4.5, Color32::WHITE, Stroke::new(1.0, theme::PICK));
@@ -1126,6 +1128,29 @@ impl App {
         let line = Stroke::new(1.0, Color32::from_rgb(196, 96, 96));
         let arrow = Stroke::new(1.0, theme::SHEET_INK);
         let view = painter.clip_rect().expand(12.0);
+        // Filled: each cut as wide as its tool, to see what will be taken away.
+        if self.solid_previews {
+            for tp in self.doc.toolpaths.iter().filter(|t| t.visible) {
+                let width = (tp.op.tool.dia as f32 * self.scale).max(1.0);
+                let fill = Color32::from_rgba_unmultiplied(196, 96, 96, 70);
+                let mut run: Vec<Pos2> = Vec::new();
+                for m in crate::toolpath::working_moves(&tp.moves) {
+                    let q = self.to_screen([m.p[0], m.p[1]]);
+                    if m.rapid {
+                        if run.len() >= 2 {
+                            painter.add(egui::Shape::line(std::mem::take(&mut run), Stroke::new(width, fill)));
+                        }
+                        run.clear();
+                    }
+                    if run.last().is_none_or(|l| (*l - q).length() >= MOST_UNSEEN_PIXELS) {
+                        run.push(q);
+                    }
+                }
+                if run.len() >= 2 {
+                    painter.add(egui::Shape::line(run, Stroke::new(width, fill)));
+                }
+            }
+        }
         for tp in self.doc.toolpaths.iter().filter(|t| t.visible) {
             let mut drawn = std::collections::HashSet::new();
             let mut line_points: Vec<Pos2> = Vec::new();
@@ -1361,5 +1386,97 @@ mod line_tests {
         assert!(off_to_one_side(pos2(10.0, 105.0), pos2(90.0, 101.0), view));
         assert!(!off_to_one_side(pos2(10.0, 10.0), pos2(20.0, 20.0), view), "inside");
         assert!(!off_to_one_side(pos2(-50.0, 50.0), pos2(150.0, 50.0), view), "right across, with both ends outside");
+    }
+}
+
+/// What can be typed while dragging: a number, or two separated by a comma.
+pub(crate) fn typed_numbers(text: &str) -> Option<Vec<f64>> {
+    let values: Option<Vec<f64>> = text.split([',', ';']).map(|t| t.trim().parse::<f64>().ok()).collect();
+    values.filter(|v| (1..=2).contains(&v.len()))
+}
+
+impl App {
+    /// Puts the shapes back as they were, then turns them about `centre`.
+    pub(crate) fn turn_from(&mut self, orig: &[(u64, Vec<Path>)], centre: P, degrees: f64) {
+        let (s, k) = degrees.to_radians().sin_cos();
+        for (id, paths) in orig {
+            if let Some(v) = self.doc.vectors.iter_mut().find(|v| v.id == *id) {
+                v.paths = paths.clone();
+                for q in v.paths.iter_mut().flat_map(|q| q.pts.iter_mut()) {
+                    let (x, y) = (q[0] - centre[0], q[1] - centre[1]);
+                    *q = [centre[0] + x * k - y * s, centre[1] + x * s + y * k];
+                }
+                v.prim = Prim::Free;
+            }
+        }
+    }
+
+    /// While dragging with the select tool, a value can be typed and Enter makes it exact, as the
+    /// original allows (`0x140a751e0`): a distance along the drag or `x,y` for a move, an angle for a
+    /// turn, a percentage for a resize. Escape forgets what was typed. True when Enter finished the drag.
+    pub(crate) fn typed_value(&mut self, ctx: &egui::Context) -> bool {
+        if !matches!(self.drag, Drag::Move { .. } | Drag::Rotate { .. } | Drag::Scale { .. }) {
+            self.typed.clear();
+            return false;
+        }
+        let (text, enter, escape, back) = ctx.input(|i| {
+            let text: String = i.events.iter().filter_map(|e| if let egui::Event::Text(t) = e { Some(t.clone()) } else { None }).collect();
+            (text, i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Backspace))
+        });
+        self.typed.extend(text.chars().filter(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | ',' | ';')));
+        if back {
+            self.typed.pop();
+        }
+        if escape {
+            self.typed.clear();
+        }
+        if !enter || self.typed.is_empty() {
+            return false;
+        }
+        let Some(values) = typed_numbers(&self.typed) else {
+            self.status = tf!("Can't read {} as a value.", self.typed);
+            self.typed.clear();
+            return false;
+        };
+        match self.drag.clone() {
+            Drag::Move { last, start } => {
+                let so_far = [last[0] - start[0], last[1] - start[1]];
+                let wanted = match values.as_slice() {
+                    [x, y] => [*x, *y],
+                    [d] => {
+                        let len = so_far[0].hypot(so_far[1]);
+                        if len > 1e-12 { [so_far[0] / len * d, so_far[1] / len * d] } else { [*d, 0.0] }
+                    }
+                    _ => so_far,
+                };
+                self.translate_selected(wanted[0] - so_far[0], wanted[1] - so_far[1]);
+                self.status = tf!("Moved {}, {}", crate::toolpath::trim(wanted[0]), crate::toolpath::trim(wanted[1]));
+            }
+            Drag::Rotate { centre, orig, .. } => {
+                self.turn_from(&orig, centre, values[0]);
+                self.status = tf!("Turned {:.1} degrees", values[0]);
+            }
+            Drag::Scale { anchor, orig, .. } => {
+                let (sx, sy) = match values.as_slice() {
+                    [x, y] => (x / 100.0, y / 100.0),
+                    [p] => (p / 100.0, p / 100.0),
+                    _ => (1.0, 1.0),
+                };
+                for (id, paths) in &orig {
+                    if let Some(v) = self.doc.vectors.iter_mut().find(|v| v.id == *id) {
+                        v.paths = paths.clone();
+                        for q in v.paths.iter_mut().flat_map(|q| q.pts.iter_mut()) {
+                            *q = [anchor[0] + (q[0] - anchor[0]) * sx, anchor[1] + (q[1] - anchor[1]) * sy];
+                        }
+                        v.prim = Prim::Free;
+                    }
+                }
+                self.status = tf!("Resized to {}%", crate::toolpath::trim(sx * 100.0));
+            }
+            _ => {}
+        }
+        self.typed.clear();
+        self.drag = Drag::None;
+        true
     }
 }

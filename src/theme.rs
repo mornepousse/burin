@@ -35,6 +35,9 @@ pub const PICK: Color32 = Color32::from_rgb(222, 38, 120);
 /// Cutting and fast moves over the 3D view.
 pub const CUT: Color32 = Color32::from_rgb(92, 200, 255);
 pub const RAPID: Color32 = Color32::from_rgb(255, 112, 92);
+/// Going straight down into the material, and coming straight back up, as the original tells them apart.
+pub const PLUNGE: Color32 = Color32::from_rgb(0, 220, 220);
+pub const RETRACT: Color32 = Color32::from_rgb(60, 205, 90);
 pub const BACKDROP_TOP: Color32 = Color32::from_rgb(38, 42, 49);
 pub const BACKDROP_BOTTOM: Color32 = Color32::from_rgb(13, 15, 18);
 /// Guide lines that are never cut.

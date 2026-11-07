@@ -80,6 +80,9 @@ impl App {
             row(&mut out, tr("Spindle speed"), &format!("{}", tool.rpm));
             row(&mut out, tr("Pass depth"), &length(tool.pass_depth));
             row(&mut out, tr("Stepover"), &length(op.stepover));
+            if !op.notes.trim().is_empty() {
+                row(&mut out, tr("Notes"), op.notes.trim());
+            }
             out.push_str("</table></section>\n");
         }
         out.push_str(&format!("<p class=\"note\">{}</p>\n</body></html>\n", escaped(tr("Estimates: cutting and lifting count double, and fast moves go at 100 mm/s."))));

@@ -27,6 +27,9 @@ pub struct Tool {
     pub notes: String,
     #[serde(default)]
     pub number: u32,
+    /// How deep the tool can cut before its shank or holder would rub. 0 when not given.
+    #[serde(default)]
+    pub flute_length: f64,
 }
 
 impl ToolKind {
@@ -58,6 +61,7 @@ impl Tool {
             let k = if metric { 25.4 } else { 1.0 / 25.4 };
             t.dia *= k;
             t.pass_depth *= k;
+            t.flute_length *= k;
             t.feed *= k;
             t.plunge *= k;
             t.metric = metric;
@@ -92,6 +96,7 @@ pub fn default_tools() -> Vec<Tool> {
             metric,
             notes: String::new(),
             number,
+            flute_length: 0.0,
         };
         tool.name = tool.label();
         tool
@@ -424,6 +429,12 @@ pub struct Op {
     /// Made by merging other toolpaths: its moves are all there is, and it can't be worked out again.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub merged: bool,
+    /// The person's notes about this toolpath.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub notes: String,
+    /// Read from another program's machine file: its moves are all there is.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub imported: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -2535,6 +2546,32 @@ pub fn route_in_file(moves: &[Move], steps: Option<&[Step]>, home: [f64; 3], fir
     (route, exact)
 }
 
+/// The original's menu commands that switch plunge and retract drawing on and off
+/// (handlers `0x1408ad5c0` and `0x1408ad630`).
+pub const DRAW_PLUNGES_COMMAND: u32 = 32907;
+pub const DRAW_RETRACTS_COMMAND: u32 = 32908;
+
+/// What a move does, for drawing: the original draws each kind in its own colour (`0x14051fb40`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MoveKind {
+    Cut = 0,
+    Rapid = 1,
+    /// Cutting straight down.
+    Plunge = 2,
+    /// Fast, straight up.
+    Retract = 3,
+}
+
+pub fn move_kind(from: [f64; 3], m: &Move) -> MoveKind {
+    let still = (m.p[0] - from[0]).hypot(m.p[1] - from[1]) < 1e-9;
+    match (m.rapid, still) {
+        (true, true) if m.p[2] > from[2] => MoveKind::Retract,
+        (true, _) => MoveKind::Rapid,
+        (false, true) if m.p[2] < from[2] => MoveKind::Plunge,
+        (false, _) => MoveKind::Cut,
+    }
+}
+
 /// One stretch of cutting: where the tool arrives by fast move, then everything until it next moves fast.
 #[derive(Clone, Debug)]
 pub struct Cut {
@@ -2661,11 +2698,22 @@ pub fn merged_moves(lists: &[&[Move]], choices: OrderChoices, by_part: bool, mac
     let same_spot = if metric { SAME_SPOT_MM } else { SAME_SPOT_MM / 25.4 };
     let cuts: Vec<Cut> = lists.iter().enumerate().flat_map(|(t, moves)| cuts_of(moves, t)).collect();
     let order = merge_order(&cuts, lists.len(), choices, by_part, machine.home, same_spot);
+    join_cuts(order.iter().map(|i| &cuts[*i]), machine, same_spot)
+}
+
+/// A toolpath's moves from one of its cuts on (counted from 0), reached the way any cut is.
+pub fn moves_from_cut(moves: &[Move], first: usize, machine: Machine, metric: bool) -> Vec<Move> {
+    let same_spot = if metric { SAME_SPOT_MM } else { SAME_SPOT_MM / 25.4 };
+    let cuts = cuts_of(moves, 0);
+    join_cuts(cuts.iter().skip(first), machine, same_spot)
+}
+
+/// Cuts one after another, from home and back, with the usual way between them.
+pub fn join_cuts<'a>(cuts: impl IntoIterator<Item = &'a Cut>, machine: Machine, same_spot: f64) -> Vec<Move> {
     let safe = machine.safe_z;
     let mut out = vec![Move { p: machine.home, rapid: true }];
     let mut at = machine.home;
-    for i in order {
-        let cut = &cuts[i];
+    for cut in cuts {
         let entry = cut.moves[0].p;
         let apart = (at[0] - entry[0]).powi(2) + (at[1] - entry[1]).powi(2) + (at[2] - entry[2]).powi(2);
         if apart >= 0.00000001 {
@@ -2743,6 +2791,8 @@ pub struct PostPath<'a> {
     pub dwell: f64,
     /// The same path with its exact arcs, when another program's file gave them.
     pub steps: Option<&'a [Step]>,
+    /// The toolpath's own notes, for `[TOOLPATH_NOTES]`.
+    pub notes: &'a str,
 }
 
 /// The machine file formats on offer: name, file extension, and whether it is in millimetres.
@@ -2910,6 +2960,8 @@ pub fn blank_op(kind: OpKind, name: String, tool: Tool, depth: f64, paths: Vec<P
         gap: 0.0,
         source: Vec::new(),
         merged: false,
+        imported: false,
+        notes: String::new(),
         tool,
     }
 }
@@ -3171,7 +3223,7 @@ mod tests {
         let moves = generate(&o, M, &J, None).unwrap();
         let t = o.tool.clone();
         let text = gcode(
-            &[PostPath { name: "Drill 1", tool: &t, moves: &moves, dwell: 0.0, steps: None }],
+            &[PostPath { name: "Drill 1", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "" }],
             &PostSettings { inches: true, origin: [1.0, 1.0], z_shift: 0.5, scale: 1.0, arcs: None },
         );
         assert!(text.starts_with("(Written by Burin)\nG20"));
@@ -3236,7 +3288,7 @@ mod tests {
         let moves = generate(&o, M, &J, None).unwrap();
         let zs: Vec<f64> = cuts(&moves).iter().map(|p| p[2]).collect();
         assert_eq!(zs, vec![-0.125, -0.25, -0.375, -0.5]);
-        let text = gcode(&[PostPath { name: "d", tool: &o.tool, moves: &moves, dwell: o.dwell, steps: None }], &PostSettings { inches: true, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None });
+        let text = gcode(&[PostPath { name: "d", tool: &o.tool, moves: &moves, dwell: o.dwell, steps: None, notes: "" }], &PostSettings { inches: true, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None });
         assert_eq!(text.matches("G4 P0.50").count(), 4, "{text}");
     }
 
@@ -3377,7 +3429,7 @@ mod tests {
     fn profile_output(arcs: Option<f64>, origin: [f64; 2]) -> (String, Vec<Move>, Op) {
         let o = op(OpKind::Profile, vec![Path::closed(circle([5.0, 5.0], 1.2)), Path::closed(rect([2.0, 2.0], 1.0, 1.0, 0.0))]);
         let moves = generate(&o, M, &J, None).unwrap();
-        let text = gcode(&[PostPath { name: "p", tool: &o.tool, moves: &moves, dwell: 0.0, steps: None }], &PostSettings { inches: true, origin, z_shift: 0.0, scale: 1.0, arcs });
+        let text = gcode(&[PostPath { name: "p", tool: &o.tool, moves: &moves, dwell: 0.0, steps: None, notes: "" }], &PostSettings { inches: true, origin, z_shift: 0.0, scale: 1.0, arcs });
         (text, moves, o)
     }
 
@@ -4567,7 +4619,7 @@ mod tests {
         o.tool.name = "End Mill (6 mm)".into();
         o.name = "Outside (top)".into();
         let moves = generate(&o, M, &J, None).unwrap();
-        let path = PostPath { name: &o.name, tool: &o.tool, moves: &moves, dwell: 0.0, steps: None };
+        let path = PostPath { name: &o.name, tool: &o.tool, moves: &moves, dwell: 0.0, steps: None, notes: "" };
         let text = gcode(&[path], &PostSettings { inches: false, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None });
         for line in text.lines() {
             let mut open = 0;

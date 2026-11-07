@@ -1059,7 +1059,11 @@ impl App {
         self.refresh_model();
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
         let painter = ui.painter_at(rect);
-        Self::gradient_background(&painter, rect);
+        if self.shaded_background {
+            Self::gradient_background(&painter, rect);
+        } else {
+            painter.rect_filled(rect, 0.0, crate::theme::BACKDROP_BOTTOM);
+        }
 
         if response.dragged_by(egui::PointerButton::Primary) {
             let d = response.drag_delta();
@@ -1140,17 +1144,47 @@ impl App {
             }
         }
 
-        // Cutting paths: blue where cutting, red where travelling.
+        // The material's outline, and where the job's zero is (View menu).
+        if self.draw_block {
+            let (w, h, t) = (job.width as f32, job.height as f32, job.thickness as f32);
+            let edge = Stroke::new(1.0, Color32::from_rgba_unmultiplied(230, 230, 235, 170));
+            let corner = |x: f32, y: f32, z: f32| proj.project(x, y, z);
+            for z in [0.0, -t] {
+                for (a, b) in [((0.0, 0.0), (w, 0.0)), ((w, 0.0), (w, h)), ((w, h), (0.0, h)), ((0.0, h), (0.0, 0.0))] {
+                    painter.line_segment([corner(a.0, a.1, z), corner(b.0, b.1, z)], edge);
+                }
+            }
+            for (x, y) in [(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)] {
+                painter.line_segment([corner(x, y, 0.0), corner(x, y, -t)], edge);
+            }
+        }
+        if self.draw_origin {
+            let o = self.doc.job.origin();
+            let (ox, oy) = (o[0] as f32, o[1] as f32);
+            let long = (job.width.max(job.height) * 0.12) as f32;
+            let at = proj.project(ox, oy, 0.0);
+            for (end, colour) in [((ox + long, oy, 0.0), Color32::from_rgb(230, 70, 60)), ((ox, oy + long, 0.0), Color32::from_rgb(80, 200, 90)), ((ox, oy, long), Color32::from_rgb(80, 140, 240))] {
+                painter.line_segment([at, proj.project(end.0, end.1, end.2)], Stroke::new(2.0, colour));
+            }
+        }
+
+        // Cutting paths: blue where cutting, red where travelling, cyan going down, green coming up.
         if self.show_toolpaths {
             let view = rect.expand(12.0);
             for tp in self.doc.toolpaths.iter().filter(|t| t.visible) {
                 let mut line: Vec<Pos2> = Vec::new();
-                let mut fast = false;
+                let mut fast = crate::toolpath::MoveKind::Cut;
                 let mut last: Option<Pos2> = None;
-                let draw_rapids = self.draw_rapids;
-                let flush = |points: &mut Vec<Pos2>, fast: bool| {
-                    if points.len() >= 2 && (draw_rapids || !fast) {
-                        let colour = if fast { crate::theme::RAPID } else { crate::theme::CUT };
+                let mut last_at: Option<[f64; 3]> = None;
+                let shown = [true, self.draw_rapids, self.draw_plunges, self.draw_retracts];
+                let flush = |points: &mut Vec<Pos2>, kind: crate::toolpath::MoveKind| {
+                    if points.len() >= 2 && shown[kind as usize] {
+                        let colour = match kind {
+                            crate::toolpath::MoveKind::Cut => crate::theme::CUT,
+                            crate::toolpath::MoveKind::Rapid => crate::theme::RAPID,
+                            crate::toolpath::MoveKind::Plunge => crate::theme::PLUNGE,
+                            crate::toolpath::MoveKind::Retract => crate::theme::RETRACT,
+                        };
                         painter.add(Shape::line(std::mem::take(points), Stroke::new(1.0, colour)));
                     } else {
                         points.clear();
@@ -1158,18 +1192,20 @@ impl App {
                 };
                 for m in crate::toolpath::working_moves(&tp.moves) {
                     let q = proj.project(m.p[0] as f32, m.p[1] as f32, m.p[2] as f32);
+                    let kind = last_at.map_or(crate::toolpath::MoveKind::Cut, |from| crate::toolpath::move_kind(from, m));
+                    last_at = Some(m.p);
                     let Some(p) = last else {
                         last = Some(q);
                         continue;
                     };
                     // What can't be seen isn't drawn: moves too small to show, and those off the screen.
-                    if m.rapid == fast && (q - p).length() < crate::canvas::MOST_UNSEEN_PIXELS {
+                    if kind == fast && (q - p).length() < crate::canvas::MOST_UNSEEN_PIXELS {
                         continue;
                     }
                     last = Some(q);
-                    if m.rapid != fast {
+                    if kind != fast {
                         flush(&mut line, fast);
-                        fast = m.rapid;
+                        fast = kind;
                     }
                     if crate::canvas::off_to_one_side(p, q, view) {
                         flush(&mut line, fast);

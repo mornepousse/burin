@@ -489,7 +489,7 @@ mod tests {
         let mut a = app();
         let s = square(&mut a, [3.3, 3.3]);
         a.selected = vec![s];
-        a.drag = Drag::Move { last: [0.0, 0.0] };
+        a.drag = Drag::Move { last: [0.0, 0.0], start: [0.0, 0.0] };
         assert!(a.smart_snap([2.33, 2.33]).is_none_or(|h| h.at != [2.3, 2.3]));
         a.drag = Drag::None;
         near(a.smart_snap([2.33, 2.33]).unwrap().at, 2.3, 2.3);

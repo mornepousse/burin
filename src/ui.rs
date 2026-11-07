@@ -413,6 +413,9 @@ impl App {
         self.support_window(&ctx);
         self.notes_window(&ctx);
         self.backups_window(&ctx);
+        self.checks_window(&ctx);
+        self.resume_window(&ctx);
+        self.curve_fit_window(&ctx);
         self.feedback_window(&ctx);
         self.crash_window(&ctx);
         self.after_crash_window(&ctx);
@@ -516,6 +519,10 @@ impl App {
             return;
         }
         if ctx.egui_wants_keyboard_input() || self.screen != Screen::Work {
+            return;
+        }
+        // Keys typed while dragging are a value, not shortcuts.
+        if matches!(self.drag, crate::canvas::Drag::Move { .. } | crate::canvas::Drag::Rotate { .. } | crate::canvas::Drag::Scale { .. }) {
             return;
         }
         let keys = self.keys;
