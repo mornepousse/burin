@@ -3724,7 +3724,7 @@ fn out_of_place(state: &str) -> Vec<String> {
 #[test]
 fn french_wordings_stay_inside_their_panels() {
     let mut too_wide = Vec::new();
-    for state in ["merge", "pieces", "savepiece", "3d", "align", "array", "board", "boardalert", "boardmaterial", "carved", "chamfer", "circle", "clipart", "corners", "cut", "distort", "distorted", "drawing", "drill", "editcircle", "engrave", "finish", "flute", "grid", "grid3d", "grouped", "handles", "job", "layers", "leads", "lines", "material", "material-changed", "millimetres", "model", "modeling", "move", "order", "origin", "origin_set", "passes", "paths2d", "piece", "pocket", "posts", "preferences", "profile", "progress", "ramp", "relief", "relief3d", "rough", "rules", "save", "selector", "sharp3d", "sharp3dfar", "similar", "sketch", "startat", "sweep", "tabs", "tabs-before", "tee_after", "tee_before", "through", "toodeep", "toolrates", "tools", "trace", "traced", "trim_after", "trim_before", "unsaved", "vcarve", "zero"] {
+    for state in ["merge", "rotate", "support", "missinglayers", "pieces", "savepiece", "3d", "align", "array", "board", "boardalert", "boardmaterial", "carved", "chamfer", "circle", "clipart", "corners", "cut", "distort", "distorted", "drawing", "drill", "editcircle", "engrave", "finish", "flute", "grid", "grid3d", "grouped", "handles", "job", "layers", "leads", "lines", "material", "material-changed", "millimetres", "model", "modeling", "move", "order", "origin", "origin_set", "passes", "paths2d", "piece", "pocket", "posts", "preferences", "profile", "progress", "ramp", "relief", "relief3d", "rough", "rules", "save", "selector", "sharp3d", "sharp3dfar", "similar", "sketch", "startat", "sweep", "tabs", "tabs-before", "tee_after", "tee_before", "through", "toodeep", "toolrates", "tools", "trace", "traced", "trim_after", "trim_before", "unsaved", "vcarve", "zero"] {
         let english = out_of_place(state).len();
         let french = {
             let _french = InFrench::start();
@@ -4434,4 +4434,240 @@ fn merging_real_toolpaths_keeps_every_cut_and_makes_a_machine_file() {
     let chosen = [&h.state().doc.toolpaths[2]];
     let file = h.state().gcode_from(&chosen, "merged.nc");
     assert!(file.is_some_and(|f| f.lines().count() as f64 > cutting(&moves) as f64 / 2.0));
+}
+
+#[test]
+fn corners_keep_proportions_unless_alt_is_held() {
+    use crate::canvas::{keep_proportions, turned_degrees};
+    // A box 4 wide, 2 high, from its bottom left corner: the shorter way wins.
+    let got = keep_proportions([4.0, 2.0], [8.0, 2.5], [0.0, 0.0]);
+    assert!((got[0] - 5.0).abs() < 1e-9 && (got[1] - 2.5).abs() < 1e-9, "{got:?}");
+    let got = keep_proportions([4.0, 2.0], [3.0, 6.0], [0.0, 0.0]);
+    assert!((got[0] - 3.0).abs() < 1e-9 && (got[1] - 1.5).abs() < 1e-9, "{got:?}");
+    // Across the anchor it comes out mirrored, still in proportion.
+    let got = keep_proportions([4.0, 2.0], [-8.0, -1.0], [0.0, 0.0]);
+    assert!((got[0] + 2.0).abs() < 1e-9 && (got[1] + 1.0).abs() < 1e-9, "{got:?}");
+
+    // Anticlockwise is positive on the sheet; Alt goes in steps of 15.
+    assert!((turned_degrees([0.0, 0.0], [1.0, 0.0], [0.0, 1.0], false) - 90.0).abs() < 1e-9);
+    assert!((turned_degrees([0.0, 0.0], [1.0, 0.0], [0.0, -1.0], false) + 90.0).abs() < 1e-9);
+    let at = |d: f64| [d.to_radians().cos(), d.to_radians().sin()];
+    for (mouse, wanted) in [(22.0, 15.0), (23.0, 30.0), (-22.0, -15.0), (-23.0, -30.0), (5.0, 0.0)] {
+        assert!((turned_degrees([0.0, 0.0], [1.0, 0.0], at(mouse), true) - wanted).abs() < 1e-9, "{mouse}");
+    }
+}
+
+#[test]
+fn dragging_a_turning_handle_turns_the_selection_about_its_centre() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let id = h.state().doc.vectors[0].id;
+    let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    let middle = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+    assert!(h.state().rotate_handles().is_empty(), "nothing until a click on the selection");
+    h.state_mut().handles_on = Some(vec![id]);
+    h.run();
+    let handles = h.state().rotate_handles();
+    assert_eq!(handles.len(), 4);
+    assert_eq!(h.state().handle_rects().len(), 8, "the resizing handles are still there");
+    // Beyond the corner, on the outside.
+    assert!(handles[0].x < h.state().to_screen(lo).x && handles[0].y > h.state().to_screen(lo).y);
+
+    // A quarter turn round the middle.
+    let start = handles[2];
+    let c = h.state().to_screen(middle);
+    let turned = c + egui::vec2(start.y - c.y, c.x - start.x);
+    drag(&mut h, start, turned);
+    let (a, b) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    assert!((a[0] - lo[0]).abs() < 1e-3 && (b[1] - hi[1]).abs() < 1e-3, "a square turned a quarter is the same square: {a:?} {b:?}");
+    let first = h.state().doc.vectors[0].paths[0].pts[0];
+    h.state_mut().do_undo();
+    h.run();
+    let back = h.state().doc.vectors[0].paths[0].pts[0];
+    assert!((first[0] - back[0]).abs() + (first[1] - back[1]).abs() > 0.1, "the points really moved, and undo takes them back");
+
+    // The centre can be moved, and then that's what it turns about.
+    h.state_mut().selected = vec![id];
+    h.state_mut().handles_on = Some(vec![id]);
+    h.run();
+    let c = h.state().to_screen(h.state().rotation_centre().unwrap());
+    let elsewhere = h.state().to_screen([lo[0] - 1.0, lo[1] - 1.0]);
+    drag(&mut h, c, elsewhere);
+    let moved = h.state().rotation_centre().unwrap();
+    assert!((moved[0] - (lo[0] - 1.0)).abs() < 0.2 && (moved[1] - (lo[1] - 1.0)).abs() < 0.2, "{moved:?}");
+    assert!(crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap().0[0] == lo[0], "moving the centre moves nothing else");
+    let start = h.state().rotate_handles()[2];
+    let c = h.state().to_screen(moved);
+    drag(&mut h, start, c + egui::vec2(start.y - c.y, c.x - start.x));
+    let (a, _) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    assert!((a[0] - lo[0]).abs() > 0.5, "it swung round the new centre: {a:?}");
+}
+
+#[test]
+fn a_piece_turns_as_one_from_the_handles() {
+    let mut h = job_with_square([3.0, 3.0]);
+    let first = h.state().doc.vectors[0].id;
+    let second = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([7.0, 3.0], 1.0, 1.0, 0.0))], Prim::Free);
+    h.state_mut().selected = vec![first, second];
+    h.state_mut().make_piece();
+    h.state_mut().selected = vec![first];
+    h.state_mut().handles_on = Some(vec![first]);
+    h.run();
+    let other = |h: &Harness<'static, App>| h.state().doc.vectors.iter().find(|v| v.id == second).unwrap().paths[0].pts[0];
+    let before = other(&h);
+    let c = h.state().to_screen(h.state().rotation_centre().unwrap());
+    let start = h.state().rotate_handles()[2];
+    drag(&mut h, start, c + egui::vec2(start.y - c.y, c.x - start.x));
+    assert!((other(&h)[0] - before[0]).abs() > 0.5, "the rest of the piece went round too");
+}
+
+#[cfg(test)]
+fn a_layer_and_a_toolpath(h: &mut Harness<'static, App>) -> usize {
+    use crate::toolpath::{self, OpKind};
+    h.state_mut().doc.layers.push(crate::app::Layer::named("Outlines"));
+    let on = h.state().doc.layers.len() - 1;
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().doc.vectors[0].layer = on;
+    let paths = h.state().doc.vectors[0].paths.clone();
+    let mut op = toolpath::blank_op(OpKind::Profile, "Around".into(), toolpath::default_tools().remove(0), 0.25, paths);
+    op.source = vec![id];
+    let doc = &h.state().doc;
+    let (machine, job) = (doc.machine_on_job(), toolpath::JobSize { width: doc.job.width, height: doc.job.height, thickness: doc.job.thickness });
+    let moves = toolpath::generate(&op, machine, &job, None).unwrap();
+    h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(moves), kept_moves: None, kept_steps: None });
+    h.state_mut().selected_tp = Some(0);
+    on
+}
+
+#[test]
+fn a_template_keeps_the_settings_and_finds_the_shapes_on_its_layer() {
+    let mut h = job_with_square([3.0, 3.0]);
+    a_layer_and_a_toolpath(&mut h);
+    let file = h.state().template_of(true).unwrap();
+    assert_eq!(file.toolpaths[0].layer.as_deref(), Some("Outlines"));
+    assert!(file.toolpaths[0].op.paths.is_empty() && file.toolpaths[0].op.source.is_empty(), "no shapes go in the file");
+    let text = serde_json::to_string(&file).unwrap();
+
+    // Into a job with the layer: chosen by layer, and not calculated until asked.
+    let mut other = job_with_square([6.0, 6.0]);
+    other.state_mut().doc.layers.push(crate::app::Layer::named("Outlines"));
+    let at = other.state().doc.layers.len() - 1;
+    other.state_mut().doc.vectors[0].layer = at;
+    let shape = other.state().doc.vectors[0].id;
+    other.state_mut().load_template(&text).unwrap();
+    other.run();
+    let tp = &other.state().doc.toolpaths[0];
+    assert_eq!(tp.op.name, "Around");
+    assert_eq!(tp.op.source, [shape]);
+    assert!(tp.moves.is_empty());
+    assert!(tp.op.selector.as_ref().unwrap().layers == [at]);
+    assert_eq!(other.state().selected_tp, Some(0));
+    assert!(other.state().template_waiting.is_none());
+}
+
+#[test]
+fn a_template_asks_about_layers_this_job_does_not_have() {
+    let mut h = job_with_square([3.0, 3.0]);
+    a_layer_and_a_toolpath(&mut h);
+    let text = serde_json::to_string(&h.state().template_of(false).unwrap()).unwrap();
+    let start = || {
+        let mut other = job_with_square([6.0, 6.0]);
+        other.state_mut().load_template(&text).unwrap();
+        other.run();
+        other
+    };
+    // Asked first, with nothing added.
+    let mut other = start();
+    assert!(other.state().doc.toolpaths.is_empty());
+    other.get_by_label("Outlines");
+    click(&mut other, "Create these layers");
+    assert!(other.state().doc.layers.iter().any(|l| l.name == "Outlines"));
+    assert_eq!(other.state().doc.toolpaths.len(), 1);
+    assert!(other.state().doc.toolpaths[0].op.source.is_empty(), "nothing is on the new layer yet");
+
+    // Shapes moved onto the layer are picked up when recalculating.
+    let at = other.state().doc.layers.iter().position(|l| l.name == "Outlines").unwrap();
+    other.state_mut().doc.vectors[0].layer = at;
+    other.state_mut().recalculate_all();
+    for _ in 0..50 {
+        other.run();
+        if !other.state().doc.toolpaths[0].moves.is_empty() {
+            break;
+        }
+    }
+    assert!(!other.state().doc.toolpaths[0].moves.is_empty(), "{}", other.state().status);
+
+    // Taking away what lacks a layer can leave nothing, and says so.
+    let mut other = start();
+    click(&mut other, "Remove their toolpaths");
+    assert!(other.state().doc.toolpaths.is_empty());
+    assert!(other.state().message.as_ref().unwrap().contains("No toolpaths were left"));
+
+    // As they are: no shapes yet, to be chosen by editing.
+    let mut other = start();
+    let layers = other.state().doc.layers.len();
+    click(&mut other, "Load them as they are");
+    assert_eq!(other.state().doc.toolpaths.len(), 1);
+    assert_eq!(other.state().doc.layers.len(), layers);
+    other.state_mut().recalculate_all();
+    other.run();
+    assert!(other.state().doc.toolpaths[0].moves.is_empty());
+    assert!(other.state().status.contains("can't follow the drawing"), "{}", other.state().status);
+}
+
+#[test]
+fn a_template_changes_unit_with_the_job_and_refuses_what_it_cannot_keep() {
+    let mut h = job_with_square([3.0, 3.0]);
+    a_layer_and_a_toolpath(&mut h);
+    let depth = h.state().doc.toolpaths[0].op.cut_depth;
+    let dia = h.state().doc.toolpaths[0].op.tool.dia;
+    let mut file = h.state().template_of(true).unwrap();
+    file.metric = !file.metric;
+    let text = serde_json::to_string(&file).unwrap();
+    h.state_mut().load_template(&text).unwrap();
+    h.run();
+    let k = if h.state().doc.job.units == crate::app::Units::Mm { 25.4 } else { 1.0 / 25.4 };
+    let new = &h.state().doc.toolpaths[1].op;
+    assert!((new.cut_depth - depth * k).abs() < 1e-9 && (new.tool.dia - dia).abs() < 1e-9 + dia * 26.0, "{} {}", new.cut_depth, new.tool.dia);
+
+    let mut newer = h.state().template_of(false).unwrap();
+    newer.version = 2;
+    let refused = h.state_mut().load_template(&serde_json::to_string(&newer).unwrap());
+    assert!(refused.unwrap_err().contains("newer"));
+    assert!(h.state_mut().load_template("not a template").is_err());
+
+    h.state_mut().doc.toolpaths[0].op.merged = true;
+    h.state_mut().selected_tp = Some(0);
+    assert!(h.state().template_of(true).unwrap_err().contains("merged"));
+    assert_eq!(h.state().template_of(false).unwrap().toolpaths.len(), 1, "others go, the merged one is left out");
+}
+
+#[test]
+fn the_job_sheet_lists_the_setup_and_each_toolpath() {
+    let mut h = job_with_square([3.0, 3.0]);
+    a_layer_and_a_toolpath(&mut h);
+    h.state_mut().doc.toolpaths[0].op.name = "Around <the> \"edge\" & more".into();
+    let page = h.state().job_sheet_html("Wheel & hub");
+    for part in ["<title>Wheel &amp; hub</title>", "Job layout", "<polygon", "Material setup", "Toolpath summary", "Around &lt;the&gt; &quot;edge&quot; &amp; more", "Feed rate", "Tool number", "Clearance height", "Total time"] {
+        assert!(page.contains(part), "{part}");
+    }
+    assert!(!page.contains("<the>"), "names can't break the page");
+    assert!(!page.contains("Not calculated"));
+    h.state_mut().doc.toolpaths[0].moves = Default::default();
+    assert!(h.state().job_sheet_html("x").contains("Not calculated"));
+}
+
+#[test]
+fn support_details_say_what_helps_and_nothing_private() {
+    let mut h = job_with_square([3.0, 3.0]);
+    a_layer_and_a_toolpath(&mut h);
+    h.state_mut().path = Some("/somewhere/private/wheel.burin".into());
+    let text = h.state().support_text();
+    for part in ["Burin ", "System:", "3D quality", "Whole preview", "1 toolpaths"] {
+        assert!(text.contains(part), "{part}: {text}");
+    }
+    assert!(!text.contains("private") && !text.contains("wheel"), "{text}");
+    h.state_mut().support_open = true;
+    h.run();
+    click(&mut h, "Copy These Details");
+    assert!(h.state().status.contains("Copied"));
 }

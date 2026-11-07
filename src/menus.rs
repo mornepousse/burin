@@ -714,14 +714,24 @@ impl App {
         ui.menu_button(tr("Preview Simulation Quality"), |ui| self.quality_list(ui));
         ui.separator();
         ui.menu_button(tr("Templates"), |ui| {
-            later(ui, "Save Selected Toolpath as Template...");
-            later(ui, "Save All Visible Toolpaths as Template...");
-            later(ui, "Load Template...");
+            let has_selected = self.selected_tp.is_some_and(|i| i < self.doc.toolpaths.len());
+            if entry(ui, "Save Selected Toolpath as Template...", has_selected, None) {
+                self.save_template_dialog(true);
+            }
+            if entry(ui, "Save All Visible Toolpaths as Template...", self.doc.toolpaths.iter().any(|t| t.visible), None) {
+                self.save_template_dialog(false);
+            }
+            if entry(ui, "Load Template...", true, None) {
+                self.load_template_dialog();
+            }
         });
         if entry(ui, "Merge Visible Toolpaths", true, None) {
             self.open_merge_form();
         }
-        later(ui, "Create Job Sheet");
+        if entry(ui, "Create Job Sheet", true, None) {
+            let open_after = ui.input(|i| i.modifiers.ctrl);
+            self.save_job_sheet_dialog(ui.ctx(), open_after);
+        }
         ui.separator();
         if entry(ui, "Install Post Processor...", true, None) {
             if let Some(files) = rfd::FileDialog::new().add_filter(tr("Post processor"), &["pp"]).pick_files() {
@@ -789,6 +799,9 @@ impl App {
         later(ui, "Help Contents");
         if entry(ui, "Keyboard Shortcuts", true, None) {
             self.prefs_open = true;
+        }
+        if entry(ui, "Details for Support...", true, None) {
+            self.support_open = true;
         }
         ui.separator();
         if entry(ui, "About", true, None) {

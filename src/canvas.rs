@@ -22,7 +22,9 @@ pub enum Drag {
     None,
     Box(Pos2),
     Move { last: P },
-    Scale { anchor: P, start: P, orig: Vec<(u64, Vec<Path>)> },
+    Scale { anchor: P, middle: P, start: P, orig: Vec<(u64, Vec<Path>)> },
+    Rotate { centre: P, start: P, orig: Vec<(u64, Vec<Path>)> },
+    RotateCentre,
     Node { id: u64, path: usize, index: usize },
     Draw { start: P },
     Measure { start: P },
@@ -31,6 +33,29 @@ pub enum Drag {
     Envelope(usize),
     Guide(usize),
     Sketch { elem: crate::constraints::Elem, last: P },
+}
+
+/// A corner's new place when the shape keeps its proportions: the shorter way wins (`0x140a70f40`).
+pub(crate) fn keep_proportions(start: P, now: P, anchor: P) -> P {
+    let (x0, y0) = (start[0] - anchor[0], start[1] - anchor[1]);
+    let aspect = (x0 / y0).abs();
+    let nudge = |d: f64| if d == 0.0 { 0.001 } else { d };
+    let (dx, dy) = (nudge(now[0] - anchor[0]), nudge(now[1] - anchor[1]));
+    let (mut w, mut h) = (dx.abs(), dy.abs());
+    if h <= w {
+        w = h * aspect;
+    } else {
+        h = w / aspect;
+    }
+    [anchor[0] + w.copysign(dx), anchor[1] + h.copysign(dy)]
+}
+
+/// How far a point has gone round the centre, in degrees. With `steps`, to the nearest 15.
+pub(crate) fn turned_degrees(centre: P, start: P, now: P, steps: bool) -> f64 {
+    let (ax, ay) = (start[0] - centre[0], start[1] - centre[1]);
+    let (bx, by) = (now[0] - centre[0], now[1] - centre[1]);
+    let degrees = (ax * by - ay * bx).atan2(ax * bx + ay * by).to_degrees();
+    if steps { (degrees / 15.0).round() * 15.0 } else { degrees }
 }
 
 /// A selection box drawn from right to left also takes what it touches.
@@ -217,6 +242,27 @@ impl App {
         .into_iter()
         .map(|(corner, anchor)| (self.to_screen(corner), anchor))
         .collect()
+    }
+
+    /// The handles for turning, a little beyond the corners (`0x140a6f810`).
+    pub(crate) fn rotate_handles(&self) -> Vec<Pos2> {
+        if self.handles_on.as_deref() != Some(self.selected.as_slice()) {
+            return Vec::new();
+        }
+        let Some((lo, hi)) = self.selected_bbox() else { return Vec::new() };
+        let beyond = 17.0;
+        [([lo[0], lo[1]], vec2(-beyond, beyond)), ([hi[0], lo[1]], vec2(beyond, beyond)), ([hi[0], hi[1]], vec2(beyond, -beyond)), ([lo[0], hi[1]], vec2(-beyond, -beyond))].into_iter().map(|(corner, away)| self.to_screen(corner) + away).collect()
+    }
+
+    /// What the selection turns about: the middle of what moves with it, unless it has been moved.
+    pub(crate) fn rotation_centre(&self) -> Option<P> {
+        if let Some((ids, c)) = &self.rotate_centre {
+            if ids == &self.selected {
+                return Some(*c);
+            }
+        }
+        let (lo, hi) = self.moving_bbox()?;
+        Some([(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0])
     }
 
     pub fn fit_selection(&mut self, rect: Rect) {
@@ -670,6 +716,10 @@ impl App {
             let icons = [ResizeNeSw, ResizeNwSe, ResizeNeSw, ResizeNwSe, ResizeVertical, ResizeHorizontal, ResizeVertical, ResizeHorizontal];
             if let Some(i) = self.handle_rects().iter().position(|(h, _)| (*h - p).length() < 7.0) {
                 response.ctx.set_cursor_icon(icons[i]);
+            } else if self.rotate_handles().iter().any(|h| (*h - p).length() < 7.0) {
+                response.ctx.set_cursor_icon(egui::CursorIcon::Alias);
+            } else if !self.rotate_handles().is_empty() && self.rotation_centre().is_some_and(|c| (self.to_screen(c) - p).length() < 7.0) {
+                response.ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
             }
         }
         // A double click takes in the whole of a piece, without choosing it from the buttons.
@@ -697,6 +747,7 @@ impl App {
                 (Some(id), false) if self.selected.contains(&id) => {
                     let shown = self.handles_on.as_deref() == Some(self.selected.as_slice());
                     self.handles_on = (!shown).then(|| self.selected.clone());
+                    self.rotate_centre = None;
                 }
                 (Some(id), false) => {
                     self.handles_on = None;
@@ -715,7 +766,15 @@ impl App {
             if let Some((corner, anchor)) = handle {
                 self.checkpoint();
                 let orig = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id)).map(|v| (v.id, v.paths.clone())).collect();
-                self.drag = Drag::Scale { anchor, start: self.to_world(corner), orig };
+                let middle = self.selected_bbox().map_or(anchor, |(lo, hi)| [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0]);
+                self.drag = Drag::Scale { anchor, middle, start: self.to_world(corner), orig };
+            } else if let (Some(centre), true) = (self.rotation_centre(), self.rotate_handles().iter().any(|h| (*h - p).length() < 7.0)) {
+                self.checkpoint();
+                let moving = self.moving_ids();
+                let orig = self.doc.vectors.iter().filter(|v| moving.contains(&v.id)).map(|v| (v.id, v.paths.clone())).collect();
+                self.drag = Drag::Rotate { centre, start: self.to_world(p), orig };
+            } else if !self.rotate_handles().is_empty() && self.rotation_centre().is_some_and(|c| (self.to_screen(c) - p).length() < 7.0) {
+                self.drag = Drag::RotateCentre;
             } else {
                 // Dragging from inside a shape that isn't selected draws a box, so the shapes
                 // within a panel can be selected without moving the panel.
@@ -739,8 +798,13 @@ impl App {
                 self.translate_selected(now[0] - last[0], now[1] - last[1]);
                 self.drag = Drag::Move { last: now };
             }
-            Drag::Scale { anchor, start, orig } => {
+            Drag::Scale { anchor, middle, start, orig } => {
+                let alt = response.ctx.input(|i| i.modifiers.alt);
+                // With Shift it grows from its middle (`0x140a72f00`).
+                let anchor = if shift { middle } else { anchor };
                 let now = self.snapped(self.to_world(p));
+                let corner = (start[0] - anchor[0]).abs() > 1e-9 && (start[1] - anchor[1]).abs() > 1e-9;
+                let now = if corner && !alt { keep_proportions(start, now, anchor) } else { now };
                 let ratio = |n: f64, s: f64, a: f64| if (s - a).abs() < 1e-9 { 1.0 } else { (n - a) / (s - a) };
                 let (sx, sy) = (ratio(now[0], start[0], anchor[0]), ratio(now[1], start[1], anchor[1]));
                 for (id, paths) in &orig {
@@ -752,6 +816,26 @@ impl App {
                         v.prim = Prim::Free;
                     }
                 }
+            }
+            Drag::Rotate { centre, start, orig } => {
+                let alt = response.ctx.input(|i| i.modifiers.alt);
+                let now = self.to_world(p);
+                let degrees = turned_degrees(centre, start, now, alt);
+                let (s, k) = degrees.to_radians().sin_cos();
+                for (id, paths) in &orig {
+                    if let Some(v) = self.doc.vectors.iter_mut().find(|v| v.id == *id) {
+                        v.paths = paths.clone();
+                        for q in v.paths.iter_mut().flat_map(|q| q.pts.iter_mut()) {
+                            let (x, y) = (q[0] - centre[0], q[1] - centre[1]);
+                            *q = [centre[0] + x * k - y * s, centre[1] + x * s + y * k];
+                        }
+                        v.prim = Prim::Free;
+                    }
+                }
+                self.status = tf!("Turned {:.1} degrees", degrees);
+            }
+            Drag::RotateCentre => {
+                self.rotate_centre = Some((self.selected.clone(), self.snapped(self.to_world(p))));
             }
             _ => {}
         }
@@ -915,6 +999,17 @@ impl App {
                 let r = Rect::from_center_size(h, vec2(8.0, 8.0));
                 painter.rect_filled(r, 0.0, Color32::WHITE);
                 painter.rect_stroke(r, 0.0, Stroke::new(1.0, theme::SHEET_INK), StrokeKind::Inside);
+            }
+            let turning = self.rotate_handles();
+            for h in &turning {
+                painter.circle(*h, 4.5, Color32::WHITE, Stroke::new(1.0, theme::PICK));
+            }
+            if let (false, Some(c)) = (turning.is_empty(), self.rotation_centre()) {
+                let c = self.to_screen(c);
+                let line = Stroke::new(1.5, theme::PICK);
+                painter.circle_stroke(c, 5.0, line);
+                painter.line_segment([c - vec2(8.0, 0.0), c + vec2(8.0, 0.0)], line);
+                painter.line_segment([c - vec2(0.0, 8.0), c + vec2(0.0, 8.0)], line);
             }
         }
         if self.tool == Tool2::Nodes {

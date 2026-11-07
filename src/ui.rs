@@ -406,6 +406,8 @@ impl App {
         self.leave_window(&ctx);
         self.preferences_window(&ctx);
         self.merge_window(&ctx);
+        self.template_window(&ctx);
+        self.support_window(&ctx);
         self.recalc_question(&ctx);
         self.poll_recalc();
         self.keyboard(ui);
@@ -2233,7 +2235,7 @@ impl App {
 
 }
 
-fn duration(seconds: f64) -> String {
+pub(crate) fn duration(seconds: f64) -> String {
     let s = seconds.round() as u64;
     format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
 }
