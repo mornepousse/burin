@@ -2,15 +2,17 @@
 
 use crate::app::*;
 use crate::geom::{self, Path};
+use crate::i18n::tr;
 use crate::icons::{self, Icon};
+use crate::keys::{Action, Shortcut};
 use crate::relief::{Combine, Profile};
-use crate::toolpath::{self, OpKind, Order, Side};
+use crate::toolpath::{self, Order, Side};
 use egui::{pos2, vec2, Align2, Color32, CornerRadius, FontId, Frame, Margin, Rect, RichText, Sense, Shape, Stroke, StrokeKind, TextEdit, Ui};
 
 use crate::theme::{self, ACCENT, CARD, CHROME, INPUT, LINE, MUTED, PANEL, TEXT, WORKSPACE};
 pub use crate::theme::setup_style;
-const SIDE_W: f32 = 248.0;
-const RIGHT_W: f32 = 282.0;
+pub const SIDE_W: f32 = 248.0;
+pub const RIGHT_W: f32 = 282.0;
 
 
 /// Gives a painted control a name for screen readers and tests.
@@ -102,7 +104,9 @@ pub(crate) fn labelled_from(ui: &mut Ui, label: &str, label_w: f32, value: &mut 
 
 pub(crate) fn labelled(ui: &mut Ui, label: &str, label_w: f32, value: &mut f64, width: f32, unit: &str) -> bool {
     ui.horizontal(|ui| {
-        let (r, _) = ui.allocate_exact_size(vec2(label_w, 18.0), Sense::hover());
+        // A wording longer than its place takes the room it needs, rather than running out of the panel.
+        let needs = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.5), TEXT).size().x + 2.0;
+        let (r, _) = ui.allocate_exact_size(vec2(label_w.max(needs), 18.0), Sense::hover());
         ui.painter().text(r.right_center() - vec2(1.0, 0.0), Align2::RIGHT_CENTER, label, FontId::proportional(12.5), TEXT);
         let changed = number(ui, value, width);
         if !unit.is_empty() {
@@ -114,6 +118,11 @@ pub(crate) fn labelled(ui: &mut Ui, label: &str, label_w: f32, value: &mut f64, 
 }
 
 pub fn icon_button(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool, active: bool) -> egui::Response {
+    icon_button_saying(ui, icon, tip, tip, enabled, active)
+}
+
+/// The same, with more to say when the pointer rests on it than what it's called.
+pub fn icon_button_saying(ui: &mut Ui, icon: Icon, name: &str, tip: &str, enabled: bool, active: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), if enabled { Sense::click() } else { Sense::hover() });
     if active {
         ui.painter().rect_filled(rect, 7.0, theme::ACCENT_SOFT);
@@ -121,7 +130,7 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool, active: bo
         ui.painter().rect_filled(rect, 7.0, theme::BUTTON);
     }
     icons::paint(ui.painter(), rect.shrink(2.0), icon, enabled);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tip));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
     resp.on_hover_text(tip)
 }
 
@@ -209,8 +218,97 @@ pub(crate) fn wide(ui: &mut Ui, label: &str, width: f32) -> egui::Response {
 impl App {
     // ----- File dialogs -----
 
+    /// Something in this project that a reopened file wouldn't have.
+    pub fn has_unsaved_work(&self) -> bool {
+        let d = &self.doc;
+        self.dirty && !(d.vectors.is_empty() && d.toolpaths.is_empty() && d.components.is_empty() && d.bitmaps.is_empty())
+    }
+
+    /// Goes on with this, asking first if unsaved work would be lost.
+    pub fn leave_for(&mut self, leave: Leave) {
+        if self.has_unsaved_work() {
+            self.leave = Some(leave);
+        } else {
+            match leave {
+                Leave::New => self.new_file(),
+                Leave::Open => self.dialog_open(),
+                Leave::ToStart => self.close_project(),
+                Leave::Recent => self.open_recent_wanted(),
+                // Closing is only asked about once the window has been told to close.
+                Leave::Close => {}
+            }
+        }
+    }
+
+    fn recalc_question(&mut self, ctx: &egui::Context) {
+        if !self.ask_recalc {
+            return;
+        }
+        let (mut now, mut later) = (false, false);
+        let shown = egui::Modal::new(egui::Id::NULL.with("material-changed")).show(ctx, |ui| {
+            ui.set_width(350.0);
+            bold_sized(ui, crate::i18n::tr("Recalculate the toolpaths?"), 14.0, TEXT);
+            ui.add_space(6.0);
+            ui.label(crate::i18n::tr("The material's settings have changed, so all the toolpaths have to be worked out again to be right."));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                now = primary(ui, crate::i18n::tr("Recalculate Now"), 120.0).clicked();
+                ui.add_space((ui.available_width() - 74.0).max(0.0));
+                later = ui.add_sized([74.0, 24.0], egui::Button::new(crate::i18n::tr("Later"))).clicked();
+            });
+        });
+        if now {
+            self.ask_recalc = false;
+            self.recalculate_all();
+        } else if later || shown.should_close() {
+            self.ask_recalc = false;
+            self.all_behind = true;
+        }
+    }
+
+    fn leave_window(&mut self, ctx: &egui::Context) {
+        let Some(leave) = self.leave else { return };
+        let (mut save, mut drop_it, mut cancel) = (false, false, false);
+        let shown = egui::Modal::new(egui::Id::NULL.with("unsaved-work")).show(ctx, |ui| {
+            ui.set_width(350.0);
+            bold_sized(ui, crate::i18n::tr("Save your changes first?"), 14.0, TEXT);
+            ui.add_space(6.0);
+            ui.label(crate::i18n::tr("This project has changes that haven't been saved. They'll be lost if you go on without saving."));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                save = primary(ui, crate::i18n::tr("Save"), 74.0).clicked();
+                drop_it = ui.button(crate::i18n::tr("Don't Save")).clicked();
+                ui.add_space((ui.available_width() - 74.0).max(0.0));
+                cancel = ui.add_sized([74.0, 24.0], egui::Button::new(crate::i18n::tr("Cancel"))).clicked();
+            });
+        });
+        if cancel || shown.should_close() {
+            self.leave = None;
+        } else if save || drop_it {
+            self.leave = None;
+            if save {
+                self.dialog_save(false);
+                // Its file window was closed without choosing, or it couldn't be written.
+                if self.dirty {
+                    return;
+                }
+            }
+            match leave {
+                Leave::New => self.new_file(),
+                // The project stays until another has really been opened.
+                Leave::Open => self.dialog_open(),
+                Leave::ToStart => self.close_project(),
+                Leave::Recent => self.open_recent_wanted(),
+                Leave::Close => {
+                    self.dirty = false;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+    }
+
     pub fn dialog_open(&mut self) {
-        if let Some(path) = rfd::FileDialog::new().add_filter("Projects", &["burin", "crv3d", "crv"]).add_filter("Burin project", &["burin"]).add_filter(".crv3d project", &["crv3d", "crv"]).pick_file() {
+        if let Some(path) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Projects"), &["burin", "crv3d", "crv"]).add_filter(crate::i18n::tr("Burin project"), &["burin"]).add_filter(crate::i18n::tr(".crv3d project"), &["crv3d", "crv"]).pick_file() {
             if let Err(e) = self.open_path(path) {
                 self.message = Some(e);
             }
@@ -220,7 +318,7 @@ impl App {
     pub fn dialog_save(&mut self, save_as: bool) {
         let target = match (&self.path, save_as) {
             (Some(p), false) => Some(p.clone()),
-            _ => rfd::FileDialog::new().add_filter("Burin project", &["burin"]).set_file_name("project.burin").save_file(),
+            _ => rfd::FileDialog::new().add_filter(crate::i18n::tr("Burin project"), &["burin"]).set_file_name("project.burin").save_file(),
         };
         if let Some(path) = target {
             if let Err(e) = self.save_to(path) {
@@ -230,7 +328,7 @@ impl App {
     }
 
     pub fn dialog_import(&mut self) {
-        let Some(path) = rfd::FileDialog::new().add_filter("Drawing", &["svg", "dxf"]).pick_file() else { return };
+        let Some(path) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Drawing"), &["svg", "dxf"]).pick_file() else { return };
         if let Err(why) = self.import_drawing(&path) {
             self.message = Some(why);
         }
@@ -239,7 +337,7 @@ impl App {
     /// Adds the shapes of a DXF or SVG file to the job, selected.
     pub fn import_drawing(&mut self, path: &std::path::Path) -> Result<(), String> {
         // Older drawing files are often in other character sets; only the numbers matter here.
-        let bytes = std::fs::read(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+        let bytes = std::fs::read(path).map_err(|e| tf!("Could not read {}: {e}", path.display()))?;
         let text = String::from_utf8_lossy(&bytes);
         let is_svg = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
         let mut masked = 0;
@@ -252,7 +350,7 @@ impl App {
             (geom::dxf_read(&text).into_iter().map(|p| vec![p]).collect::<Vec<_>>(), 0)
         };
         if objects.is_empty() {
-            return Err(format!("{} has no lines, curves or shapes this program can read.", path.display()));
+            return Err(tf!("{} has no lines, curves or shapes this program can read.", path.display()));
         }
         self.checkpoint();
         self.selected.clear();
@@ -262,17 +360,17 @@ impl App {
         }
         self.view3d = false;
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().to_string());
-        let mut note = format!("Imported {name}.");
+        let mut note = tf!("Imported {name}.");
         if skipped > 0 {
-            note += &format!(" {skipped} objects were left out: text must be converted to outlines first.");
+            note += &tf!(" {skipped} objects were left out: text must be converted to outlines first.");
         }
         if masked > 0 {
-            note += &format!(" {masked} objects are hidden in part by a mask in the file: they come in whole.");
+            note += &tf!(" {masked} objects are hidden in part by a mask in the file: they come in whole.");
         }
         let (w, h) = (self.doc.job.width, self.doc.job.height);
         let picked = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id));
         if geom::bbox(picked.flat_map(|v| v.paths.iter())).is_some_and(|(lo, hi)| lo[0] < -1e-6 || lo[1] < -1e-6 || hi[0] > w + 1e-6 || hi[1] > h + 1e-6) {
-            note += " Part of it lies outside the job.";
+            note += crate::i18n::tr(" Part of it lies outside the job.");
         }
         self.status = note;
         Ok(())
@@ -285,13 +383,13 @@ impl App {
             self.selected_paths()
         };
         if paths.is_empty() {
-            self.status = "There are no shapes to export.".into();
+            self.status = crate::i18n::tr("There are no shapes to export.").into();
             return;
         }
-        if let Some(path) = rfd::FileDialog::new().add_filter("Drawing", &["dxf"]).set_file_name("shapes.dxf").save_file() {
+        if let Some(path) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Drawing"), &["dxf"]).set_file_name("shapes.dxf").save_file() {
             match std::fs::write(&path, geom::dxf_write(&paths)) {
-                Ok(()) => self.status = format!("Exported {}", path.display()),
-                Err(e) => self.message = Some(format!("Could not write {}: {e}", path.display())),
+                Ok(()) => self.status = tf!("Exported {}", path.display()),
+                Err(e) => self.message = Some(tf!("Could not write {}: {e}", path.display())),
             }
         }
     }
@@ -300,6 +398,15 @@ impl App {
     // ----- The whole window -----
 
     pub fn frame(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        if ctx.input(|i| i.viewport().close_requested()) && self.has_unsaved_work() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.leave = Some(Leave::Close);
+        }
+        self.leave_window(&ctx);
+        self.preferences_window(&ctx);
+        self.merge_window(&ctx);
+        self.recalc_question(&ctx);
         self.poll_recalc();
         self.keyboard(ui);
         self.maintain_constraints();
@@ -334,17 +441,16 @@ impl App {
             egui::CentralPanel::default().frame(Frame::new().fill(WORKSPACE)).show(ui, |ui| self.centre(ui));
         }
         self.windows(ui);
-        // Last, so that a shape let go this frame is followed at once, whatever is on the screen.
-        if self.follow_shapes() > 0 {
-            ui.ctx().request_repaint();
-        }
+        // Last, so that a shape let go this frame counts at once, whatever is on the screen.
+        self.note_changed_shapes();
         // Started just now, by the shape let go or a button above.
         if self.recalc.is_some() {
             ui.ctx().request_repaint();
         }
     }
 
-    /// The arrow keys move the selection: Shift ten times as far, Ctrl a hundred, Alt a tenth.
+    /// The arrow keys move the selection: Shift ten times as far, Ctrl a hundred, Alt a tenth,
+    /// and Ctrl with Shift the original's fixed distance.
     fn nudge(&mut self, ctx: &egui::Context) {
         use egui::Key;
         let arrows = [(Key::ArrowLeft, -1.0, 0.0), (Key::ArrowRight, 1.0, 0.0), (Key::ArrowDown, 0.0, -1.0), (Key::ArrowUp, 0.0, 1.0)];
@@ -370,17 +476,28 @@ impl App {
         let (cmd, shift, alt) = ctx.input(|i| (i.modifiers.command, i.modifiers.shift, i.modifiers.alt));
         let times = if cmd { 100.0 } else if shift { 10.0 } else if alt { 0.1 } else { 1.0 };
         let metric = self.doc.job.units == Units::Mm;
-        let step = if metric { 1.0 } else { 0.05 } * times;
+        let step = match (cmd && shift, metric) {
+            (true, true) => 0.1,
+            (true, false) => 0.125,
+            (false, true) => times,
+            (false, false) => 0.05 * times,
+        };
         if !self.nudging {
             self.checkpoint();
             self.nudging = true;
         }
         self.translate_selected(dx * step, dy * step);
-        self.status = format!("Moved the selection by {} {}. Shift: x10, Ctrl: x100, Alt: x0.1.", toolpath::trim(step), self.doc.job.unit());
+        // A key let go within this same frame wouldn't bring another one, and the move would never end.
+        ctx.request_repaint();
+        self.status = tf!("Moved the selection by {} {}. Shift: x10, Ctrl: x100, Alt: x0.1, Ctrl+Shift: fixed.", toolpath::trim(step), self.doc.job.unit());
     }
 
     fn keyboard(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        // Keys pressed while choosing them don't do anything else.
+        if self.prefs_open {
+            return;
+        }
         self.nudge(&ctx);
         if self.recalc.is_some() {
             return;
@@ -388,70 +505,293 @@ impl App {
         if ctx.egui_wants_keyboard_input() || self.screen != Screen::Work {
             return;
         }
-        use egui::Key;
-        let (cmd, shift) = ctx.input(|i| (i.modifiers.command, i.modifiers.shift));
-        let pressed = |k: Key| ctx.input(|i| i.key_pressed(k));
-        if pressed(Key::Delete) || pressed(Key::Backspace) {
+        let keys = self.keys;
+        let fired = |action: Action| ctx.input(|i| keys.fired(action, i));
+        if !self.view3d {
+            if fired(Action::Group) {
+                self.group_selected();
+            }
+            // All the levels or one, and everything back on its own layer or staying on the group's.
+            for (action, deep, own_layers) in [(Action::Ungroup, false, true), (Action::UngroupAll, true, true), (Action::UngroupStay, false, false), (Action::UngroupAllStay, true, false)] {
+                if fired(action) {
+                    self.ungroup_with(deep, own_layers);
+                }
+            }
+            if fired(Action::MakePiece) {
+                self.make_piece();
+            }
+            if fired(Action::SelectPiece) && self.selection_in_piece() {
+                self.select_piece();
+            }
+            if fired(Action::AdjustPiece) && (self.selection_in_piece() || self.adjust_piece) {
+                self.adjust_piece = !self.adjust_piece;
+            }
+            if fired(Action::ReleasePiece) {
+                self.release_piece();
+            }
+            // These belong to the select tool, with nothing being drawn or dragged.
+            if self.tool == Tool2::Select && matches!(self.left, LeftForm::None) && matches!(self.drag, crate::canvas::Drag::None) {
+                for (action, across, about_job, copy) in [
+                    (Action::MirrorX, true, false, false),
+                    (Action::MirrorXJob, true, true, false),
+                    (Action::MirrorXCopy, true, false, true),
+                    (Action::MirrorXJobCopy, true, true, true),
+                    (Action::MirrorY, false, false, false),
+                    (Action::MirrorYJob, false, true, false),
+                    (Action::MirrorYCopy, false, false, true),
+                    (Action::MirrorYJobCopy, false, true, true),
+                ] {
+                    if fired(action) {
+                        self.mirror(across, None, about_job, copy);
+                    }
+                }
+                if fired(Action::TurnLeft) {
+                    self.turn_selected(45.0);
+                }
+                if fired(Action::TurnRight) {
+                    self.turn_selected(-45.0);
+                }
+            }
+        }
+        if fired(Action::Delete) || fired(Action::DeleteAgain) {
             // A chosen rule goes first, and the shapes stay.
             match self.selected_rule.filter(|_| matches!(&self.left, LeftForm::Xform(f) if f.kind == Xform::Constraints)) {
                 Some(i) => self.remove_rule(i),
                 None => self.delete_selected(),
             }
         }
+        use egui::Key;
+        let pressed = |k: Key| ctx.input(|i| i.key_pressed(k));
         if pressed(Key::Escape) {
+            // Only the select tool's own Escape drops the selection: anywhere else it just ends that tool.
+            if self.tool == Tool2::Select && matches!(self.left, LeftForm::None) {
+                self.selected.clear();
+            }
             if let LeftForm::Draw(f) = &mut self.left {
                 f.points.clear();
             }
             self.picks.clear();
             self.close_left_form();
             self.tool = Tool2::Select;
+            self.handles_on = None;
         }
         if pressed(Key::Enter) && matches!(&self.left, LeftForm::Draw(f) if !f.points.is_empty()) {
             self.finish_line(false);
         }
-        if cmd {
-            if pressed(Key::Z) {
-                if shift {
-                    self.do_redo();
-                } else {
-                    self.do_undo();
-                }
-            }
-            if pressed(Key::Y) {
-                self.do_redo();
-            }
-            if pressed(Key::A) {
-                if shift {
-                    let tol = self.default_similar_tolerance();
-                    self.select_similar(tol);
-                } else {
-                    self.select_all();
-                }
-            }
-            if pressed(Key::S) {
-                self.dialog_save(shift);
-            }
-            if pressed(Key::O) {
-                self.dialog_open();
-            }
+        if fired(Action::Undo) {
+            self.do_undo();
         }
-        let copy = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy)));
-        let cut = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Cut)));
-        let paste = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))));
-        if copy {
+        if fired(Action::Redo) || fired(Action::RedoAgain) {
+            self.do_redo();
+        }
+        if fired(Action::SelectAll) {
+            self.select_all();
+        }
+        if fired(Action::SelectSimilar) {
+            let tol = self.default_similar_tolerance();
+            self.select_similar(tol);
+        }
+        if fired(Action::Save) {
+            self.dialog_save(false);
+        }
+        if fired(Action::SaveAs) {
+            self.dialog_save(true);
+        }
+        if fired(Action::Open) {
+            self.leave_for(Leave::Open);
+        }
+        if fired(Action::New) {
+            self.leave_for(Leave::New);
+        }
+        if fired(Action::Copy) {
             self.copy_selected();
         }
-        if cut {
+        if fired(Action::Cut) {
             self.copy_selected();
             self.delete_selected();
         }
-        if paste {
+        if fired(Action::Paste) {
             self.paste();
+        }
+        if fired(Action::Import) {
+            self.dialog_import();
+        }
+        if fired(Action::IncrementSave) {
+            self.increment_and_save();
+        }
+        if fired(Action::Refresh) {
+            ctx.request_repaint();
+        }
+        if fired(Action::View2d) {
+            self.view3d = false;
+        }
+        if fired(Action::View3d) {
+            self.view3d = true;
+        }
+        if fired(Action::ZoomFit) || fired(Action::ZoomFitAgain) {
+            self.zoom_to_job();
+        }
+        let tab = if fired(Action::DrawingOrModeling) {
+            Some(if self.left_tab == LeftTab::Modeling { LeftTab::Drawing } else { LeftTab::Modeling })
+        } else if fired(Action::DrawingTab) {
+            Some(LeftTab::Drawing)
+        } else if fired(Action::LayersTab) {
+            Some(LeftTab::Layers)
+        } else {
+            None
+        };
+        if let Some(tab) = tab {
+            self.left_tab = tab;
+            self.left_open = true;
+            self.close_left_form();
+        }
+        if fired(Action::LeftPanel) {
+            self.left_open = !self.left_open;
+            self.auto_fit = true;
+        }
+        if fired(Action::RightPanel) {
+            self.right_open = !self.right_open;
+            self.auto_fit = true;
+        }
+        if !self.view3d {
+            if fired(Action::ZoomBox) {
+                self.tool = if self.tool == Tool2::ZoomBox { Tool2::Select } else { Tool2::ZoomBox };
+            }
+            if fired(Action::NodesOrSelect) {
+                self.tool = if self.tool == Tool2::Nodes { Tool2::Select } else { Tool2::Nodes };
+                self.left = LeftForm::None;
+            }
+            if fired(Action::Measure) {
+                self.tool = Tool2::Measure;
+                self.left = LeftForm::None;
+            }
+            for (action, form) in [
+                (Action::MoveForm, Xform::Move),
+                (Action::SizeForm, Xform::Scale),
+                (Action::RotateForm, Xform::Rotate),
+                (Action::JoinForm, Xform::Join),
+                (Action::AlignForm, Xform::Align),
+            ] {
+                if fired(action) {
+                    self.start_xform(form);
+                }
+            }
+            if fired(Action::CentreOnMaterial) {
+                self.align_selected(Some(0), Some(0));
+            }
+            for (action, kind) in [
+                (Action::DrawLines, DrawKind::Polyline),
+                (Action::DrawCircle, DrawKind::Circle),
+                (Action::DrawEllipse, DrawKind::Ellipse),
+                (Action::DrawRect, DrawKind::Rect),
+                (Action::DrawPolygon, DrawKind::Polygon),
+                (Action::DrawStar, DrawKind::Star),
+                (Action::DrawArc, DrawKind::Arc),
+                (Action::DrawCurve, DrawKind::Curve),
+                (Action::DrawSpiral, DrawKind::Spiral),
+                (Action::DrawText, DrawKind::Text),
+            ] {
+                if fired(action) {
+                    self.start_draw(kind);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn zoom_to_job(&mut self) {
+        if self.view3d {
+            self.cam.zoom = 1.0;
+            self.cam.pan = egui::Vec2::ZERO;
+        } else {
+            self.auto_fit = true;
+            self.last_rect = Rect::NOTHING;
+        }
+    }
+
+    /// Choosing the language and the keys. The list waits for a key while one is being changed.
+    fn preferences_window(&mut self, ctx: &egui::Context) {
+        if !self.prefs_open {
+            return;
+        }
+        if let Some(action) = self.prefs_waiting {
+            if let Some(key) = ctx.input(Shortcut::pressed_now) {
+                if key.key == egui::Key::Escape {
+                    self.prefs_waiting = None;
+                    self.prefs_note.clear();
+                } else if crate::keys::reserved(key.key) {
+                    self.prefs_note = tf!("{} can't be changed: it already has its own use.", key.text());
+                } else if let Some(other) = self.keys.taken_by(key, action) {
+                    self.prefs_note = tf!("{} is already used by: {}", key.text(), crate::keys::action_name(other));
+                } else {
+                    self.keys.set(action, Some(key));
+                    self.prefs_waiting = None;
+                    self.prefs_note.clear();
+                    crate::keys::save(self.keys);
+                }
+            }
+        }
+        let mut open = true;
+        egui::Window::new(crate::i18n::tr("Preferences")).id(egui::Id::unique("preferences")).open(&mut open).collapsible(false).default_width(470.0).default_height(560.0).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(crate::i18n::tr("Language")).strong());
+                for lang in crate::i18n::Lang::ALL {
+                    if ui.selectable_label(crate::i18n::language() == lang, lang.name()).clicked() && crate::i18n::language() != lang {
+                        crate::i18n::set_language(lang);
+                        crate::keys::save(self.keys);
+                    }
+                }
+            });
+            ui.separator();
+            ui.label(RichText::new(crate::i18n::tr("Keyboard Shortcuts")).strong());
+            ui.label(RichText::new(crate::i18n::tr("Click a key to change it, then press the new one. Escape cancels.")).color(MUTED));
+            if !self.prefs_note.is_empty() {
+                ui.label(RichText::new(self.prefs_note.as_str()).color(theme::ERROR));
+            }
+            egui::ScrollArea::vertical().max_height(ui.available_height() - 74.0).auto_shrink([false, false]).show(ui, |ui| {
+                for (section, actions) in crate::keys::SECTIONS {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(crate::i18n::tr(section)).strong().color(ACCENT));
+                    egui::Grid::new(section).num_columns(3).spacing([10.0, 4.0]).show(ui, |ui| {
+                        for action in actions {
+                            ui.allocate_ui_with_layout(vec2(290.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                ui.set_min_width(290.0);
+                                ui.add(egui::Label::new(crate::keys::action_name(*action)).truncate());
+                            });
+                            let waiting = self.prefs_waiting == Some(*action);
+                            let text = if waiting { crate::i18n::tr("Press a key...").to_string() } else { self.keys.text(*action) };
+                            if ui.add_sized([130.0, 22.0], egui::Button::new(text).selected(waiting)).clicked() {
+                                self.prefs_waiting = (!waiting).then_some(*action);
+                                self.prefs_note.clear();
+                            }
+                            if ui.add_enabled(self.keys.get(*action).is_some(), egui::Button::new("x")).on_hover_text(crate::i18n::tr("Remove this key")).clicked() {
+                                self.keys.set(*action, None);
+                                self.prefs_waiting = None;
+                                self.prefs_note.clear();
+                                crate::keys::save(self.keys);
+                            }
+                            ui.end_row();
+                        }
+                    });
+                }
+            });
+            ui.separator();
+            ui.label(RichText::new(crate::i18n::tr("These keys can't be changed: the arrows move the selection, Escape cancels, Enter finishes a line, and Space starts a new one.")).size(11.5).color(MUTED));
+            if ui.button(crate::i18n::tr("Restore Default Keys")).clicked() {
+                self.keys = crate::keys::Keys::default();
+                self.prefs_waiting = None;
+                self.prefs_note.clear();
+                crate::keys::save(self.keys);
+            }
+        });
+        if !open {
+            self.prefs_open = false;
+            self.prefs_waiting = None;
+            self.prefs_note.clear();
         }
     }
 
     pub fn select_all(&mut self) {
-        self.selected = self.doc.vectors.iter().filter(|v| self.doc.layers.get(v.layer).is_none_or(|l| l.visible)).map(|v| v.id).collect();
+        self.selected = self.doc.vectors.iter().filter(|v| self.doc.layers.get(v.layer).is_none_or(|l| l.visible && !l.locked)).map(|v| v.id).collect();
     }
 
     pub fn close_left_form(&mut self) {
@@ -470,187 +810,7 @@ impl App {
             ui.add_space(2.0);
             bold_sized(ui, "Burin", 14.0, ACCENT);
             ui.add_space(4.0);
-            ui.menu_button("File", |ui| {
-                if ui.button("New").clicked() {
-                    self.new_file();
-                    ui.close();
-                }
-                if ui.button("Open...").clicked() {
-                    ui.close();
-                    self.dialog_open();
-                }
-                if ui.add_enabled(work, egui::Button::new("Save")).clicked() {
-                    ui.close();
-                    self.dialog_save(false);
-                }
-                if ui.add_enabled(work, egui::Button::new("Save As...")).clicked() {
-                    ui.close();
-                    self.dialog_save(true);
-                }
-                ui.separator();
-                if ui.add_enabled(work, egui::Button::new("Import Shapes (SVG, DXF)...")).clicked() {
-                    ui.close();
-                    self.dialog_import();
-                }
-                if ui.add_enabled(work, egui::Button::new("Import 3D Model (STL)...")).clicked() {
-                    ui.close();
-                    self.dialog_import_model();
-                }
-                if ui.add_enabled(work, egui::Button::new("3D Relief from Picture...")).clicked() {
-                    ui.close();
-                    self.dialog_relief_picture();
-                }
-                if ui.add_enabled(work, egui::Button::new("Import Bitmap / Trace...")).clicked() {
-                    ui.close();
-                    self.start_trace();
-                }
-                if ui.add_enabled(work, egui::Button::new("Export Shapes (DXF)...")).clicked() {
-                    ui.close();
-                    self.dialog_export();
-                }
-                ui.separator();
-                if ui.button("Exit").clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            });
-            if work {
-                ui.menu_button("Edit", |ui| {
-                    if ui.button("Move X/Y Zero...").clicked() {
-                        self.start_xform(Xform::Move);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.add_enabled(!self.undo.is_empty(), egui::Button::new("Undo")).clicked() {
-                        self.do_undo();
-                        ui.close();
-                    }
-                    if ui.add_enabled(!self.redo.is_empty(), egui::Button::new("Redo")).clicked() {
-                        self.do_redo();
-                        ui.close();
-                    }
-                    ui.separator();
-                    let some = !self.selected.is_empty();
-                    if ui.add_enabled(some, egui::Button::new("Cut")).clicked() {
-                        self.copy_selected();
-                        self.delete_selected();
-                        ui.close();
-                    }
-                    if ui.add_enabled(some, egui::Button::new("Copy")).clicked() {
-                        self.copy_selected();
-                        ui.close();
-                    }
-                    if ui.add_enabled(!self.clipboard.is_empty(), egui::Button::new("Paste")).clicked() {
-                        self.paste();
-                        ui.close();
-                    }
-                    if ui.add_enabled(some, egui::Button::new("Delete")).clicked() {
-                        self.delete_selected();
-                        ui.close();
-                    }
-                    if ui.button("Select All").clicked() {
-                        self.select_all();
-                        ui.close();
-                    }
-                    if ui.add_enabled(some, egui::Button::new("Select Similar")).clicked() {
-                        let tol = self.default_similar_tolerance();
-                        self.select_similar(tol);
-                        ui.close();
-                    }
-                    if ui.button("Modify Several Shapes...").clicked() {
-                        self.start_xform(Xform::Bulk);
-                        ui.close();
-                    }
-                    if ui.button("Drawing Constraints...").clicked() {
-                        self.left_tab = LeftTab::Drawing;
-                        self.start_constraint_form();
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Job Setup...").clicked() {
-                        self.open_job_setup();
-                        ui.close();
-                    }
-                });
-                ui.menu_button("Model", |ui| {
-                    if ui.button("Create Shape from Selection...").clicked() {
-                        self.open_shape_form(None);
-                        ui.close();
-                    }
-                    if ui.add_enabled(!self.doc.components.is_empty(), egui::Button::new("Delete All Shapes")).clicked() {
-                        self.checkpoint();
-                        self.doc.components.clear();
-                        self.selected_comp = None;
-                        self.model_dirty = true;
-                        ui.close();
-                    }
-                });
-                ui.menu_button("Toolpaths", |ui| {
-                    for (kind, label) in [
-                        (OpKind::Profile, "Profile..."),
-                        (OpKind::Pocket, "Pocket..."),
-                        (OpKind::Drill, "Drill..."),
-                        (OpKind::Engrave, "Quick Engrave..."),
-                        (OpKind::VCarve, "V-Carve..."),
-                        (OpKind::Rough3D, "3D Roughing..."),
-                        (OpKind::Finish3D, "3D Finishing..."),
-                        (OpKind::Prism, "Prism Carve..."),
-                        (OpKind::Texture, "Texture..."),
-                        (OpKind::Moulding, "Moulding..."),
-                        (OpKind::Flute, "Fluting..."),
-                        (OpKind::Chamfer, "Chamfer..."),
-                    ] {
-                        if ui.button(label).clicked() {
-                            self.start_op(kind);
-                            ui.close();
-                        }
-                    }
-                    ui.separator();
-                    if ui.button("Tool Database...").clicked() {
-                        self.open_tool_list(None);
-                        ui.close();
-                    }
-                    if ui.button("Recalculate All").clicked() {
-                        self.recalculate_all();
-                        ui.close();
-                    }
-                    if ui.button("Save Toolpaths...").clicked() {
-                        ui.close();
-                        self.right = RightMode::Save;
-                        self.right_open = true;
-                    }
-                });
-                ui.menu_button("View", |ui| {
-                    if ui.selectable_label(!self.view3d, "2D View").clicked() {
-                        self.view3d = false;
-                        ui.close();
-                    }
-                    if ui.selectable_label(self.view3d, "3D View").clicked() {
-                        self.view3d = true;
-                        ui.close();
-                    }
-                    ui.separator();
-                    ui.checkbox(&mut self.grid, "Show Grid");
-                    ui.checkbox(&mut self.snap, "Snap to Grid");
-                    ui.checkbox(&mut self.snap_shapes, "Snap to Shapes").on_hover_text("Hold Alt to turn it off for a moment.");
-                    ui.checkbox(&mut self.show_guides, "Show Guides").on_hover_text("Drag from a ruler onto the sheet to add one. Drag it back to remove it.");
-                    if ui.add_enabled(!self.doc.guides.is_empty(), egui::Button::new("Remove All Guides")).clicked() {
-                        self.checkpoint();
-                        self.doc.guides.clear();
-                        ui.close();
-                    }
-                    ui.checkbox(&mut self.show_vectors, "Show Shapes");
-                    ui.checkbox(&mut self.show_toolpaths, "Show Toolpaths");
-                });
-            }
-            ui.menu_button("Gadgets", |ui| {
-                ui.add_enabled(false, egui::Label::new("No gadgets installed"));
-            });
-            ui.menu_button("Help", |ui| {
-                if ui.button("About").clicked() {
-                    self.about_open = true;
-                    ui.close();
-                }
-            });
+            self.main_menus(ui, work);
             if work {
                 self.quick_actions(ui);
             }
@@ -672,21 +832,21 @@ impl App {
         ui.add_space(6.0);
         divider(ui);
         ui.spacing_mut().item_spacing.x = 1.0;
-        let actions: [(Icon, &str, bool); 3] = [(Icon::New, "New", true), (Icon::Open, "Open", true), (Icon::Save, "Save", true)];
+        let actions: [(Icon, &str, bool); 3] = [(Icon::New, crate::i18n::tr("New"), true), (Icon::Open, crate::i18n::tr("Open"), true), (Icon::Save, crate::i18n::tr("Save"), true)];
         for (icon, tip, on) in actions {
             if icon_button(ui, icon, tip, on, false).clicked() {
                 match icon {
-                    Icon::New => self.new_file(),
-                    Icon::Open => self.dialog_open(),
+                    Icon::New => self.leave_for(Leave::New),
+                    Icon::Open => self.leave_for(Leave::Open),
                     _ => self.dialog_save(false),
                 }
             }
         }
         divider(ui);
-        if icon_button(ui, Icon::Undo, "Undo", !self.undo.is_empty(), false).clicked() {
+        if icon_button(ui, Icon::Undo, crate::i18n::tr("Undo"), !self.undo.is_empty(), false).clicked() {
             self.do_undo();
         }
-        if icon_button(ui, Icon::Redo, "Redo", !self.redo.is_empty(), false).clicked() {
+        if icon_button(ui, Icon::Redo, crate::i18n::tr("Redo"), !self.redo.is_empty(), false).clicked() {
             self.do_redo();
         }
         // Everything from here on is also in the menus, so it can give way on a narrow window.
@@ -695,26 +855,26 @@ impl App {
         let room = ui.available_width() - chip_width - 12.0;
         if room >= 4.0 * ICON + DIVIDER {
             divider(ui);
-            if icon_button(ui, Icon::Cut, "Cut", some, false).clicked() {
+            if icon_button(ui, Icon::Cut, crate::i18n::tr("Cut"), some, false).clicked() {
                 self.copy_selected();
                 self.delete_selected();
             }
-            if icon_button(ui, Icon::Copy, "Copy", some, false).clicked() {
+            if icon_button(ui, Icon::Copy, crate::i18n::tr("Copy"), some, false).clicked() {
                 self.copy_selected();
             }
-            if icon_button(ui, Icon::Paste, "Paste", !self.clipboard.is_empty(), false).clicked() {
+            if icon_button(ui, Icon::Paste, crate::i18n::tr("Paste"), !self.clipboard.is_empty(), false).clicked() {
                 self.paste();
             }
-            if icon_button(ui, Icon::SelectAll, "Select all", true, false).clicked() {
+            if icon_button(ui, Icon::SelectAll, crate::i18n::tr("Select all"), true, false).clicked() {
                 self.select_all();
             }
         }
         if room >= 6.0 * ICON + 2.0 * DIVIDER {
             divider(ui);
-            if icon_button(ui, Icon::Import, "Import shapes", true, false).clicked() {
+            if icon_button(ui, Icon::Import, crate::i18n::tr("Import shapes"), true, false).clicked() {
                 self.dialog_import();
             }
-            if icon_button(ui, Icon::Export, "Export shapes", true, false).clicked() {
+            if icon_button(ui, Icon::Export, crate::i18n::tr("Export shapes"), true, false).clicked() {
                 self.dialog_export();
             }
         }
@@ -725,8 +885,8 @@ impl App {
             ui.painter().rect(rect, 12.0, if lit { theme::BUTTON_HOVER } else { theme::CARD }, Stroke::NONE, StrokeKind::Inside);
             icons::paint(ui.painter(), Rect::from_center_size(rect.left_center() + vec2(15.0, 0.0), vec2(20.0, 20.0)), Icon::JobSetup, true);
             ui.painter().galley(pos2(rect.left() + 29.0, rect.center().y - galley.size().y / 2.0), galley.clone(), TEXT);
-            label_widget(&resp, "Job Setup...");
-            let tip = format!("Job setup: change the size, thickness, units and origin.\nOrigin: {}", job.datum.label());
+            label_widget(&resp, crate::i18n::tr("Job Setup..."));
+            let tip = tf!("Job setup: change the size, thickness, units and origin.\nOrigin: {}", job.datum.label());
             if resp.on_hover_text(tip).clicked() {
                 self.open_job_setup();
             }
@@ -747,7 +907,7 @@ impl App {
         let y = rect.right() - 358.0;
         if self.grid && !self.view3d {
             let unit = self.doc.job.unit();
-            p.text(pos2(y + 186.0, rect.center().y), Align2::LEFT_CENTER, format!("Grid {} {unit}", toolpath::trim(self.grid_steps().0)), font.clone(), MUTED);
+            p.text(pos2(y + 186.0, rect.center().y), Align2::LEFT_CENTER, tf!("Grid {} {unit}", toolpath::trim(self.grid_steps().0)), font.clone(), MUTED);
         }
         if let Some((text, colour)) = self.definition_text() {
             p.text(pos2(x - 12.0, rect.center().y), Align2::RIGHT_CENTER, text, font.clone(), colour);
@@ -817,28 +977,39 @@ impl App {
             let column = Rect::from_min_max(pos2(whole.center().x - width / 2.0, top), pos2(whole.center().x + width / 2.0, whole.bottom()));
             let mut body = ui.new_child(egui::UiBuilder::new().max_rect(column));
             let ui = &mut body;
-            let (logo, _) = ui.allocate_exact_size(vec2(width, 76.0), Sense::hover());
+            let (logo, _) = ui.allocate_exact_size(vec2(width, 92.0), Sense::hover());
+            let picture = self.start_logo.get_or_insert_with(|| {
+                // Made small here, as its fine lines would shimmer if the screen did it.
+                let icon = crate::icon();
+                let full = image::RgbaImage::from_raw(icon.width, icon.height, icon.rgba).expect("the icon has its full size");
+                let small = image::imageops::resize(&full, 184, 184, image::imageops::FilterType::Lanczos3);
+                let colours = egui::ColorImage::from_rgba_unmultiplied([184, 184], small.as_raw());
+                ui.ctx().load_texture("burin-logo", colours, egui::TextureOptions::LINEAR)
+            });
+            let picture = picture.id();
             let p = ui.painter();
-            p.text(logo.center(), Align2::CENTER_CENTER, "Burin", FontId::proportional(64.0), TEXT);
-            let tip = logo.center() + vec2(78.0, 0.0);
-            p.add(Shape::convex_polygon(vec![tip + vec2(0.0, 24.0), tip + vec2(30.0, -24.0), tip + vec2(22.0, 22.0)], ACCENT, Stroke::NONE));
+            let name = p.layout_no_wrap("Burin".to_string(), FontId::proportional(64.0), TEXT);
+            let left = logo.center().x - (92.0 + 18.0 + name.size().x) / 2.0;
+            let square = Rect::from_min_size(pos2(left, logo.top()), vec2(92.0, 92.0));
+            p.image(picture, square, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            p.galley(pos2(square.right() + 18.0, logo.center().y - name.size().y / 2.0), name, TEXT);
             let (line, _) = ui.allocate_exact_size(vec2(width, 22.0), Sense::hover());
-            ui.painter().text(line.center(), Align2::CENTER_CENTER, "Design it, then carve it", FontId::proportional(14.0), theme::MUTED);
+            ui.painter().text(line.center(), Align2::CENTER_CENTER, crate::i18n::tr("Design it, then carve it"), FontId::proportional(14.0), theme::MUTED);
             ui.add_space(26.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
                 let tile = (width - 12.0) / 2.0;
-                if start_tile(ui, Icon::Doc, "Create a new file", tile) {
-                    self.new_file();
+                if start_tile(ui, Icon::Doc, crate::i18n::tr("Create a new file"), tile) {
+                    self.leave_for(Leave::New);
                 }
-                if start_tile(ui, Icon::Folder, "Open an existing file", tile) {
-                    self.dialog_open();
+                if start_tile(ui, Icon::Folder, crate::i18n::tr("Open an existing file"), tile) {
+                    self.leave_for(Leave::Open);
                 }
             });
             ui.add_space(24.0);
             ui.spacing_mut().item_spacing.y = 8.0;
             if !recent.is_empty() {
-                bold_sized(ui, "Recently opened files", 12.5, theme::MUTED);
+                bold_sized(ui, crate::i18n::tr("Recently opened files"), 12.5, theme::MUTED);
                 for path in recent {
                     let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                     if self.start_link(ui, Icon::Doc, &name) {
@@ -849,7 +1020,7 @@ impl App {
                 }
                 ui.add_space(10.0);
             }
-            if self.start_link(ui, Icon::Sample, "Open the sample project") {
+            if self.start_link(ui, Icon::Sample, crate::i18n::tr("Open the sample project")) {
                 self.load_sample();
             }
         });
@@ -888,10 +1059,10 @@ impl App {
             let tabs = Rect::from_min_max(pos2(whole.left(), whole.bottom() - tabs_h), whole.max);
             let body = Rect::from_min_max(pos2(whole.left(), header.bottom()), pos2(whole.right(), tabs.top()));
             let title = match self.left_tab {
-                LeftTab::Drawing => "Drawing",
-                LeftTab::Modeling => "Modeling",
-                LeftTab::Clipart => "Clipart",
-                LeftTab::Layers => "Layers",
+                LeftTab::Drawing => crate::i18n::tr("Drawing"),
+                LeftTab::Modeling => crate::i18n::tr("Modeling"),
+                LeftTab::Clipart => crate::i18n::tr("Clipart"),
+                LeftTab::Layers => crate::i18n::tr("Layers"),
             };
             self.panel_header(ui, header, title, true);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body.shrink2(vec2(10.0, 6.0))));
@@ -912,9 +1083,11 @@ impl App {
             // Tabs along the bottom.
             let strip = ui.painter();
             strip.rect_filled(tabs, 0.0, CHROME);
-            let specs = [(LeftTab::Drawing, "Drawing", 58.0), (LeftTab::Modeling, "Modeling", 64.0), (LeftTab::Clipart, "Clipart", 52.0), (LeftTab::Layers, "Layers", 56.0)];
+            let specs = [(LeftTab::Drawing, crate::i18n::tr("Drawing")), (LeftTab::Modeling, crate::i18n::tr("Modeling")), (LeftTab::Clipart, crate::i18n::tr("Clipart")), (LeftTab::Layers, crate::i18n::tr("Layers"))];
             let mut x = tabs.left() + 2.0;
-            for (tab, label, w) in specs {
+            for (tab, label) in specs {
+                // As wide as its word, which depends on the language.
+                let w = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.5), TEXT).size().x + 9.0;
                 let active = self.left_tab == tab;
                 let r = Rect::from_min_size(pos2(x, tabs.top() + 2.0), vec2(w, tabs_h - 4.0));
                 if side_tab(ui, r, label, active).clicked() {
@@ -928,7 +1101,7 @@ impl App {
 
     fn collapsed_strip(&mut self, ui: &mut Ui, left: bool) {
         let panel = if left { egui::Panel::left("left_strip") } else { egui::Panel::right("right_strip") };
-        let label = if left { "Drawing" } else { "Toolpaths" };
+        let label = if left { crate::i18n::tr("Drawing") } else { crate::i18n::tr("Toolpaths") };
         panel.exact_size(22.0).resizable(false).frame(Frame::new().fill(CHROME)).show(ui, |ui| {
             let r = ui.max_rect();
             let tab = Rect::from_min_size(r.min + vec2(1.0, 6.0), vec2(20.0, 70.0));
@@ -952,7 +1125,7 @@ impl App {
     fn panel_header(&mut self, ui: &mut Ui, rect: Rect, title: &str, left: bool) {
         ui.painter().text(rect.left_center() + vec2(12.0, 0.0), Align2::LEFT_CENTER, title, FontId::proportional(12.5), TEXT);
         let b = Rect::from_center_size(pos2(rect.right() - 26.0, rect.center().y), vec2(16.0, 16.0));
-        let name = if left { "Hide left panel" } else { "Hide right panel" };
+        let name = if left { crate::i18n::tr("Hide left panel") } else { crate::i18n::tr("Hide right panel") };
         let resp = ui.interact(b, ui.scope_id().with(name), Sense::click()).on_hover_text(name);
         icons::paint(ui.painter(), b, Icon::Collapse, true);
         icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.right() - 9.0, rect.center().y), vec2(12.0, 12.0)), Icon::Pin, true);
@@ -990,20 +1163,20 @@ impl App {
                 let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
                 wood_block(ui.painter(), r);
                 ui.add_space(8.0);
-                bold(ui, "Job Setup");
+                bold(ui, crate::i18n::tr("Job Setup"));
             });
             card(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        bold(ui, "Job Type");
+                        bold(ui, crate::i18n::tr("Job Type"));
                         let (r, _) = ui.allocate_exact_size(vec2(58.0, 32.0), Sense::hover());
                         wood_block(ui.painter(), r);
                     });
                     ui.add_space(14.0);
                     ui.vertical(|ui| {
-                        let _ = ui.radio(true, "Single Sided");
-                        ui.add_enabled(false, egui::RadioButton::new(false, "Double Sided")).on_disabled_hover_text("Not in this version");
-                        ui.add_enabled(false, egui::RadioButton::new(false, "Rotary")).on_disabled_hover_text("Not in this version");
+                        let _ = ui.radio(true, crate::i18n::tr("Single Sided"));
+                        ui.add_enabled(false, egui::RadioButton::new(false, crate::i18n::tr("Double Sided"))).on_disabled_hover_text(crate::i18n::tr("Not in this version"));
+                        ui.add_enabled(false, egui::RadioButton::new(false, crate::i18n::tr("Rotary"))).on_disabled_hover_text(crate::i18n::tr("Not in this version"));
                     });
                 });
             });
@@ -1013,26 +1186,26 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(56.0);
-                        bold(ui, "Job Size");
+                        bold(ui, crate::i18n::tr("Job Size"));
                         let (r, _) = ui.allocate_exact_size(vec2(58.0, 44.0), Sense::hover());
                         wood_block(ui.painter(), r);
                     });
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 3.0;
-                        size_changed |= labelled(ui, "Width (X):", 54.0, &mut self.doc.job.width, 40.0, unit);
-                        size_changed |= labelled(ui, "Height (Y):", 54.0, &mut self.doc.job.height, 40.0, unit);
-                        size_changed |= labelled(ui, "Thickness", 54.0, &mut self.doc.job.thickness, 40.0, unit);
+                        size_changed |= labelled(ui, crate::i18n::tr("Width (X):"), 54.0, &mut self.doc.job.width, 40.0, unit);
+                        size_changed |= labelled(ui, crate::i18n::tr("Height (Y):"), 54.0, &mut self.doc.job.height, 40.0, unit);
+                        size_changed |= labelled(ui, crate::i18n::tr("Thickness"), 54.0, &mut self.doc.job.thickness, 40.0, unit);
                     });
                 });
-                if labelled(ui, "Sacrificial board", 96.0, &mut self.doc.job.spoil_board, 40.0, unit) {
+                if labelled(ui, crate::i18n::tr("Sacrificial board"), 96.0, &mut self.doc.job.spoil_board, 40.0, unit) {
                     self.doc.job.spoil_board = self.doc.job.spoil_board.max(0.0);
                 }
-                ui.label(RichText::new("Cutting into it brings no warning; going past it does.").size(11.5).color(MUTED));
+                ui.label(RichText::new(crate::i18n::tr("Cutting into it brings no warning; going past it does.")).size(11.5).color(MUTED));
                 ui.horizontal(|ui| {
-                    bold(ui, "Units");
+                    bold(ui, crate::i18n::tr("Units"));
                     ui.add_space(14.0);
                     let inches = self.doc.job.units == Units::Inches;
-                    if ui.radio(inches, "inches").clicked() {
+                    if ui.radio(inches, crate::i18n::tr("inches")).clicked() {
                         self.doc.set_units(Units::Inches);
                         size_changed = true;
                     }
@@ -1044,7 +1217,7 @@ impl App {
                 });
             });
             card(ui, |ui| {
-                bold(ui, "Z Zero Position");
+                bold(ui, crate::i18n::tr("Z Zero Position"));
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(60.0, 40.0), Sense::hover());
                     wood_block(ui.painter(), r);
@@ -1052,17 +1225,17 @@ impl App {
                     ui.painter().circle_filled(pos2(r.left() + 4.0, datum_y), 4.0, Color32::from_rgb(200, 30, 30));
                     ui.add_space(26.0);
                     ui.vertical(|ui| {
-                        if ui.radio(!self.doc.job.z_on_bed, "Material Surface").clicked() {
+                        if ui.radio(!self.doc.job.z_on_bed, crate::i18n::tr("Material Surface")).clicked() {
                             self.doc.job.z_on_bed = false;
                         }
-                        if ui.radio(self.doc.job.z_on_bed, "Machine Bed").clicked() {
+                        if ui.radio(self.doc.job.z_on_bed, crate::i18n::tr("Machine Bed")).clicked() {
                             self.doc.job.z_on_bed = true;
                         }
                     });
                 });
             });
             card(ui, |ui| {
-                bold(ui, "XY Datum Position");
+                bold(ui, crate::i18n::tr("XY Datum Position"));
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(52.0, 56.0), Sense::hover());
                     wood_block(ui.painter(), Rect::from_center_size(r.center(), vec2(52.0, 30.0)));
@@ -1089,7 +1262,7 @@ impl App {
                     }
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 3.0;
-                        ui.checkbox(&mut self.doc.job.use_offset, "Use Offset");
+                        ui.checkbox(&mut self.doc.job.use_offset, crate::i18n::tr("Use Offset"));
                         let on = self.doc.job.use_offset;
                         ui.add_enabled_ui(on, |ui| {
                             labelled(ui, "X:", 14.0, &mut self.doc.job.offset[0], 46.0, "");
@@ -1100,14 +1273,14 @@ impl App {
             });
             card(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
-                bold(ui, "Modeling Resolution");
+                bold(ui, crate::i18n::tr("Modeling Resolution"));
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(26.0, 22.0), Sense::hover());
                     icons::paint(ui.painter(), r, Icon::BlockCopy, true);
                     let before = self.doc.job.resolution;
-                    egui::ComboBox::from_id_salt("res").selected_text(RESOLUTIONS[before.min(3)].0).width(160.0).show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt("res").selected_text(tr(RESOLUTIONS[before.min(3)].0)).width(160.0).show_ui(ui, |ui| {
                         for (i, r) in RESOLUTIONS.iter().enumerate() {
-                            ui.selectable_value(&mut self.doc.job.resolution, i, r.0);
+                            ui.selectable_value(&mut self.doc.job.resolution, i, tr(r.0));
                         }
                     });
                     if self.doc.job.resolution != before {
@@ -1116,27 +1289,27 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(32.0);
-                    ui.label(RichText::new(RESOLUTIONS[self.doc.job.resolution.min(3)].1).size(11.5).color(MUTED));
+                    ui.label(RichText::new(tr(RESOLUTIONS[self.doc.job.resolution.min(3)].1)).size(11.5).color(MUTED));
                 });
-                bold(ui, "Appearance");
+                bold(ui, crate::i18n::tr("Appearance"));
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(26.0, 22.0), Sense::hover());
                     ui.painter().circle_filled(r.center(), 10.0, Color32::from_rgb(240, 236, 220));
                     for (o, c) in [(vec2(-5.0, -2.0), Color32::RED), (vec2(0.0, -5.0), Color32::from_rgb(240, 190, 30)), (vec2(5.0, -2.0), Color32::from_rgb(40, 150, 60)), (vec2(3.0, 4.0), Color32::from_rgb(40, 90, 220))] {
                         ui.painter().circle_filled(r.center() + o, 2.0, c);
                     }
-                    let name = self.doc.job.material.map_or("Solid Color", |m| MATERIALS[m.min(4)].0);
+                    let name = self.doc.job.material.map_or(crate::i18n::tr("Solid Color"), |m| tr(MATERIALS[m.min(4)].0));
                     egui::ComboBox::from_id_salt("appearance").selected_text(name).width(160.0).show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.doc.job.material, None, "Solid Color");
+                        ui.selectable_value(&mut self.doc.job.material, None, crate::i18n::tr("Solid Color"));
                         for (i, m) in MATERIALS.iter().enumerate() {
-                            ui.selectable_value(&mut self.doc.job.material, Some(i), m.0);
+                            ui.selectable_value(&mut self.doc.job.material, Some(i), tr(m.0));
                         }
                     });
                 });
                 if self.doc.job.material.is_none() {
                     ui.horizontal(|ui| {
                         ui.add_space(52.0);
-                        ui.label("Solid Color:");
+                        ui.label(crate::i18n::tr("Solid Color:"));
                         ui.color_edit_button_srgb(&mut self.doc.job.solid);
                     });
                 }
@@ -1146,7 +1319,7 @@ impl App {
                     self.confirm_job();
                 }
                 ui.add_space(ui.available_width() - 76.0);
-                if wide(ui, "Cancel", 74.0).clicked() {
+                if wide(ui, crate::i18n::tr("Cancel"), 74.0).clicked() {
                     self.cancel_job();
                 }
             });
@@ -1168,16 +1341,12 @@ impl App {
         if let LeftForm::Job { backup: Some(before), .. } = &self.left {
             let (old, new) = (&before.job, &self.doc.job);
             if serde_json::to_string(old).ok() != serde_json::to_string(new).ok() {
-                let reshaped = (old.width, old.height, old.thickness, old.units) != (new.width, new.height, new.thickness, new.units);
                 let (w, h) = (new.width, new.height);
                 let outside = crate::geom::bbox(self.doc.vectors.iter().flat_map(|v| v.paths.iter())).is_some_and(|(lo, hi)| lo[0] < -1e-6 || lo[1] < -1e-6 || hi[0] > w + 1e-6 || hi[1] > h + 1e-6);
-                self.status = match (outside, reshaped && !self.doc.toolpaths.is_empty()) {
-                    (true, true) => "Job changed: some shapes are now outside the job, and the toolpaths need calculating again.".into(),
-                    (true, false) => "Job changed: some shapes are now outside the job.".into(),
-                    (false, true) => "Job changed: the toolpaths need calculating again.".into(),
-                    (false, false) => "Job changed.".into(),
-                };
+
+                self.status = if outside { crate::i18n::tr("Job changed: some shapes are now outside the job.").into() } else { crate::i18n::tr("Job changed.").into() };
                 let LeftForm::Job { backup: Some(before), .. } = std::mem::replace(&mut self.left, LeftForm::None) else { unreachable!() };
+                self.material_accepted(&before);
                 self.undo.push(*before);
                 if self.undo.len() > 60 {
                     self.undo.remove(0);
@@ -1247,7 +1416,7 @@ impl App {
         ui.horizontal(|ui| {
             pressed = primary(ui, apply, 74.0).clicked();
             ui.add_space((ui.available_width() - 80.0).max(0.0));
-            if wide(ui, "Close", 74.0).clicked() {
+            if wide(ui, crate::i18n::tr("Close"), 74.0).clicked() {
                 self.left = LeftForm::None;
             }
         });
@@ -1273,7 +1442,7 @@ impl App {
         };
         let editing = f.editing.is_some_and(|id| self.doc.vectors.iter().any(|v| v.id == id));
         if editing {
-            title_card(ui, icon, &f.kind.title().replacen("Draw", "Edit", 1));
+            title_card(ui, icon, &f.kind.title().replacen(crate::i18n::tr("Draw"), crate::i18n::tr("Edit"), 1));
         } else {
             title_card(ui, icon, f.kind.title());
         }
@@ -1281,15 +1450,15 @@ impl App {
         let line_tool = matches!(f.kind, DrawKind::Polyline | DrawKind::Curve);
         if line_tool {
             card(ui, |ui| {
-                ui.label("Click on the sheet to add points.");
-                ui.label("Double click or press Enter to finish.");
-                ui.label("Click the first point to close the shape.");
+                ui.label(crate::i18n::tr("Click on the sheet to add points."));
+                ui.label(crate::i18n::tr("Double click or press Enter to finish."));
+                ui.label(crate::i18n::tr("Click the first point to close the shape."));
                 ui.add_space(4.0);
-                ui.label(format!("Points: {}", f.points.len()));
+                ui.label(tf!("Points: {}", f.points.len()));
             });
         } else {
             card(ui, |ui| {
-                bold(ui, if f.kind == DrawKind::Text { "Start Point" } else { "Center Point" });
+                bold(ui, if f.kind == DrawKind::Text { crate::i18n::tr("Start Point") } else { crate::i18n::tr("Center Point") });
                 let zero = self.doc.job.origin();
                 ui.horizontal(|ui| {
                     ui.label("X:");
@@ -1302,11 +1471,11 @@ impl App {
                 match f.kind {
                     DrawKind::Circle => {
                         ui.horizontal(|ui| {
-                            if ui.radio(!f.use_dia, "Radius").clicked() {
+                            if ui.radio(!f.use_dia, crate::i18n::tr("Radius")).clicked() {
                                 f.use_dia = false;
                             }
                             ui.add_space(12.0);
-                            if ui.radio(f.use_dia, "Diameter").clicked() {
+                            if ui.radio(f.use_dia, crate::i18n::tr("Diameter")).clicked() {
                                 f.use_dia = true;
                             }
                         });
@@ -1320,41 +1489,41 @@ impl App {
                         });
                     }
                     DrawKind::Ellipse => {
-                        labelled(ui, "Radius X:", 54.0, &mut f.rx, 54.0, unit);
-                        labelled(ui, "Radius Y:", 54.0, &mut f.ry, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Radius X:"), 54.0, &mut f.rx, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Radius Y:"), 54.0, &mut f.ry, 54.0, unit);
                     }
                     DrawKind::Rect => {
-                        labelled(ui, "Width:", 54.0, &mut f.w, 54.0, unit);
-                        labelled(ui, "Height:", 54.0, &mut f.h, 54.0, unit);
-                        labelled(ui, "Corners:", 54.0, &mut f.corner, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Width:"), 54.0, &mut f.w, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Height:"), 54.0, &mut f.h, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Corners:"), 54.0, &mut f.corner, 54.0, unit);
                     }
                     DrawKind::Polygon => {
-                        labelled(ui, "Radius:", 54.0, &mut f.r, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Radius:"), 54.0, &mut f.r, 54.0, unit);
                         ui.horizontal(|ui| {
-                            ui.label("Sides:");
+                            ui.label(crate::i18n::tr("Sides:"));
                             count_box(ui, &mut f.sides, 54.0);
                         });
                     }
                     DrawKind::Star => {
-                        labelled(ui, "Outer:", 54.0, &mut f.r, 54.0, unit);
-                        labelled(ui, "Inner:", 54.0, &mut f.inner, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Outer:"), 54.0, &mut f.r, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Inner:"), 54.0, &mut f.inner, 54.0, unit);
                         ui.horizontal(|ui| {
-                            ui.label("Points:");
+                            ui.label(crate::i18n::tr("Points:"));
                             count_box(ui, &mut f.sides, 54.0);
                         });
                     }
                     DrawKind::Spiral => {
-                        labelled(ui, "Radius:", 54.0, &mut f.r, 54.0, unit);
-                        labelled(ui, "Turns:", 54.0, &mut f.turns, 54.0, "");
+                        labelled(ui, crate::i18n::tr("Radius:"), 54.0, &mut f.r, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Turns:"), 54.0, &mut f.turns, 54.0, "");
                     }
                     DrawKind::Arc => {
-                        labelled(ui, "Radius:", 54.0, &mut f.r, 54.0, unit);
-                        labelled(ui, "Start:", 54.0, &mut f.start, 54.0, "degrees");
-                        labelled(ui, "Sweep:", 54.0, &mut f.sweep, 54.0, "degrees");
+                        labelled(ui, crate::i18n::tr("Radius:"), 54.0, &mut f.r, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Start:"), 54.0, &mut f.start, 54.0, crate::i18n::tr("degrees"));
+                        labelled(ui, crate::i18n::tr("Sweep:"), 54.0, &mut f.sweep, 54.0, crate::i18n::tr("degrees"));
                     }
                     DrawKind::Text => {
                         ui.add(TextEdit::multiline(&mut f.text).desired_rows(2).desired_width(f32::INFINITY));
-                        labelled(ui, "Height:", 54.0, &mut f.text_height, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Height:"), 54.0, &mut f.text_height, 54.0, unit);
                     }
                     _ => {}
                 }
@@ -1362,11 +1531,11 @@ impl App {
             card(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     if editing {
-                        ui.label("Apply changes this shape.");
-                        ui.label("Draw on the sheet to make a new one.");
+                        ui.label(crate::i18n::tr("Apply changes this shape."));
+                        ui.label(crate::i18n::tr("Draw on the sheet to make a new one."));
                     } else {
-                        ui.label("To edit an existing shape");
-                        ui.label("hold shift while selecting");
+                        ui.label(crate::i18n::tr("To edit an existing shape"));
+                        ui.label(crate::i18n::tr("hold shift while selecting"));
                     }
                 });
             });
@@ -1379,40 +1548,40 @@ impl App {
             }
             self.left = LeftForm::Draw(f);
         }
-        if self.form_buttons(ui, "Apply") {
+        if self.form_buttons(ui, crate::i18n::tr("Apply")) {
             self.apply_draw();
         }
     }
 
 
     fn shape_form(&mut self, ui: &mut Ui, mut f: ShapeForm) {
-        title_card(ui, Icon::Dome, if f.editing.is_some() { "Edit 3D Shape" } else { "Create 3D Shape" });
+        title_card(ui, Icon::Dome, if f.editing.is_some() { crate::i18n::tr("Edit 3D Shape") } else { crate::i18n::tr("Create 3D Shape") });
         let unit = self.doc.job.unit();
         card(ui, |ui| {
-            bold(ui, "Profile");
+            bold(ui, crate::i18n::tr("Profile"));
             ui.horizontal(|ui| {
-                ui.radio_value(&mut f.profile, Profile::Round, "Round");
-                ui.radio_value(&mut f.profile, Profile::Angular, "Angular");
-                ui.radio_value(&mut f.profile, Profile::Flat, "Flat");
+                ui.radio_value(&mut f.profile, Profile::Round, crate::i18n::tr("Round"));
+                ui.radio_value(&mut f.profile, Profile::Angular, crate::i18n::tr("Angular"));
+                ui.radio_value(&mut f.profile, Profile::Flat, crate::i18n::tr("Flat"));
             });
             ui.add_space(4.0);
-            labelled(ui, "Height:", 66.0, &mut f.height, 54.0, unit);
-            labelled(ui, "Base Height:", 66.0, &mut f.base, 54.0, unit);
+            labelled(ui, crate::i18n::tr("Height:"), 66.0, &mut f.height, 54.0, unit);
+            labelled(ui, crate::i18n::tr("Base Height:"), 66.0, &mut f.base, 54.0, unit);
         });
         card(ui, |ui| {
-            bold(ui, "Combine with the model");
-            ui.radio_value(&mut f.combine, Combine::Add, "Add");
-            ui.radio_value(&mut f.combine, Combine::Subtract, "Subtract");
-            ui.radio_value(&mut f.combine, Combine::Merge, "Merge (keep highest)");
-            ui.radio_value(&mut f.combine, Combine::Low, "Low (keep lowest)");
+            bold(ui, crate::i18n::tr("Combine with the model"));
+            ui.radio_value(&mut f.combine, Combine::Add, crate::i18n::tr("Add"));
+            ui.radio_value(&mut f.combine, Combine::Subtract, crate::i18n::tr("Subtract"));
+            ui.radio_value(&mut f.combine, Combine::Merge, crate::i18n::tr("Merge (keep highest)"));
+            ui.radio_value(&mut f.combine, Combine::Low, crate::i18n::tr("Low (keep lowest)"));
         });
         if f.editing.is_none() {
             card(ui, |ui| {
-                ui.label(format!("Selected shapes: {}", self.selected.len()));
+                ui.label(tf!("Selected shapes: {}", self.selected.len()));
             });
         }
         self.left = LeftForm::Shape(f.clone());
-        if self.form_buttons(ui, "Apply") {
+        if self.form_buttons(ui, crate::i18n::tr("Apply")) {
             self.add_component(f);
         }
     }
@@ -1427,7 +1596,7 @@ impl App {
         egui::Panel::right("right").exact_size(RIGHT_W).resizable(false).frame(Frame::new().fill(PANEL)).show(ui, |ui| {
             let whole = ui.max_rect();
             let header = Rect::from_min_size(whole.min, vec2(whole.width(), 22.0));
-            self.panel_header(ui, header, "Toolpaths", false);
+            self.panel_header(ui, header, crate::i18n::tr("Toolpaths"), false);
             let body = Rect::from_min_max(pos2(whole.left(), header.bottom()), whole.max);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
             match self.right.clone() {
@@ -1460,15 +1629,15 @@ impl App {
             ui.horizontal(|ui| {
                 let all = !self.doc.toolpaths.is_empty() && self.doc.toolpaths.iter().all(|t| t.visible);
                 let mut toggle = all;
-                if ui.checkbox(&mut toggle, "").on_hover_text("Show or hide all toolpaths").changed() {
+                if ui.checkbox(&mut toggle, "").on_hover_text(crate::i18n::tr("Show or hide all toolpaths")).changed() {
                     for t in &mut self.doc.toolpaths {
                         t.visible = toggle;
                     }
                 }
-                bold_sized(ui, "Toolpaths", 13.5, TEXT);
+                bold_sized(ui, crate::i18n::tr("Toolpaths"), 13.5, TEXT);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let some = self.selected_tp.is_some_and(|i| i > 0);
-                    if icon_button(ui, Icon::Up, "Move toolpath up", some, false).clicked() {
+                    if icon_button(ui, Icon::Up, crate::i18n::tr("Move toolpath up"), some, false).clicked() {
                         if let Some(i) = self.selected_tp {
                             self.checkpoint();
                             self.doc.toolpaths.swap(i, i - 1);
@@ -1482,7 +1651,7 @@ impl App {
             ui.add_space(4.0);
             if self.doc.toolpaths.is_empty() {
                 let rest = ui.available_rect_before_wrap();
-                ui.painter().text(rest.center(), Align2::CENTER_CENTER, "No Toolpaths Created Yet", FontId::proportional(13.5), MUTED);
+                ui.painter().text(rest.center(), Align2::CENTER_CENTER, crate::i18n::tr("No Toolpaths Created Yet"), FontId::proportional(13.5), MUTED);
                 return;
             }
             let mut clicked_edit = None;
@@ -1498,13 +1667,16 @@ impl App {
                         kind_resp.on_hover_text(kind.title());
                         let name = self.doc.toolpaths[i].op.name.clone();
                         let selected = self.selected_tp == Some(i);
-                        let galley = ui.painter().layout_no_wrap(name.clone(), FontId::proportional(13.5), if selected { ACCENT } else { TEXT });
+                        let behind = self.behind.contains(&i);
+                        let colour = if behind { theme::ERROR } else if selected { ACCENT } else { TEXT };
+                        let galley = ui.painter().layout_no_wrap(name.clone(), FontId::proportional(13.5), colour);
                         let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(6.0, 2.0), Sense::click());
                         if selected {
                             ui.painter().rect_filled(rect, 3.0, theme::ACCENT_SOFT);
                         }
                         ui.painter().galley(rect.min + vec2(3.0, 1.0), galley, TEXT);
                         label_widget(&resp, &name);
+                        let resp = if behind { resp.on_hover_text(crate::i18n::tr("Its shapes have changed since it was calculated. Use Recalculate when you're ready.")) } else { resp };
                         if resp.clicked() {
                             self.selected_tp = Some(i);
                         }
@@ -1529,10 +1701,10 @@ impl App {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    bold(ui, "Machine Vectors ...");
-                    ui.radio_value(&mut op.side, Side::Outside, "Outside / Right");
-                    ui.radio_value(&mut op.side, Side::Inside, "Inside / Left");
-                    ui.radio_value(&mut op.side, Side::On, "On");
+                    bold(ui, crate::i18n::tr("Machine Vectors ..."));
+                    ui.radio_value(&mut op.side, Side::Outside, crate::i18n::tr("Outside / Right"));
+                    ui.radio_value(&mut op.side, Side::Inside, crate::i18n::tr("Inside / Left"));
+                    ui.radio_value(&mut op.side, Side::On, crate::i18n::tr("On"));
                 });
                 let (r, _) = ui.allocate_exact_size(vec2(54.0, 62.0), Sense::hover());
                 let square = Rect::from_center_size(r.center() + vec2(2.0, 4.0), vec2(42.0, 42.0));
@@ -1546,43 +1718,43 @@ impl App {
                 ui.painter().circle(square.left_top() + vec2(offset, -6.0), 5.0, Color32::from_rgb(240, 220, 110), Stroke::new(1.0, MUTED));
             });
             ui.horizontal(|ui| {
-                bold(ui, "Direction");
+                bold(ui, crate::i18n::tr("Direction"));
                 ui.add_space(6.0);
-                ui.radio_value(&mut op.climb, true, "Climb");
-                ui.radio_value(&mut op.climb, false, "Conventional");
+                ui.radio_value(&mut op.climb, true, crate::i18n::tr("Climb"));
+                ui.radio_value(&mut op.climb, false, crate::i18n::tr("Conventional"));
             });
-            labelled(ui, "Allowance offset", 96.0, &mut op.allowance, 50.0, unit);
+            labelled(ui, crate::i18n::tr("Allowance offset"), 96.0, &mut op.allowance, 50.0, unit);
         });
         if !self.show_advanced {
             return;
         }
         card(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.checkbox(&mut op.last_pass, "Do Separate Last Pass");
+            ui.checkbox(&mut op.last_pass, crate::i18n::tr("Do Separate Last Pass"));
             ui.add_enabled_ui(op.last_pass, |ui| {
-                labelled(ui, "Allowance (A)", 96.0, &mut op.last_allowance, 50.0, unit);
+                labelled(ui, crate::i18n::tr("Allowance (A)"), 96.0, &mut op.last_allowance, 50.0, unit);
                 ui.horizontal(|ui| {
                     ui.add_space(50.0);
-                    ui.checkbox(&mut op.last_reverse, "Reverse direction");
+                    ui.checkbox(&mut op.last_reverse, crate::i18n::tr("Reverse direction"));
                 });
             });
         });
         card(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.checkbox(&mut op.tabs, "Add tabs to toolpath");
+            ui.checkbox(&mut op.tabs, crate::i18n::tr("Add tabs to toolpath"));
             ui.add_enabled_ui(op.tabs, |ui| {
-                labelled(ui, "Length", 96.0, &mut op.tab_length, 50.0, unit);
-                labelled(ui, "Thickness", 96.0, &mut op.tab_thickness, 50.0, unit);
+                labelled(ui, crate::i18n::tr("Length"), 96.0, &mut op.tab_length, 50.0, unit);
+                labelled(ui, crate::i18n::tr("Thickness"), 96.0, &mut op.tab_thickness, 50.0, unit);
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(96.0, 18.0), Sense::hover());
-                    ui.painter().text(r.right_center() - vec2(1.0, 0.0), Align2::RIGHT_CENTER, "Tabs per shape", FontId::proportional(12.5), TEXT);
+                    ui.painter().text(r.right_center() - vec2(1.0, 0.0), Align2::RIGHT_CENTER, crate::i18n::tr("Tabs per shape"), FontId::proportional(12.5), TEXT);
                     count_box(ui, &mut op.tab_count, 50.0);
                 });
             });
         });
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 1.0;
-            for (i, name) in ["Ramp", "Leads", "Order", "Start At", "Corners"].iter().enumerate() {
+            for (i, name) in [crate::i18n::tr("Ramp"), crate::i18n::tr("Leads"), crate::i18n::tr("Order"), crate::i18n::tr("Start At"), crate::i18n::tr("Corners")].iter().enumerate() {
                 let active = *tab == i;
                 let fill = if active { CARD } else { PANEL };
                 let (rect, resp) = ui.allocate_exact_size(vec2(44.0, 19.0), Sense::click());
@@ -1599,29 +1771,29 @@ impl App {
             0 => {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 use crate::toolpath::RampKind;
-                ui.checkbox(&mut op.ramp, "Add ramps to toolpath");
+                ui.checkbox(&mut op.ramp, crate::i18n::tr("Add ramps to toolpath"));
                 if op.ramp {
                     ui.horizontal(|ui| {
-                        ui.radio_value(&mut op.ramp_kind, RampKind::Smooth, "Smooth");
-                        ui.radio_value(&mut op.ramp_kind, RampKind::ZigZag, "Zig Zag");
-                        ui.radio_value(&mut op.ramp_kind, RampKind::Spiral, "Spiral");
+                        ui.radio_value(&mut op.ramp_kind, RampKind::Smooth, crate::i18n::tr("Smooth"));
+                        ui.radio_value(&mut op.ramp_kind, RampKind::ZigZag, crate::i18n::tr("Zig Zag"));
+                        ui.radio_value(&mut op.ramp_kind, RampKind::Spiral, crate::i18n::tr("Spiral"));
                     });
                     if op.ramp_kind == RampKind::Spiral {
-                        ui.label(RichText::new("Slopes all the way around each closed shape.").size(11.5).color(MUTED));
+                        ui.label(RichText::new(crate::i18n::tr("Slopes all the way around each closed shape.")).size(11.5).color(MUTED));
                     } else {
                         ui.add_enabled_ui(op.lead, |ui| {
-                            ui.checkbox(&mut op.ramp_on_lead, "Ramp on Lead In");
+                            ui.checkbox(&mut op.ramp_on_lead, crate::i18n::tr("Ramp on Lead In"));
                         });
                         ui.add_enabled_ui(!(op.lead && op.ramp_on_lead), |ui| {
                             ui.horizontal(|ui| {
-                                ui.radio_value(&mut op.ramp_by_angle, false, "Distance");
-                                ui.radio_value(&mut op.ramp_by_angle, true, "Angle");
+                                ui.radio_value(&mut op.ramp_by_angle, false, crate::i18n::tr("Distance"));
+                                ui.radio_value(&mut op.ramp_by_angle, true, crate::i18n::tr("Angle"));
                             });
                             if op.ramp_by_angle {
-                                labelled(ui, "Angle", 96.0, &mut op.ramp_angle, 50.0, "degrees");
-                                labelled(ui, "Longest", 96.0, &mut op.ramp_angle_limit, 50.0, unit);
+                                labelled(ui, crate::i18n::tr("Angle"), 96.0, &mut op.ramp_angle, 50.0, crate::i18n::tr("degrees"));
+                                labelled(ui, crate::i18n::tr("Longest"), 96.0, &mut op.ramp_angle_limit, 50.0, unit);
                             } else {
-                                labelled(ui, "Distance", 96.0, &mut op.ramp_distance, 50.0, unit);
+                                labelled(ui, crate::i18n::tr("Distance"), 96.0, &mut op.ramp_distance, 50.0, unit);
                             }
                         });
                     }
@@ -1629,31 +1801,31 @@ impl App {
             }
             1 => {
                 ui.spacing_mut().item_spacing.y = 2.0;
-                ui.checkbox(&mut op.lead, "Add leads");
+                ui.checkbox(&mut op.lead, crate::i18n::tr("Add leads"));
                 if op.lead {
                     ui.horizontal(|ui| {
-                        ui.radio_value(&mut op.lead_circular, false, "Straight Line");
-                        ui.radio_value(&mut op.lead_circular, true, "Circular");
+                        ui.radio_value(&mut op.lead_circular, false, crate::i18n::tr("Straight Line"));
+                        ui.radio_value(&mut op.lead_circular, true, crate::i18n::tr("Circular"));
                     });
                     if op.lead_circular {
-                        labelled(ui, "Radius", 96.0, &mut op.lead_radius, 50.0, unit);
+                        labelled(ui, crate::i18n::tr("Radius"), 96.0, &mut op.lead_radius, 50.0, unit);
                     } else {
-                        labelled(ui, "Angle", 96.0, &mut op.lead_angle, 50.0, "degrees");
+                        labelled(ui, crate::i18n::tr("Angle"), 96.0, &mut op.lead_angle, 50.0, crate::i18n::tr("degrees"));
                     }
-                    labelled(ui, "Lead", 96.0, &mut op.lead_distance, 50.0, unit);
-                    ui.checkbox(&mut op.lead_out, "Do lead out");
-                    labelled(ui, "Overcut", 96.0, &mut op.overcut, 50.0, unit);
+                    labelled(ui, crate::i18n::tr("Lead"), 96.0, &mut op.lead_distance, 50.0, unit);
+                    ui.checkbox(&mut op.lead_out, crate::i18n::tr("Do lead out"));
+                    labelled(ui, crate::i18n::tr("Overcut"), 96.0, &mut op.overcut, 50.0, unit);
                 }
             }
             2 => {
                 ui.spacing_mut().item_spacing.y = 2.0;
-                ui.label(RichText::new("Select one or more ways to try. With several, the one with the shortest travel between shapes is used.").size(11.5).color(MUTED));
+                ui.label(RichText::new(crate::i18n::tr("Select one or more ways to try. With several, the one with the shortest travel between shapes is used.")).size(11.5).color(MUTED));
                 let mut c = op.order_choices.unwrap_or_default();
-                ui.checkbox(&mut c.selection, "Vector Selection Order");
-                ui.checkbox(&mut c.left_to_right, "Left to Right");
-                ui.checkbox(&mut c.bottom_to_top, "Bottom to Top");
-                ui.checkbox(&mut c.grid, "Grid");
-                ui.checkbox(&mut c.shortest, "Shortest Path");
+                ui.checkbox(&mut c.selection, crate::i18n::tr("Vector Selection Order"));
+                ui.checkbox(&mut c.left_to_right, crate::i18n::tr("Left to Right"));
+                ui.checkbox(&mut c.bottom_to_top, crate::i18n::tr("Bottom to Top"));
+                ui.checkbox(&mut c.grid, crate::i18n::tr("Grid"));
+                ui.checkbox(&mut c.shortest, crate::i18n::tr("Shortest Path"));
                 op.order_choices = Some(c);
                 // Keeping the order of clicks needs the shapes gathered that way.
                 op.order = if c.selection { Order::AsDrawn } else { Order::Nearest };
@@ -1661,15 +1833,15 @@ impl App {
             3 => {
                 use crate::toolpath::StartAt;
                 ui.spacing_mut().item_spacing.y = 2.0;
-                if ui.radio(op.start_at == StartAt::Keep, "Keep Current Start Points").clicked() {
+                if ui.radio(op.start_at == StartAt::Keep, crate::i18n::tr("Keep Current Start Points")).clicked() {
                     op.start_at = StartAt::Keep;
                     op.start_mid_span = false;
                 }
-                if ui.radio(op.start_at == StartAt::Optimize, "Optimize Start Points").clicked() {
+                if ui.radio(op.start_at == StartAt::Optimize, crate::i18n::tr("Optimize Start Points")).clicked() {
                     op.start_at = StartAt::Optimize;
                 }
                 let placed = matches!(op.start_at, StartAt::Near(_));
-                if ui.radio(placed, "Move Start Points to be closest to selected point on vector bounding box").clicked() {
+                if ui.radio(placed, crate::i18n::tr("Move Start Points to be closest to selected point on vector bounding box")).clicked() {
                     op.start_at = StartAt::Near(0);
                 }
                 ui.add_enabled_ui(placed, |ui| {
@@ -1685,7 +1857,7 @@ impl App {
                         if op.start_at == StartAt::Near(i as u8) {
                             ui.painter().circle_filled(*spot, 3.0, ACCENT);
                         }
-                        label_widget(&resp, &format!("Start point {}", i + 1));
+                        label_widget(&resp, &tf!("Start point {}", i + 1));
                         if resp.clicked() {
                             op.start_at = StartAt::Near(i as u8);
                         }
@@ -1695,15 +1867,24 @@ impl App {
             _ => {
                 ui.spacing_mut().item_spacing.y = 3.0;
                 ui.add_enabled_ui(op.side == Side::Outside, |ui| {
-                    ui.checkbox(&mut op.sharp_corners, "Sharp external corners");
+                    ui.checkbox(&mut op.sharp_corners, crate::i18n::tr("Sharp external corners"));
                 });
                 if op.side != Side::Outside {
-                    ui.label(RichText::new("Only for cuts on the outside of a shape.").size(11.5).color(MUTED));
+                    ui.label(RichText::new(crate::i18n::tr("Only for cuts on the outside of a shape.")).size(11.5).color(MUTED));
                 } else {
-                    ui.label(RichText::new("The tool goes all the way into each outside corner, instead of rounding it. Shapes inside each other stay rounded.").size(11.5).color(MUTED));
+                    ui.label(RichText::new(crate::i18n::tr("The tool goes all the way into each outside corner, instead of rounding it. Shapes inside each other stay rounded.")).size(11.5).color(MUTED));
                 }
             }
         });
+    }
+
+    pub(crate) fn quality_list(&mut self, ui: &mut Ui) {
+        for q in Quality3d::ALL {
+            if ui.selectable_label(self.quality3d == q, tr(q.name())).on_hover_text(q.hint()).clicked() {
+                self.set_quality3d(q);
+                ui.close();
+            }
+        }
     }
 
     fn preview_panel(&mut self, ui: &mut Ui) {
@@ -1711,50 +1892,50 @@ impl App {
         Frame::new().inner_margin(Margin { left: 14, right: 14, top: 8, bottom: 6 }).show(ui, |ui| {
             ui.set_width(width - 28.0);
             ui.spacing_mut().item_spacing.y = 6.0;
-            title_card(ui, Icon::Preview, "Preview Toolpaths");
+            title_card(ui, Icon::Preview, crate::i18n::tr("Preview Toolpaths"));
             card(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(32.0, 28.0), Sense::hover());
                     wood_block(ui.painter(), r);
-                    let name = self.doc.job.preview_material.map_or("Solid Material", |m| MATERIALS[m.min(4)].0);
+                    let name = self.doc.job.preview_material.map_or(crate::i18n::tr("Solid Material"), |m| tr(MATERIALS[m.min(4)].0));
                     egui::ComboBox::from_id_salt("preview_material").selected_text(name).width(170.0).show_ui(ui, |ui| {
                         for (i, m) in MATERIALS.iter().enumerate() {
-                            ui.selectable_value(&mut self.doc.job.preview_material, Some(i), m.0);
+                            ui.selectable_value(&mut self.doc.job.preview_material, Some(i), tr(m.0));
                         }
-                        ui.selectable_value(&mut self.doc.job.preview_material, None, "Solid Material");
+                        ui.selectable_value(&mut self.doc.job.preview_material, None, crate::i18n::tr("Solid Material"));
                     });
                 });
                 ui.add_enabled_ui(self.doc.job.preview_material.is_none(), |ui| {
                     ui.horizontal(|ui| {
                         ui.add_space(38.0);
-                        ui.label("Solid Material");
+                        ui.label(crate::i18n::tr("Solid Material"));
                         ui.add_space(40.0);
                         ui.color_edit_button_srgb(&mut self.doc.job.solid);
                     });
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(38.0);
-                    bold(ui, "Machined Area Color ....");
+                    bold(ui, crate::i18n::tr("Machined Area Color ...."));
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(38.0);
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
-                        ui.radio_value(&mut self.machined, Machined::Material, "Material Color");
+                        ui.radio_value(&mut self.machined, Machined::Material, crate::i18n::tr("Material Color"));
                         ui.horizontal(|ui| {
-                            ui.radio_value(&mut self.machined, Machined::Global, "Global Fill Color");
+                            ui.radio_value(&mut self.machined, Machined::Global, crate::i18n::tr("Global Fill Color"));
                             ui.color_edit_button_srgb(&mut self.global_fill);
                         });
                         ui.horizontal(|ui| {
-                            ui.radio_value(&mut self.machined, Machined::Toolpath, "Toolpath Color");
+                            ui.radio_value(&mut self.machined, Machined::Toolpath, crate::i18n::tr("Toolpath Color"));
                             let mut chosen = self.selected_tp.and_then(|i| self.doc.toolpaths.get(i)).map(|t| t.color).unwrap_or(self.global_fill);
                             if ui.color_edit_button_srgb(&mut chosen).changed() {
                                 if let Some(tp) = self.selected_tp.and_then(|i| self.doc.toolpaths.get_mut(i)) {
                                     tp.color = chosen;
                                 }
                             }
-                            if ui.button("Set All").on_hover_text("Give every toolpath the global fill color").clicked() {
+                            if ui.button(crate::i18n::tr("Set All")).on_hover_text(crate::i18n::tr("Give every toolpath the global fill color")).clicked() {
                                 for t in &mut self.doc.toolpaths {
                                     t.color = self.global_fill;
                                 }
@@ -1764,9 +1945,21 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(38.0);
-                    ui.checkbox(&mut self.animate, "Animate preview");
-                    ui.checkbox(&mut self.draw_tool, "Draw tool");
+                    ui.checkbox(&mut self.animate, crate::i18n::tr("Animate preview"));
+                    ui.checkbox(&mut self.draw_tool, crate::i18n::tr("Draw tool"));
                 });
+                ui.horizontal(|ui| {
+                    ui.add_space(38.0);
+                    ui.label(crate::i18n::tr("3D quality"));
+                    egui::ComboBox::from_id_salt("quality3d").selected_text(tr(self.quality3d.name())).width(100.0).show_ui(ui, |ui| self.quality_list(ui));
+                });
+                if let Some(picture) = self.picture_seconds {
+                    let whole = self.preview_seconds.map_or(String::new(), |s| tf!(", whole preview {s:.1} s"));
+                    ui.horizontal(|ui| {
+                        ui.add_space(38.0);
+                        ui.label(RichText::new(tf!("Last picture {picture:.1} s{whole}")).size(11.5).color(MUTED));
+                    });
+                }
             });
             card(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 5.0;
@@ -1781,7 +1974,7 @@ impl App {
                 let has = self.selected_tp.is_some();
                 let mut do_selected = false;
                 row(ui, Icon::TpProfile, &mut |ui| {
-                    do_selected = ui.add_enabled(has, egui::Button::new("Preview Selected Toolpath").min_size(vec2(w, 20.0))).clicked();
+                    do_selected = ui.add_enabled(has, egui::Button::new(crate::i18n::tr("Preview Selected Toolpath")).min_size(vec2(w, 20.0))).clicked();
                 });
                 if do_selected {
                     if let Some(i) = self.selected_tp {
@@ -1792,7 +1985,7 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.add_space(38.0);
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    for (icon, tip) in [(Icon::Play, "Play"), (Icon::Pause, "Pause"), (Icon::Step, "Step"), (Icon::End, "Go to end"), (Icon::Rewind, "Back to start")] {
+                    for (icon, tip) in [(Icon::Play, crate::i18n::tr("Play")), (Icon::Pause, crate::i18n::tr("Pause")), (Icon::Step, crate::i18n::tr("Step")), (Icon::End, crate::i18n::tr("Go to end")), (Icon::Rewind, crate::i18n::tr("Back to start"))] {
                         let (rect, resp) = ui.allocate_exact_size(vec2(35.0, 20.0), if running { Sense::click() } else { Sense::hover() });
                         ui.painter().rect_filled(rect, 4.0, theme::BUTTON);
                         icons::paint(ui.painter(), Rect::from_center_size(rect.center(), vec2(16.0, 16.0)), icon, running);
@@ -1819,7 +2012,7 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(52.0);
-                    ui.label("Speed");
+                    ui.label(crate::i18n::tr("Speed"));
                     ui.add_space(8.0);
                     ui.spacing_mut().slider_width = 138.0;
                     ui.spacing_mut().slider_rail_height = 3.0;
@@ -1831,17 +2024,17 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(38.0);
-                    ui.add_enabled(false, egui::Button::new("Preview All Sides").min_size(vec2(w, 20.0))).on_disabled_hover_text("Only single sided jobs in this version");
+                    ui.add_enabled(false, egui::Button::new(crate::i18n::tr("Preview All Sides")).min_size(vec2(w, 20.0))).on_disabled_hover_text(crate::i18n::tr("Only single sided jobs in this version"));
                 });
                 let all: Vec<usize> = (0..self.doc.toolpaths.len()).collect();
                 let visible: Vec<usize> = (0..self.doc.toolpaths.len()).filter(|i| self.doc.toolpaths[*i].visible).collect();
                 let mut do_all = false;
                 let mut do_visible = false;
                 row(ui, Icon::TpPocket, &mut |ui| {
-                    do_all = ui.add_enabled(!all.is_empty(), egui::Button::new("Preview All Toolpaths").min_size(vec2(w, 20.0))).clicked();
+                    do_all = ui.add_enabled(!all.is_empty(), egui::Button::new(crate::i18n::tr("Preview All Toolpaths")).min_size(vec2(w, 20.0))).clicked();
                 });
                 row(ui, Icon::TpDrill, &mut |ui| {
-                    do_visible = ui.add_enabled(!visible.is_empty(), egui::Button::new("Preview Visible Toolpaths").min_size(vec2(w, 20.0))).clicked();
+                    do_visible = ui.add_enabled(!visible.is_empty(), egui::Button::new(crate::i18n::tr("Preview Visible Toolpaths")).min_size(vec2(w, 20.0))).clicked();
                 });
                 if do_all {
                     self.preview(all);
@@ -1853,29 +2046,29 @@ impl App {
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(32.0, 22.0), Sense::hover());
                     wood_block(ui.painter(), r);
-                    if ui.add_enabled(has_sim, egui::Button::new("Reset Preview").min_size(vec2(w / 2.0 + 2.0, 20.0))).clicked() {
+                    if ui.add_enabled(has_sim, egui::Button::new(crate::i18n::tr("Reset Preview")).min_size(vec2(w / 2.0 + 2.0, 20.0))).clicked() {
                         self.reset_preview();
                     }
-                    if ui.add_enabled(has_sim, egui::Button::new("Undo Last").min_size(vec2(w / 2.0 - 8.0, 20.0))).clicked() {
+                    if ui.add_enabled(has_sim, egui::Button::new(crate::i18n::tr("Undo Last")).min_size(vec2(w / 2.0 - 8.0, 20.0))).clicked() {
                         self.undo_preview();
                     }
                 });
                 let mut do_save = false;
                 row(ui, Icon::Save, &mut |ui| {
-                    do_save = ui.add_sized([w, 20.0], egui::Button::new("Save Preview Image")).clicked();
+                    do_save = ui.add_sized([w, 20.0], egui::Button::new(crate::i18n::tr("Save Preview Image"))).clicked();
                 });
                 if do_save {
-                    self.save_preview = rfd::FileDialog::new().add_filter("Picture", &["png"]).set_file_name("preview.png").save_file();
+                    self.save_preview = rfd::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png"]).set_file_name("preview.png").save_file();
                 }
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(32.0, 26.0), Sense::hover());
                     icons::paint(ui.painter(), r, Icon::Select, true);
-                    ui.label("Double click on waste areas in 3D\nview to remove them.");
+                    ui.label(crate::i18n::tr("Double click on waste areas in 3D\nview to remove them."));
                 });
             });
             ui.horizontal(|ui| {
                 ui.add_space((ui.available_width() - 80.0).max(0.0));
-                if wide(ui, "Close", 74.0).clicked() {
+                if wide(ui, crate::i18n::tr("Close"), 74.0).clicked() {
                     self.right = RightMode::List;
                 }
             });
@@ -1904,10 +2097,10 @@ impl App {
         let tab_y = top.top() + 8.0;
         let two = Rect::from_min_size(pos2(top.left() + 12.0, tab_y), vec2(76.0, 22.0));
         let three = Rect::from_min_size(pos2(two.right() - 4.0, tab_y), vec2(66.0, 22.0));
-        if side_tab(ui, two, "2D View", !self.view3d).clicked() {
+        if side_tab(ui, two, crate::i18n::tr("2D View"), !self.view3d).clicked() {
             self.view3d = false;
         }
-        if side_tab(ui, three, "3D View", self.view3d).clicked() {
+        if side_tab(ui, three, crate::i18n::tr("3D View"), self.view3d).clicked() {
             self.view3d = true;
         }
         let layer_at = pos2(three.right() + 42.0, top.top() + 6.0);
@@ -1915,11 +2108,14 @@ impl App {
         icons::paint(ui.painter(), Rect::from_min_size(layer_at, vec2(22.0, 22.0)), Icon::Layer, true);
         let mut layer_ui = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(layer_at + vec2(22.0, 1.0), vec2(120.0, 24.0))));
         let name = self.doc.layers.get(self.doc.active_layer).map_or(String::new(), |l| l.name.clone());
-        egui::ComboBox::from_id_salt("layer").selected_text(name).width(78.0).show_ui(&mut layer_ui, |ui| {
+        // One line, however long the name: the whole of it shows when asked for, and in the list.
+        let shown = egui::ComboBox::from_id_salt("layer").selected_text(name.clone()).truncate().width(78.0).show_ui(&mut layer_ui, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             for (i, l) in self.doc.layers.iter().enumerate() {
                 ui.selectable_value(&mut self.doc.active_layer, i, l.name.as_str());
             }
         });
+        shown.response.on_hover_text(name);
         // View tools, placed as in the pictures.
         let (start, tools_y) = if two_rows {
             (top.left() + 12.0, top.top() + 33.0)
@@ -1929,19 +2125,19 @@ impl App {
         let mut x = start;
         let view3d = self.view3d;
         let items: [(Icon, &str, bool, bool, f32); 13] = [
-            (Icon::Snap, "Snap to grid", true, self.snap, 27.0),
-            (Icon::SnapShapes, "Snap to shapes", !view3d, self.snap_shapes, 27.0),
-            (Icon::SnapObjects, "Show model outlines in 2D", true, self.show_model2d, 27.0),
-            (Icon::Grid, "Show grid", true, self.grid, 34.0),
-            (Icon::Pan, "Pan", !view3d, self.tool == Tool2::Pan, 27.0),
-            (Icon::ZoomBox, "Zoom to box", !view3d, self.tool == Tool2::ZoomBox, 27.0),
-            (Icon::ZoomFit, "Zoom to job", true, false, 27.0),
-            (Icon::ZoomSel, "Zoom to selection", !view3d, false, 34.0),
-            (Icon::ShowVectors, "Show shapes", true, self.show_vectors, 27.0),
-            (Icon::ShowPaths, "Show toolpaths", true, self.show_toolpaths, 34.0),
-            (Icon::ShowModel, "Show the 3D model", true, false, 36.0),
-            (Icon::PanelLeft, "Show or hide the left panel", true, false, 27.0),
-            (Icon::PanelRight, "Show or hide the right panel", true, false, 27.0),
+            (Icon::Snap, crate::i18n::tr("Snap to grid"), true, self.snap, 27.0),
+            (Icon::SnapShapes, crate::i18n::tr("Snap to shapes"), !view3d, self.snap_shapes, 27.0),
+            (Icon::SnapObjects, crate::i18n::tr("Show model outlines in 2D"), true, self.show_model2d, 27.0),
+            (Icon::Grid, crate::i18n::tr("Show grid"), true, self.grid, 34.0),
+            (Icon::Pan, crate::i18n::tr("Pan"), !view3d, self.tool == Tool2::Pan, 27.0),
+            (Icon::ZoomBox, crate::i18n::tr("Zoom to box"), !view3d, self.tool == Tool2::ZoomBox, 27.0),
+            (Icon::ZoomFit, crate::i18n::tr("Zoom to job"), true, false, 27.0),
+            (Icon::ZoomSel, crate::i18n::tr("Zoom to selection"), !view3d, false, 34.0),
+            (Icon::ShowVectors, crate::i18n::tr("Show shapes"), true, self.show_vectors, 27.0),
+            (Icon::ShowPaths, crate::i18n::tr("Show toolpaths"), true, self.show_toolpaths, 34.0),
+            (Icon::ShowModel, crate::i18n::tr("Show the 3D model"), true, false, 36.0),
+            (Icon::PanelLeft, crate::i18n::tr("Show or hide the left panel"), true, false, 27.0),
+            (Icon::PanelRight, crate::i18n::tr("Show or hide the right panel"), true, false, 27.0),
         ];
         for (i, (icon, tip, enabled, active, step)) in items.into_iter().enumerate() {
             let rect = Rect::from_min_size(pos2(x, tools_y), vec2(24.0, 24.0));
@@ -1961,15 +2157,7 @@ impl App {
                     Icon::Grid => self.grid = !self.grid,
                     Icon::Pan => self.tool = if self.tool == Tool2::Pan { Tool2::Select } else { Tool2::Pan },
                     Icon::ZoomBox => self.tool = if self.tool == Tool2::ZoomBox { Tool2::Select } else { Tool2::ZoomBox },
-                    Icon::ZoomFit => {
-                        if self.view3d {
-                            self.cam.zoom = 1.0;
-                            self.cam.pan = egui::Vec2::ZERO;
-                        } else {
-                            self.auto_fit = true;
-                            self.last_rect = Rect::NOTHING;
-                        }
-                    }
+                    Icon::ZoomFit => self.zoom_to_job(),
                     Icon::ZoomSel => {
                         let inner = Rect::from_min_max(view.min + vec2(25.0, 25.0), view.max - vec2(16.0, 16.0));
                         self.fit_selection(inner);
@@ -2009,7 +2197,7 @@ impl App {
         }
         if self.time_open {
             let mut open = true;
-            egui::Window::new("Machining Time").open(&mut open).collapsible(false).resizable(false).show(&ctx, |ui| {
+            egui::Window::new(crate::i18n::tr("Machining Time")).open(&mut open).collapsible(false).resizable(false).show(&ctx, |ui| {
                 let mut total = 0.0;
                 let rapid = if self.doc.job.units == Units::Inches { toolpath::RAPID_RATE_MM / 25.4 } else { toolpath::RAPID_RATE_MM };
                 for t in self.doc.toolpaths.iter().filter(|t| t.visible) {
@@ -2018,16 +2206,16 @@ impl App {
                     ui.label(format!("{}: {}", t.op.name, duration(s)));
                 }
                 ui.separator();
-                bold(ui, &format!("Visible toolpaths: {}", duration(total)));
-                ui.label(RichText::new("An estimate: cutting and lifting count double, and fast moves go at 100 mm/s. The real time depends on your machine.").size(11.5));
+                bold(ui, &tf!("Visible toolpaths: {}", duration(total)));
+                ui.label(RichText::new(crate::i18n::tr("An estimate: cutting and lifting count double, and fast moves go at 100 mm/s. The real time depends on your machine.")).size(11.5));
             });
             self.time_open = open;
         }
         if self.about_open {
             let mut open = true;
-            egui::Window::new("About Burin").open(&mut open).collapsible(false).resizable(false).show(&ctx, |ui| {
-                ui.label("Burin 0.1: design, model and cut for CNC carving.");
-                ui.label("Check every machine file in a simulator or above the material before cutting.");
+            egui::Window::new(crate::i18n::tr("About Burin")).open(&mut open).collapsible(false).resizable(false).show(&ctx, |ui| {
+                ui.label(crate::i18n::tr("Burin 0.1: design, model and cut for CNC carving."));
+                ui.label(crate::i18n::tr("Check every machine file in a simulator or above the material before cutting."));
             });
             self.about_open = open;
         }

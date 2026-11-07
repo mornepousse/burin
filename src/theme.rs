@@ -36,6 +36,8 @@ pub const RAPID: Color32 = Color32::from_rgb(255, 112, 92);
 pub const BACKDROP_TOP: Color32 = Color32::from_rgb(38, 42, 49);
 pub const BACKDROP_BOTTOM: Color32 = Color32::from_rgb(13, 15, 18);
 /// Guide lines that are never cut.
+/// The rest of a piece, and the frame around it, when one of its shapes is selected.
+pub const PIECE: Color32 = Color32::from_rgb(0, 140, 130);
 pub const CONSTRUCTION: Color32 = Color32::from_rgb(104, 118, 150);
 pub const GRID_FINE: Color32 = Color32::from_rgb(226, 224, 217);
 pub const GRID_BOLD: Color32 = Color32::from_rgb(194, 192, 184);
@@ -46,6 +48,8 @@ pub const ERROR: Color32 = Color32::from_rgb(255, 136, 120);
 pub fn setup_style(ctx: &egui::Context) {
     // A press counts as a click however long the button stays down, as long as it doesn't move.
     ctx.options_mut(|o| o.input_options.max_click_duration = 3600.0);
+    // Always this look, even where the computer is set to a light theme: nothing else is made for one.
+    ctx.set_theme(egui::ThemePreference::Dark);
     ctx.set_visuals(egui::Visuals::dark());
     ctx.global_style_mut(|s| {
         use egui::{FontFamily::Proportional, TextStyle::*};

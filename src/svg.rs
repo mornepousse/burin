@@ -485,10 +485,10 @@ fn visit(node: roxmltree::Node, m: Matrix, tolerance: f64, inside_mask: bool, ou
 /// The bottom of the drawing's page lands on Y = 0, as SVG counts downward from the top.
 pub fn read(text: &str, per_inch: f64) -> Result<SvgDrawing, String> {
     let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
-    let doc = roxmltree::Document::parse_with_options(text, options).map_err(|e| format!("This SVG file can't be read: {e}"))?;
+    let doc = roxmltree::Document::parse_with_options(text, options).map_err(|e| tf!("This SVG file can't be read: {e}"))?;
     let root = doc.root_element();
     if root.tag_name().name() != "svg" {
-        return Err("This file is not an SVG drawing.".into());
+        return Err(crate::i18n::tr("This file is not an SVG drawing.").into());
     }
     let view = root.attribute("viewBox").map(numbers).filter(|v| v.len() == 4 && v[2] > 0.0 && v[3] > 0.0);
     let (width, height) = (root.attribute("width").and_then(inches), root.attribute("height").and_then(inches));

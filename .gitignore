@@ -13,3 +13,6 @@
 *.pp
 *.dxf
 *.svg
+dist
+!/release/burin.svg
+/demo/

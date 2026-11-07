@@ -16,7 +16,7 @@ pub enum Units {
 impl Units {
     pub fn word(self) -> &'static str {
         match self {
-            Units::Inches => "inches",
+            Units::Inches => crate::i18n::tr("inches"),
             Units::Mm => "mm",
         }
     }
@@ -34,11 +34,11 @@ pub enum Datum {
 impl Datum {
     pub fn label(self) -> &'static str {
         match self {
-            Datum::BottomLeft => "Bottom Left",
-            Datum::BottomRight => "Bottom Right",
-            Datum::TopLeft => "Top Left",
-            Datum::TopRight => "Top Right",
-            Datum::Centre => "Center",
+            Datum::BottomLeft => crate::i18n::tr("Bottom Left"),
+            Datum::BottomRight => crate::i18n::tr("Bottom Right"),
+            Datum::TopLeft => crate::i18n::tr("Top Left"),
+            Datum::TopRight => crate::i18n::tr("Top Right"),
+            Datum::Centre => crate::i18n::tr("Center"),
         }
     }
 }
@@ -151,6 +151,35 @@ pub enum Prim {
 }
 
 impl Prim {
+    /// The same kind of shape, for lines these have become. Only if it really fits them: a shape
+    /// that was turned or stretched out of its kind is just lines now.
+    pub fn following(&self, old: &[Path], new: &[Path]) -> Prim {
+        let (Some((lo, hi)), Some((to_lo, to_hi))) = (geom::bbox(old), geom::bbox(new)) else { return Prim::Free };
+        let ratio = |a: f64, b: f64| if a.abs() > 1e-12 { b / a } else { 1.0 };
+        let (sx, sy) = (ratio(hi[0] - lo[0], to_hi[0] - to_lo[0]), ratio(hi[1] - lo[1], to_hi[1] - to_lo[1]));
+        let place = |p: &P| [to_lo[0] + (p[0] - lo[0]) * sx, to_lo[1] + (p[1] - lo[1]) * sy];
+        let fitted = match self {
+            Prim::Free => return Prim::Free,
+            Prim::Circle { c, r } => Prim::Circle { c: place(c), r: r * sx },
+            Prim::Ellipse { c, rx, ry } => Prim::Ellipse { c: place(c), rx: rx * sx, ry: ry * sy },
+            Prim::Rect { c, w, h, corner } => Prim::Rect { c: place(c), w: w * sx, h: h * sy, corner: corner * sx },
+            Prim::Polygon { c, r, sides } => Prim::Polygon { c: place(c), r: r * sx, sides: *sides },
+            Prim::Star { c, outer, inner, points } => Prim::Star { c: place(c), outer: outer * sx, inner: inner * sx, points: *points },
+            Prim::Spiral { c, r, turns } => Prim::Spiral { c: place(c), r: r * sx, turns: *turns },
+            Prim::Arc { c, r, start, sweep } => Prim::Arc { c: place(c), r: r * sx, start: *start, sweep: *sweep },
+            Prim::Text { at, height, text } => Prim::Text { at: place(at), height: height * sy, text: text.clone() },
+        };
+        let tolerance = (to_hi[0] - to_lo[0]).max(to_hi[1] - to_lo[1]).max(1e-6) * 1e-6;
+        let made = fitted.paths();
+        let fits = made.len() == new.len()
+            && made.iter().zip(new).all(|(m, n)| m.closed == n.closed && m.pts.len() == n.pts.len() && m.pts.iter().zip(&n.pts).all(|(p, q)| (p[0] - q[0]).abs() <= tolerance && (p[1] - q[1]).abs() <= tolerance));
+        if fits {
+            fitted
+        } else {
+            Prim::Free
+        }
+    }
+
     pub fn paths(&self) -> Vec<Path> {
         match self {
             Prim::Free => Vec::new(),
@@ -195,6 +224,76 @@ pub struct Vector {
     /// Guides the drawing, but is never cut.
     #[serde(default)]
     pub construction: bool,
+    /// When this is a group: what it holds, each as it was put in. `paths` is theirs together, in
+    /// this order, so a group moves, draws and cuts like one shape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<Vector>,
+    /// The piece this belongs to: its shapes stay separate and can each be selected, but move together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub piece: Option<u64>,
+}
+
+impl Vector {
+    pub fn is_group(&self) -> bool {
+        !self.members.is_empty()
+    }
+
+    /// How many of the group's lines belong to this.
+    fn line_count(&self) -> usize {
+        if self.is_group() {
+            self.members.iter().map(Vector::line_count).sum()
+        } else {
+            self.paths.len()
+        }
+    }
+
+    /// What the group holds, each with the lines it has now that the group may have been moved or
+    /// resized. None if the group's lines no longer add up to what was put in.
+    pub fn members_now(&self) -> Option<Vec<Vector>> {
+        if !self.is_group() || self.members.iter().map(Vector::line_count).sum::<usize>() != self.paths.len() {
+            return None;
+        }
+        let mut at = 0;
+        let mut out = Vec::with_capacity(self.members.len());
+        for member in &self.members {
+            let lines = &self.paths[at..at + member.line_count()];
+            at += lines.len();
+            let mut member = member.clone();
+            if member.paths != lines {
+                member.prim = member.prim.following(&member.paths, lines);
+                member.paths = lines.to_vec();
+            }
+            out.push(member);
+        }
+        Some(out)
+    }
+
+    pub fn holds(&self, id: u64) -> bool {
+        self.id == id || self.members.iter().any(|m| m.holds(id))
+    }
+
+    /// This and everything in it.
+    pub fn each_mut(&mut self, f: &mut impl FnMut(&mut Vector)) {
+        f(self);
+        for member in &mut self.members {
+            member.each_mut(f);
+        }
+    }
+
+    /// The lines of this and of everything in it that can be cut, by what each goes by.
+    fn gather(&self, lines: &[Path], out: &mut std::collections::HashMap<u64, Vec<Path>>) {
+        if !self.construction {
+            out.insert(self.id, lines.to_vec());
+        }
+        if self.is_group() && self.members.iter().map(Vector::line_count).sum::<usize>() == lines.len() {
+            let mut at = 0;
+            for member in &self.members {
+                let n = member.line_count();
+                member.gather(&lines[at..at + n], out);
+                at += n;
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -256,6 +355,9 @@ pub struct Doc {
     /// New shapes are drawn as construction geometry.
     #[serde(default)]
     pub new_construction: bool,
+    /// What each piece is called, by the mark on its shapes.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub piece_names: std::collections::BTreeMap<u64, String>,
 }
 
 impl Default for Doc {
@@ -263,7 +365,8 @@ impl Default for Doc {
         Doc {
             job: Job::default(),
             vectors: Vec::new(),
-            layers: vec![Layer::named("Layer 1")],
+            piece_names: Default::default(),
+            layers: vec![Layer::named(crate::i18n::tr("Layer 1"))],
             active_layer: 0,
             components: Vec::new(),
             tools: default_tools(),
@@ -387,8 +490,91 @@ impl Doc {
 
     pub fn add_vector(&mut self, paths: Vec<Path>, prim: Prim) -> u64 {
         let id = self.new_id();
-        self.vectors.push(Vector { id, paths, layer: self.active_layer, prim, construction: self.new_construction });
+        self.vectors.push(Vector { id, paths, layer: self.active_layer, prim, construction: self.new_construction, members: Vec::new(), piece: None });
         id
+    }
+
+    /// The lines of every shape that can be cut, grouped or not, by what it goes by.
+    pub fn current_paths(&self) -> std::collections::HashMap<u64, Vec<Path>> {
+        let mut out = std::collections::HashMap::new();
+        for v in &self.vectors {
+            v.gather(&v.paths, &mut out);
+        }
+        out
+    }
+
+    /// What's in the same piece as these shapes, these included.
+    pub fn with_their_pieces(&self, ids: &[u64]) -> Vec<u64> {
+        let pieces: Vec<u64> = self.vectors.iter().filter(|v| ids.contains(&v.id)).filter_map(|v| v.piece).collect();
+        self.vectors.iter().filter(|v| ids.contains(&v.id) || v.piece.is_some_and(|p| pieces.contains(&p))).map(|v| v.id).collect()
+    }
+
+    pub fn put_in_piece(&mut self, ids: &[u64], piece: Option<u64>) {
+        for v in self.vectors.iter_mut().filter(|v| ids.contains(&v.id)) {
+            v.piece = piece;
+        }
+    }
+
+    /// The piece all of these shapes are in, if they share one.
+    pub fn shared_piece(&self, ids: &[u64]) -> Option<u64> {
+        let mut found = self.vectors.iter().filter(|v| ids.contains(&v.id)).map(|v| v.piece);
+        let first = found.next()??;
+        found.all(|p| p == Some(first)).then_some(first)
+    }
+
+    /// One shape left alone isn't a piece any more.
+    pub fn tidy_pieces(&mut self) {
+        fn count(v: &Vector, seen: &mut std::collections::HashMap<u64, usize>) {
+            if let Some(piece) = v.piece {
+                *seen.entry(piece).or_default() += 1;
+            }
+            for member in &v.members {
+                count(member, seen);
+            }
+        }
+        if self.piece_names.is_empty() && !self.vectors.iter().any(|v| v.piece.is_some()) {
+            return;
+        }
+        let mut seen = std::collections::HashMap::new();
+        for v in &self.vectors {
+            count(v, &mut seen);
+        }
+        self.piece_names.retain(|p, _| seen.get(p).copied().unwrap_or(0) >= 2);
+        for v in &mut self.vectors {
+            v.each_mut(&mut |v| {
+                if v.piece.is_some_and(|p| seen.get(&p).copied().unwrap_or(0) < 2) {
+                    v.piece = None;
+                }
+            });
+        }
+    }
+
+    /// Copies made together: a whole piece copied is a new piece, but part of one stays in it.
+    pub fn sort_out_copied_pieces(&mut self, copies: &[u64]) {
+        let copied: Vec<u64> = self.vectors.iter().filter(|v| copies.contains(&v.id)).filter_map(|v| v.piece).collect();
+        let mut done: Vec<u64> = Vec::new();
+        for old in copied {
+            if done.contains(&old) {
+                continue;
+            }
+            done.push(old);
+            let here = |v: &Vector| v.piece == Some(old);
+            let among = self.vectors.iter().filter(|v| here(v) && copies.contains(&v.id)).count();
+            let others = self.vectors.iter().filter(|v| here(v) && !copies.contains(&v.id)).count();
+            if among == others {
+                let name = self.next_piece_name();
+                let new = self.new_id();
+                for v in self.vectors.iter_mut().filter(|v| v.piece == Some(old) && copies.contains(&v.id)) {
+                    v.piece = Some(new);
+                }
+                self.piece_names.insert(new, name);
+            }
+        }
+    }
+
+    /// The shape on the sheet that this is, or that holds it.
+    pub fn top_of(&self, id: u64) -> Option<u64> {
+        self.vectors.iter().find(|v| v.holds(id)).map(|v| v.id)
     }
 }
 
@@ -423,16 +609,16 @@ pub enum DrawKind {
 impl DrawKind {
     pub fn title(self) -> &'static str {
         match self {
-            DrawKind::Circle => "Draw Circle",
-            DrawKind::Ellipse => "Draw Ellipse",
-            DrawKind::Rect => "Draw Rectangle",
-            DrawKind::Polygon => "Draw Polygon",
-            DrawKind::Star => "Draw Star",
-            DrawKind::Polyline => "Draw Lines",
-            DrawKind::Arc => "Draw Arc",
-            DrawKind::Curve => "Draw Curve",
-            DrawKind::Spiral => "Draw Spiral",
-            DrawKind::Text => "Draw Text",
+            DrawKind::Circle => crate::i18n::tr("Draw Circle"),
+            DrawKind::Ellipse => crate::i18n::tr("Draw Ellipse"),
+            DrawKind::Rect => crate::i18n::tr("Draw Rectangle"),
+            DrawKind::Polygon => crate::i18n::tr("Draw Polygon"),
+            DrawKind::Star => crate::i18n::tr("Draw Star"),
+            DrawKind::Polyline => crate::i18n::tr("Draw Lines"),
+            DrawKind::Arc => crate::i18n::tr("Draw Arc"),
+            DrawKind::Curve => crate::i18n::tr("Draw Curve"),
+            DrawKind::Spiral => crate::i18n::tr("Draw Spiral"),
+            DrawKind::Text => crate::i18n::tr("Draw Text"),
         }
     }
 }
@@ -482,7 +668,7 @@ impl DrawForm {
             start: 0.0,
             sweep: 180.0,
             turns: 3.0,
-            text: "Text".into(),
+            text: crate::i18n::tr("Text").into(),
             text_height: size * 0.1,
             editing: None,
             points: Vec::new(),
@@ -864,7 +1050,6 @@ pub struct App {
     pub show_constraints: bool,
     pub constraint_conflict: bool,
     pub failed_print: Option<u64>,
-    pub relink_due: bool,
     /// The toolpaths being worked out, while the progress bar is up.
     pub recalc: Option<crate::recalc::Running>,
     /// Work toolpaths out away from the window. The tests want each result at once.
@@ -875,6 +1060,16 @@ pub struct App {
     pub nudging: bool,
     /// What the drawing looked like when the toolpaths last followed it.
     pub shapes_print: Option<u64>,
+    /// The toolpaths whose shapes have changed since they were calculated.
+    pub behind: Vec<usize>,
+    /// The material has changed and the toolpaths exist: asking whether to work them out again.
+    pub ask_recalc: bool,
+    /// The answer was not yet, so all of them are out of date.
+    pub all_behind: bool,
+    /// The selection whose resizing handles are showing, after a click on what was already selected.
+    pub handles_on: Option<Vec<u64>>,
+    /// Moving a shape of a piece leaves the rest of the piece where it is.
+    pub adjust_piece: bool,
     pub defined: std::collections::HashMap<u64, bool>,
     pub defined_print: Option<u64>,
     pub dim_edit: Option<usize>,
@@ -898,6 +1093,8 @@ pub struct App {
     pub edit_passes: bool,
     pub show_advanced: bool,
     pub message: Option<String>,
+    /// Waiting for an answer about unsaved work before doing this.
+    pub leave: Option<Leave>,
 
     // 2D view
     pub scale: f32,
@@ -932,11 +1129,102 @@ pub struct App {
     pub surface_job: Option<crate::view3d::SurfaceJob>,
     /// The tests and the screenshot option want each picture at once.
     pub surface_in_background: bool,
+    pub quality3d: Quality3d,
+    /// The keyboard shortcuts in use, and the window that changes them.
+    pub keys: crate::keys::Keys,
+    pub prefs_open: bool,
+    /// The form for merging the visible toolpaths, and what it was last set to.
+    pub merge_form: Option<crate::merge::MergeForm>,
+    pub merge_choices: crate::merge::MergeChoices,
+    pub recent_wanted: Option<PathBuf>,
+    /// The picture on the first screen, once it has been shown.
+    pub start_logo: Option<egui::TextureHandle>,
+    /// The one piece the save form is for, if not all of them.
+    pub save_piece: Option<u64>,
+    pub guides_locked: bool,
+    /// Whether calculating a toolpath shows it in the 3D view at once.
+    pub auto_open_3d: bool,
+    pub draw_rapids: bool,
+    pub prefs_waiting: Option<crate::keys::Action>,
+    pub prefs_note: String,
+    /// How long the last sharp picture took, and the last preview from its start to that picture.
+    pub picture_seconds: Option<f32>,
+    pub preview_seconds: Option<f32>,
+    pub preview_started: Option<std::time::Instant>,
+    /// While the tool cuts: not before this, so copying the carve can't take up the window's time.
+    pub next_cut_picture: Option<std::time::Instant>,
     /// How big the quick picture is, to suit how fast this computer is.
     pub quick_pixels: f32,
     pub surface_rev: u64,
     pub ornament: Option<egui::TextureHandle>,
     pub view_rect: egui::Rect,
+}
+
+/// How much of the computer the 3D view may use for a picture.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Quality3d {
+    Light,
+    Balanced,
+    Sharp,
+}
+
+impl Quality3d {
+    pub const ALL: [Quality3d; 3] = [Quality3d::Light, Quality3d::Balanced, Quality3d::Sharp];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Quality3d::Light => "Light",
+            Quality3d::Balanced => "Balanced",
+            Quality3d::Sharp => "Sharp",
+        }
+    }
+
+    pub fn hint(self) -> &'static str {
+        match self {
+            Quality3d::Light => crate::i18n::tr("Fastest: the carve's grid as it is. Fine detail shows less sharply."),
+            Quality3d::Balanced => crate::i18n::tr("A good picture at once, then cleaner cut walls."),
+            Quality3d::Sharp => crate::i18n::tr("The finest picture. It can take a long time on a modest computer."),
+        }
+    }
+
+    /// The most points the carve is worked out on, from the original's own steps.
+    pub fn most_points(self) -> usize {
+        match self {
+            Quality3d::Light => 4_000_000,
+            Quality3d::Balanced => 8_000_000,
+            Quality3d::Sharp => 16_000_000,
+        }
+    }
+
+    /// The most spots looked at per side of a pixel: everywhere, and on the edges.
+    pub fn samples(self) -> (usize, usize) {
+        match self {
+            Quality3d::Light => (1, 3),
+            Quality3d::Balanced => (2, 4),
+            Quality3d::Sharp => (3, 6),
+        }
+    }
+}
+
+fn quality_file() -> Option<PathBuf> {
+    recent_file().map(|f| f.with_file_name("3d-quality.txt"))
+}
+
+fn load_quality() -> Quality3d {
+    let saved = if cfg!(test) { None } else { quality_file().and_then(|f| std::fs::read_to_string(f).ok()) };
+    Quality3d::ALL.into_iter().find(|q| saved.as_deref().is_some_and(|s| s.trim() == q.name())).unwrap_or(Quality3d::Balanced)
+}
+
+/// What would drop the project on screen.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Leave {
+    Close,
+    New,
+    Open,
+    /// Back to the first screen, with the window still open.
+    ToStart,
+    /// To the project in `recent_wanted`.
+    Recent,
 }
 
 impl Default for App {
@@ -947,6 +1235,7 @@ impl Default for App {
             redo: Vec::new(),
             path: None,
             dirty: false,
+            leave: None,
             recent: load_recent(),
             folded: load_folded(),
             screen: Screen::Start,
@@ -961,7 +1250,7 @@ impl Default for App {
             clipboard: Vec::new(),
             selected_tp: None,
             selected_comp: None,
-            status: "Ready".into(),
+            status: crate::i18n::tr("Ready").into(),
             tool_index: 0,
             tool_edit: None,
             tool_target: None,
@@ -969,7 +1258,7 @@ impl Default for App {
             // The first of the list that writes millimetres.
             post_index: usize::from(!cfg!(test)),
             loaded_posts: Vec::new(),
-            one_file: true,
+            one_file: crate::pieces::load_one_file(),
             output_arcs: false,
             snap_shapes: true,
             show_guides: true,
@@ -992,12 +1281,16 @@ impl Default for App {
             show_constraints: true,
             constraint_conflict: false,
             failed_print: None,
-            relink_due: false,
             recalc: None,
             background_recalc: !cfg!(test),
             metric_by_default: !cfg!(test),
             nudging: false,
             shapes_print: None,
+            behind: Vec::new(),
+            ask_recalc: false,
+            all_behind: false,
+            handles_on: None,
+            adjust_piece: false,
             defined: std::collections::HashMap::new(),
             defined_print: None,
             dim_edit: None,
@@ -1048,6 +1341,23 @@ impl Default for App {
             mesh: None,
             surface_job: None,
             surface_in_background: !cfg!(test),
+            quality3d: load_quality(),
+            keys: crate::keys::load(),
+            prefs_open: false,
+            merge_form: None,
+            merge_choices: Default::default(),
+            recent_wanted: None,
+            start_logo: None,
+            save_piece: None,
+            guides_locked: false,
+            auto_open_3d: true,
+            draw_rapids: true,
+            prefs_waiting: None,
+            prefs_note: String::new(),
+            picture_seconds: None,
+            preview_seconds: None,
+            preview_started: None,
+            next_cut_picture: None,
             quick_pixels: if cfg!(test) { crate::view3d::MOST_QUICK_PIXELS } else { 400_000.0 },
             surface_rev: 1,
             ornament: None,
@@ -1057,10 +1367,18 @@ impl Default for App {
 }
 
 fn recent_file() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    // Windows keeps a program's settings in a place of its own.
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+    }?;
     Some(base.join("burin").join("recent.txt"))
+}
+
+/// A file in the folder where the program keeps its settings.
+pub fn settings_file(name: &str) -> Option<PathBuf> {
+    recent_file().map(|f| f.with_file_name(name))
 }
 
 fn clip_file() -> Option<PathBuf> {
@@ -1215,13 +1533,16 @@ pub fn save_folded(folded: &[String]) {
     }
 }
 
+/// How many recently opened files are kept.
+const RECENT_FILES: usize = 4;
+
 fn load_recent() -> Vec<PathBuf> {
     if cfg!(test) {
         return Vec::new();
     }
     recent_file()
         .and_then(|f| std::fs::read_to_string(f).ok())
-        .map(|s| s.lines().map(PathBuf::from).filter(|p| p.exists()).take(5).collect())
+        .map(|s| s.lines().map(PathBuf::from).filter(|p| p.exists()).take(RECENT_FILES).collect())
         .unwrap_or_default()
 }
 
@@ -1241,7 +1562,7 @@ impl App {
             self.redo.push(std::mem::replace(&mut self.doc, prev));
             self.after_history();
             self.after_job_history(&was);
-            self.status = "Undid the last change".into();
+            self.status = crate::i18n::tr("Undid the last change").into();
         }
     }
 
@@ -1251,7 +1572,7 @@ impl App {
             self.undo.push(std::mem::replace(&mut self.doc, next));
             self.after_history();
             self.after_job_history(&was);
-            self.status = "Redid the change".into();
+            self.status = crate::i18n::tr("Redid the change").into();
         }
     }
 
@@ -1289,10 +1610,14 @@ impl App {
         self.reset_state();
         self.screen = Screen::Work;
         self.left = LeftForm::Job { backup: None, first: true };
-        self.status = "Ready".into();
+        self.status = crate::i18n::tr("Ready").into();
     }
 
     pub fn reset_state(&mut self) {
+        self.handles_on = None;
+        self.adjust_piece = false;
+        self.ask_recalc = false;
+        self.all_behind = false;
         self.recalc = None;
         self.surface_job = None;
         self.undo.clear();
@@ -1326,8 +1651,14 @@ impl App {
 
     pub fn save_to(&mut self, path: PathBuf) -> Result<(), String> {
         let text = serde_json::to_string(&self.doc).map_err(|e| e.to_string())?;
-        std::fs::write(&path, text).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
-        self.status = format!("Saved {}", path.display());
+        // Written beside it first: a full disk or a crash must not cost the copy already there.
+        let beside = path.with_extension("burin-saving");
+        let written = std::fs::write(&beside, text).and_then(|()| std::fs::rename(&beside, &path));
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&beside);
+            return Err(tf!("Could not save {}: {e}", path.display()));
+        }
+        self.status = tf!("Saved {}", path.display());
         self.remember(path.clone());
         self.path = Some(path);
         self.dirty = false;
@@ -1336,7 +1667,7 @@ impl App {
 
     /// Starts a new job from a .crv3d project file: its material, layers, shapes and toolpaths.
     pub fn open_project(&mut self, path: &std::path::Path) -> Result<(), String> {
-        let bytes = std::fs::read(path).map_err(|e| format!("Could not open {}: {e}", path.display()))?;
+        let bytes = std::fs::read(path).map_err(|e| tf!("Could not open {}: {e}", path.display()))?;
         let p = crate::crv3d::read(&bytes)?;
         let mut doc = Doc::default();
         let (w, h) = (p.max[0] - p.min[0], p.max[1] - p.min[1]);
@@ -1436,14 +1767,21 @@ impl App {
                 .collect();
             doc.toolpaths.push(Toolpath { op, visible: true, kept_moves: Some(moves.clone()), kept_steps: Some(Arc::new(steps)), moves, color: palette[k % palette.len()] });
         }
+        // Last: toolpaths found their shapes by what each goes by, and still can inside a group.
+        for group in &p.groups {
+            if let Some(v) = saved_group(&mut doc, &by_mark, group) {
+                doc.vectors.push(v);
+            }
+        }
         let (shapes, layers, toolpaths) = (p.shapes.len(), p.layers.len().max(1), p.toolpaths.len());
         self.doc = doc;
         self.reset_state();
         self.screen = Screen::Work;
-        // A separate file from the one it came from: saving asks where.
+        // A separate file from the one it came from: saving asks where. The original is still
+        // there, so nothing is lost by leaving until something here changes.
         self.path = None;
-        self.dirty = true;
-        self.status = format!("{shapes} shapes on {layers} layers, {toolpaths} toolpaths.");
+        self.dirty = false;
+        self.status = tf!("{shapes} shapes on {layers} layers, {toolpaths} toolpaths.");
         if toolpaths > 0 {
             self.right_open = true;
             self.right = RightMode::List;
@@ -1456,14 +1794,14 @@ impl App {
         if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("crv3d") || e.eq_ignore_ascii_case("crv")) {
             return self.open_project(&path);
         }
-        let text = std::fs::read_to_string(&path).map_err(|e| format!("Could not open {}: {e}", path.display()))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| tf!("Could not open {}: {e}", path.display()))?;
         let doc: Doc = serde_json::from_str(&text)
-            .map_err(|_| format!("{} is not a project made by this program.", path.display()))?;
+            .map_err(|_| tf!("{} is not a project made by this program.", path.display()))?;
         self.doc = doc;
         self.reset_state();
         self.screen = Screen::Work;
         self.recalculate(false);
-        self.status = format!("Opened {}", path.display());
+        self.status = tf!("Opened {}", path.display());
         self.remember(path.clone());
         self.path = Some(path);
         Ok(())
@@ -1472,7 +1810,7 @@ impl App {
     fn remember(&mut self, path: PathBuf) {
         self.recent.retain(|p| *p != path);
         self.recent.insert(0, path);
-        self.recent.truncate(5);
+        self.recent.truncate(RECENT_FILES);
         if cfg!(test) {
             return;
         }
@@ -1552,7 +1890,7 @@ impl App {
         let Some(prim) = form.prim() else { return };
         let paths = prim.paths();
         if paths.is_empty() {
-            self.status = "Type some text first.".into();
+            self.status = crate::i18n::tr("Type some text first.").into();
             return;
         }
         self.checkpoint();
@@ -1583,12 +1921,7 @@ impl App {
             if let LeftForm::Draw(f) = &mut self.left {
                 f.load_shape(&v);
             }
-            self.status = "A rule on this shape kept its size. Change the rule's dimension, or remove the rule.".into();
-        }
-        // Toolpaths made from this shape follow it.
-        let redone = self.relink_toolpaths();
-        if redone > 0 {
-            self.status = format!("Changed the shape and recalculated {redone} toolpaths.");
+            self.status = crate::i18n::tr("A rule on this shape kept its size. Change the rule's dimension, or remove the rule.").into();
         }
     }
 
@@ -1639,8 +1972,11 @@ impl App {
         let step = self.doc.job.width.min(self.doc.job.height) * 0.02;
         let items = self.clipboard.clone();
         self.selected.clear();
+        let mut pairs = Vec::new();
         for mut v in items {
+            let original = v.id;
             v.id = self.doc.new_id();
+            pairs.push((original, v.id));
             v.layer = self.doc.active_layer;
             for p in v.paths.iter_mut().flat_map(|p| p.pts.iter_mut()) {
                 p[0] += step;
@@ -1650,6 +1986,9 @@ impl App {
             self.selected.push(v.id);
             self.doc.vectors.push(v);
         }
+        let pasted = self.selected.clone();
+        self.doc.sort_out_copied_pieces(&pasted);
+        self.doc.join_copies_to_toolpaths(&pairs);
         self.copy_selected();
     }
 
@@ -1662,8 +2001,36 @@ impl App {
         }
     }
 
+    /// What moves when the selection does: the rest of its pieces too, unless adjusting within one.
+    pub fn moving_ids(&self) -> Vec<u64> {
+        if self.adjust_piece {
+            self.selected.clone()
+        } else {
+            self.doc.with_their_pieces(&self.selected)
+        }
+    }
+
+    /// The box of what moves when the selection does.
+    pub fn moving_bbox(&self) -> Option<(P, P)> {
+        let ids = self.moving_ids();
+        geom::bbox(self.doc.vectors.iter().filter(|v| ids.contains(&v.id)).flat_map(|v| v.paths.iter()))
+    }
+
+    /// Reshapes what moves when the selection does: for what turns or flips a piece as one.
+    pub fn map_moving(&mut self, f: impl Fn(P) -> P) {
+        let moving = self.moving_ids();
+        let keep = std::mem::replace(&mut self.selected, moving);
+        self.map_selected(f);
+        self.selected = keep;
+    }
+
     pub fn translate_selected(&mut self, dx: f64, dy: f64) {
-        for v in self.doc.vectors.iter_mut().filter(|v| self.selected.contains(&v.id)) {
+        let ids = self.moving_ids();
+        self.translate_ids(&ids, dx, dy);
+    }
+
+    pub fn translate_ids(&mut self, ids: &[u64], dx: f64, dy: f64) {
+        for v in self.doc.vectors.iter_mut().filter(|v| ids.contains(&v.id)) {
             for p in v.paths.iter_mut().flat_map(|p| p.pts.iter_mut()) {
                 p[0] += dx;
                 p[1] += dy;
@@ -1676,7 +2043,7 @@ impl App {
 
     /// `ax`/`ay`: -1 left/bottom, 0 centre, 1 right/top of the job; `None` leaves that axis alone.
     pub fn align_selected(&mut self, ax: Option<i32>, ay: Option<i32>) {
-        let Some((lo, hi)) = self.selected_bbox() else { return };
+        let Some((lo, hi)) = self.moving_bbox() else { return };
         self.checkpoint();
         let (w, h) = (self.doc.job.width, self.doc.job.height);
         let dx = match ax {
@@ -1697,17 +2064,19 @@ impl App {
     pub fn offset_selected(&mut self, distance: f64, outward: bool) {
         let paths = self.selected_paths();
         let Some(field) = Field::build(&paths, distance.abs() + self.doc.job.width.min(self.doc.job.height) * 0.01, 900) else {
-            self.status = "Offset needs a closed shape.".into();
+            self.status = crate::i18n::tr("Offset needs a closed shape.").into();
             return;
         };
         let level = if outward { -distance.abs() } else { distance.abs() };
         let loops = field.contours(level);
         if loops.is_empty() {
-            self.status = "That offset leaves nothing: try a smaller distance.".into();
+            self.status = crate::i18n::tr("That offset leaves nothing: try a smaller distance.").into();
             return;
         }
         self.checkpoint();
+        let piece = self.doc.shared_piece(&self.selected);
         let id = self.doc.add_vector(loops.into_iter().map(Path::closed).collect(), Prim::Free);
+        self.doc.put_in_piece(&[id], piece);
         self.selected = vec![id];
     }
 
@@ -1716,34 +2085,162 @@ impl App {
     }
 
     fn group_inner(&mut self) {
-        if self.selected.len() < 2 {
-            self.status = "Select two or more shapes to group.".into();
+        let chosen: Vec<u64> = self.selected.iter().copied().filter(|id| self.doc.vectors.iter().any(|v| v.id == *id)).collect();
+        if chosen.len() < 2 {
+            self.status = crate::i18n::tr("Select two or more shapes to group.").into();
             return;
         }
         self.checkpoint();
-        let paths = self.selected_paths();
-        let sel = std::mem::take(&mut self.selected);
-        self.doc.vectors.retain(|v| !sel.contains(&v.id));
-        self.selected = vec![self.doc.add_vector(paths, Prim::Free)];
+        self.group_now(chosen);
     }
 
+    /// Puts these shapes in a new group, which ends up selected.
+    pub(crate) fn group_now(&mut self, chosen: Vec<u64>) {
+        self.selected.clear();
+        let mut members = Vec::with_capacity(chosen.len());
+        for id in chosen {
+            if let Some(at) = self.doc.vectors.iter().position(|v| v.id == id) {
+                members.push(self.doc.vectors.remove(at));
+            }
+        }
+        // On the layer they share, or else on the active one; either way one that can be seen.
+        let layer = if members.iter().all(|m| m.layer == members[0].layer) { members[0].layer } else { self.doc.active_layer };
+        self.show_layer(layer);
+        let id = self.doc.new_id();
+        let paths = members.iter().flat_map(|m| m.paths.iter().cloned()).collect();
+        let construction = members.iter().all(|m| m.construction);
+        let piece = members[0].piece.filter(|p| members.iter().all(|m| m.piece == Some(*p)));
+        self.doc.vectors.push(Vector { id, paths, layer, prim: Prim::Free, construction, members, piece });
+        self.selected = vec![id];
+    }
+
+    fn show_layer(&mut self, layer: usize) {
+        if let Some(l) = self.doc.layers.get_mut(layer) {
+            l.visible = true;
+        }
+    }
+
+    /// Makes a piece of the selection. Groups in it come apart first, so each shape can be chosen.
+    pub fn make_piece(&mut self) {
+        if !self.can_make_piece() {
+            self.status = crate::i18n::tr("Select two or more shapes, or a group, to make a piece.").into();
+            return;
+        }
+        self.keep_rules(|a| {
+            a.checkpoint();
+            let groups: Vec<u64> = a.doc.vectors.iter().filter(|v| a.selected.contains(&v.id) && v.is_group()).map(|v| v.id).collect();
+            a.selected.retain(|id| !groups.contains(id));
+            for id in groups {
+                if let Some(at) = a.doc.vectors.iter().position(|v| v.id == id) {
+                    let group = a.doc.vectors.remove(at);
+                    let released = a.release(group, true, true);
+                    a.selected.extend(released);
+                }
+            }
+            let name = a.doc.next_piece_name();
+            let piece = a.doc.new_id();
+            a.doc.piece_names.insert(piece, name);
+            let count = a.selected.len();
+            for v in a.doc.vectors.iter_mut().filter(|v| a.selected.contains(&v.id)) {
+                v.piece = Some(piece);
+            }
+            a.status = tf!("Made a piece of {count} shapes: each can be selected alone, and they move together.");
+        });
+    }
+
+    pub fn can_make_piece(&self) -> bool {
+        self.selected.len() >= 2 || self.doc.vectors.iter().any(|v| self.selected.contains(&v.id) && v.is_group())
+    }
+
+    pub fn selection_in_piece(&self) -> bool {
+        self.doc.vectors.iter().any(|v| self.selected.contains(&v.id) && v.piece.is_some())
+    }
+
+    /// The shapes stay as they are, but no longer move together.
+    pub fn release_piece(&mut self) {
+        if !self.selection_in_piece() {
+            return;
+        }
+        self.checkpoint();
+        let ids = self.doc.with_their_pieces(&self.selected);
+        for v in self.doc.vectors.iter_mut().filter(|v| ids.contains(&v.id)) {
+            v.piece = None;
+        }
+        self.adjust_piece = false;
+    }
+
+    pub fn select_piece(&mut self) {
+        self.selected = self.doc.with_their_pieces(&self.selected);
+    }
+
+    /// Whether something selected can be taken apart.
+    pub fn can_ungroup(&self) -> bool {
+        self.doc.vectors.iter().any(|v| self.selected.contains(&v.id) && (v.is_group() || v.paths.len() > 1))
+    }
+
+    /// Takes the selected groups apart by one level, each shape back on its own layer.
     pub fn ungroup_selected(&mut self) {
-        self.keep_rules(App::ungroup_inner);
+        self.ungroup_with(false, true);
     }
 
-    fn ungroup_inner(&mut self) {
-        if !self.doc.vectors.iter().any(|v| self.selected.contains(&v.id) && v.paths.len() > 1) {
-            self.status = "Select a grouped shape to ungroup.".into();
+    /// `deep` takes apart the groups inside as well. Without `own_layers` everything stays on the
+    /// layer the group was on.
+    pub fn ungroup_with(&mut self, deep: bool, own_layers: bool) {
+        self.keep_rules(|a| a.ungroup_inner(deep, own_layers));
+    }
+
+    fn ungroup_inner(&mut self, deep: bool, own_layers: bool) {
+        let chosen: Vec<u64> = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id) && (v.is_group() || v.paths.len() > 1)).map(|v| v.id).collect();
+        if chosen.is_empty() {
+            self.status = crate::i18n::tr("Select a group to ungroup.").into();
             return;
         }
         self.checkpoint();
-        let paths = self.selected_paths();
-        let sel = std::mem::take(&mut self.selected);
-        self.doc.vectors.retain(|v| !sel.contains(&v.id));
-        for p in paths {
-            let id = self.doc.add_vector(vec![p], Prim::Free);
-            self.selected.push(id);
+        self.selected.retain(|id| !chosen.contains(id));
+        for id in chosen {
+            if let Some(at) = self.doc.vectors.iter().position(|v| v.id == id) {
+                let group = self.doc.vectors.remove(at);
+                let released = self.release(group, deep, own_layers);
+                self.selected.extend(released);
+            }
         }
+    }
+
+    /// Puts what a group holds back on the sheet, and says what's there now.
+    fn release(&mut self, group: Vector, deep: bool, own_layers: bool) -> Vec<u64> {
+        let members = match group.members_now() {
+            Some(members) => members,
+            // Lines that were never separate shapes, or a group whose lines have since been changed.
+            None => group
+                .paths
+                .iter()
+                .map(|p| Vector { id: self.doc.new_id(), paths: vec![p.clone()], layer: group.layer, prim: Prim::Free, construction: group.construction, members: Vec::new(), piece: None })
+                .collect(),
+        };
+        let mut ids = Vec::with_capacity(members.len());
+        for mut member in members {
+            if deep && member.is_group() {
+                ids.extend(self.release(member, deep, own_layers));
+                continue;
+            }
+            // A copy of a group holds shapes that go by the same names as the first one's.
+            if self.doc.top_of(member.id).is_some() {
+                member.id = self.doc.new_id();
+            }
+            if !own_layers || member.layer >= self.doc.layers.len() {
+                member.layer = group.layer;
+            }
+            self.show_layer(member.layer);
+            ids.push(member.id);
+            self.doc.vectors.push(member);
+        }
+        // A toolpath made from the group goes on with what was in it.
+        for t in &mut self.doc.toolpaths {
+            if let Some(at) = t.op.source.iter().position(|s| *s == group.id) {
+                t.op.source.splice(at..=at, ids.iter().copied());
+            }
+        }
+        ids
     }
 
 
@@ -1769,7 +2266,7 @@ impl App {
     fn boolean_inner(&mut self, op: BoolOp) {
         let items: Vec<Vector> = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id)).cloned().collect();
         if items.len() < 2 || items.iter().any(|v| v.paths.iter().all(|p| !p.closed)) {
-            self.status = "Select two or more closed shapes.".into();
+            self.status = crate::i18n::tr("Select two or more closed shapes.").into();
             return;
         }
         let mut result = items[0].paths.clone();
@@ -1777,13 +2274,15 @@ impl App {
             result = geom::boolean(&result, &v.paths, op);
         }
         if result.is_empty() {
-            self.status = "Those shapes don't overlap, so nothing is left.".into();
+            self.status = crate::i18n::tr("Those shapes don't overlap, so nothing is left.").into();
             return;
         }
         self.checkpoint();
         let sel = std::mem::take(&mut self.selected);
+        let piece = self.doc.shared_piece(&sel);
         self.doc.vectors.retain(|v| !sel.contains(&v.id));
         self.selected = vec![self.doc.add_vector(result, Prim::Free)];
+        self.doc.put_in_piece(&self.selected.clone(), piece);
     }
 
     pub fn add_component(&mut self, form: ShapeForm) {
@@ -1798,13 +2297,13 @@ impl App {
             let cut = self.cut_ids();
             let paths: Vec<Path> = self.doc.vectors.iter().filter(|v| cut.contains(&v.id)).flat_map(|v| v.paths.iter().cloned()).filter(|p| p.closed).collect();
             if paths.is_empty() {
-                self.status = "Select a closed shape in the 2D view first.".into();
+                self.status = crate::i18n::tr("Select a closed shape in the 2D view first.").into();
                 return;
             }
             self.checkpoint();
             let n = self.doc.components.len() + 1;
             self.doc.components.push(Component {
-                name: format!("Shape {n}"),
+                name: tf!("Shape {n}"),
                 paths,
                 profile: form.profile,
                 height: form.height,
@@ -1874,13 +2373,23 @@ impl App {
 
     pub fn edit_toolpath(&mut self) {
         let Some(i) = self.selected_tp else {
-            self.status = "Select a toolpath to edit.".into();
+            self.status = crate::i18n::tr("Select a toolpath to edit.").into();
             return;
         };
+        if self.doc.toolpaths[i].op.merged {
+            self.message = Some(crate::i18n::tr("A merged toolpath can't be edited or calculated again. Change the toolpaths it was made from and merge them again.").into());
+            return;
+        }
         let op = self.doc.toolpaths[i].op.clone();
         // Its shapes are selected again, unless it works from the 3D model.
         if !op.kind.uses_model() {
-            self.selected = op.source.iter().copied().filter(|id| self.doc.vectors.iter().any(|v| v.id == *id)).collect();
+            let mut chosen: Vec<u64> = Vec::new();
+            for top in op.source.iter().filter_map(|id| self.doc.top_of(*id)) {
+                if !chosen.contains(&top) {
+                    chosen.push(top);
+                }
+            }
+            self.selected = chosen;
         }
         self.right = RightMode::Op { op: Box::new(op), editing: Some(i), tab: 0, error: None };
         self.right_open = true;
@@ -1940,7 +2449,7 @@ impl App {
         let clear_op = clearance.map(|tool| {
             let mut first = (*op).clone();
             first.clearance_tool = None;
-            first.name = format!("{} [Clear]", op.name);
+            first.name = tf!("{} [Clear]", op.name);
             if op.kind == OpKind::VCarve {
                 let half = (op.tool.angle.to_radians() / 2.0).tan();
                 first.kind = OpKind::Pocket;
@@ -1974,8 +2483,8 @@ impl App {
         }
         self.selected_tp = Some(index - 1);
         self.right = RightMode::Preview;
-        self.view3d = true;
-        self.status = "Ready".into();
+        self.view3d = self.auto_open_3d;
+        self.status = crate::i18n::tr("Ready").into();
     }
 
     pub fn recalculate_all(&mut self) {
@@ -1987,6 +2496,7 @@ impl App {
         if self.recalc.is_some() {
             return;
         }
+        self.all_behind = false;
         self.refresh_model();
         let mut tasks = self.follow_tasks();
         let (mut unchanged, mut no_shapes) = (0, 0);
@@ -1998,6 +2508,9 @@ impl App {
             match &tp.kept_moves {
                 Some(kept) => {
                     tp.moves = kept.clone();
+                    if tp.op.merged {
+                        continue;
+                    }
                     if tp.op.source.is_empty() {
                         no_shapes += 1;
                     } else {
@@ -2015,7 +2528,7 @@ impl App {
         let Some(i) = self.selected_tp else { return };
         self.checkpoint();
         let mut copy = self.doc.toolpaths[i].clone();
-        copy.op.name += " copy";
+        copy.op.name += crate::i18n::tr(" copy");
         self.doc.toolpaths.insert(i + 1, copy);
         self.selected_tp = Some(i + 1);
     }
@@ -2031,6 +2544,72 @@ impl App {
         toolpath::POSTS.get(self.post_index).is_some_and(|p| p.0 == crate::planetcnc::NAME)
     }
 
+    /// After the material's settings were accepted: whether what they changed affects the toolpaths.
+    /// If so asks about working them out again; otherwise only looks at how deep they go.
+    pub fn material_accepted(&mut self, before: &Doc) {
+        let sizes = |d: &Doc| (d.job.width, d.job.height, d.job.thickness, d.job.z_on_bed);
+        let heights = |d: &Doc| serde_json::to_string(&d.machine).ok();
+        let changed = sizes(before) != sizes(&self.doc) || heights(before) != heights(&self.doc);
+        if self.doc.toolpaths.is_empty() {
+            return;
+        }
+        if changed {
+            self.ask_recalc = true;
+        } else {
+            let all: Vec<usize> = (0..self.doc.toolpaths.len()).collect();
+            self.warn_if_too_deep(&all);
+        }
+    }
+
+    /// Why this machine file must not be written: it would cut something other than what's on screen.
+    pub fn output_problem(&mut self, only: Option<usize>) -> Option<String> {
+        if self.all_behind {
+            return Some(crate::i18n::tr("The material's settings have changed since the toolpaths were calculated.\n\nUse Recalculate, then save.").into());
+        }
+        let chosen = |i: usize, t: &Toolpath| only.map_or(t.visible, |o| o == i);
+        let behind: Vec<usize> = self.follow_tasks().into_iter().map(|(i, _)| i).collect();
+        let shapes = self.doc.current_paths();
+        let mut old: Vec<&str> = Vec::new();
+        for (i, t) in self.doc.toolpaths.iter().enumerate().filter(|(i, t)| chosen(*i, t)) {
+            let gone = !t.op.source.is_empty() && !t.op.source.iter().any(|id| shapes.contains_key(id));
+            if gone || behind.contains(&i) {
+                old.push(&t.op.name);
+            }
+        }
+        if !old.is_empty() {
+            return Some(tf!(
+                "These toolpaths no longer match their shapes, so the file would cut the old ones:\n\n{}\n\nUse Recalculate, or edit them to choose their shapes again, then save.",
+                old.join("\n")
+            ));
+        }
+        let empty: Vec<&str> = self.doc.toolpaths.iter().enumerate().filter(|(i, t)| chosen(*i, t) && t.moves.is_empty()).map(|(_, t)| t.op.name.as_str()).collect();
+        if !empty.is_empty() {
+            return Some(tf!("These toolpaths have no moves, so there's nothing to write for them:\n\n{}\n\nUse Recalculate, or edit them to choose their shapes again, then save.", empty.join("\n")));
+        }
+        let tools: Vec<&toolpath::Tool> = self.doc.toolpaths.iter().enumerate().filter(|(i, t)| chosen(*i, t)).map(|(_, t)| &t.op.tool).collect();
+        self.tool_change_problem(&tools)
+    }
+
+    /// When the post processor can't change tool and these need more than one.
+    pub(crate) fn tool_change_problem(&self, tools: &[&toolpath::Tool]) -> Option<String> {
+        let def = self.post_index.checked_sub(toolpath::POSTS.len()).and_then(|i| self.loaded_posts.get(i))?;
+        if def.can_change_tool() {
+            return None;
+        }
+        let first = tools.first()?;
+        let same = |t: &toolpath::Tool| t.kind == first.kind && t.metric == first.metric && (t.dia - first.dia).abs() < 1e-6 && (t.angle - first.angle).abs() < 1e-6;
+        let other = tools.iter().find(|t| !same(t))?;
+        Some(tf!(
+            "This post processor can't change tool, and these toolpaths use more than one:\n\n{}\n{}\n\nThe machine would cut them all with the first. Untick \"Output all visible toolpaths to one file\" and save each tool's toolpaths separately.",
+            first.name, other.name
+        ))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn keep_for_test(&mut self, op: toolpath::Op, moves: Vec<Move>) {
+        self.keep_calculated(vec![(op, Arc::new(moves))], None);
+    }
+
     pub fn gcode_text(&self, only: Option<usize>) -> Option<String> {
         self.gcode_text_named(only, "toolpaths")
     }
@@ -2038,6 +2617,11 @@ impl App {
     /// The machine file's text. `file_name` is what a post processor file can print in it.
     pub fn gcode_text_named(&self, only: Option<usize>, file_name: &str) -> Option<String> {
         let chosen: Vec<&Toolpath> = self.doc.toolpaths.iter().enumerate().filter(|(i, t)| only.map_or(t.visible, |o| o == *i)).map(|(_, t)| t).collect();
+        self.gcode_from(&chosen, file_name)
+    }
+
+    /// The machine file's text for these toolpaths.
+    pub(crate) fn gcode_from(&self, chosen: &[&Toolpath], file_name: &str) -> Option<String> {
         if chosen.is_empty() {
             return None;
         }
@@ -2112,11 +2696,13 @@ impl App {
 
     pub fn preview(&mut self, queue: Vec<usize>) {
         if queue.is_empty() {
-            self.status = "Create a toolpath first.".into();
+            self.status = crate::i18n::tr("Create a toolpath first.").into();
             return;
         }
         // A toolpath made before the material got thinner would go through it now.
         self.warn_if_too_deep(&queue);
+        self.preview_started = Some(std::time::Instant::now());
+        self.preview_seconds = None;
         self.sim_undo = self.sim.clone();
         self.ensure_sim();
         self.anim = Anim { queue, at: 0, step: 0, playing: true, tool_at: None, rush: false };
@@ -2138,7 +2724,7 @@ impl App {
             tool.dia / per_tool
         }).filter(|c| *c > 0.0).fold(f64::MAX, f64::min);
         let wanted = if finest == f64::MAX { 0.0 } else { j.width * j.height / (finest * finest) };
-        (wanted.ceil() as usize).clamp(1_000_000, 12_000_000)
+        (wanted.ceil() as usize).clamp(1_000_000, self.quality3d.most_points())
     }
 
     fn ensure_sim(&mut self) {
@@ -2148,6 +2734,21 @@ impl App {
             let sim = Sim::new(j.width, j.height, j.thickness, points);
             self.sim_tag = vec![255; sim.grid.data.len()];
             self.sim = Some(sim);
+        }
+    }
+
+    /// Chooses how much the 3D view may use, and remembers it for next time. A carve already made
+    /// keeps its points until it's reset; only its picture changes.
+    pub fn set_quality3d(&mut self, quality: Quality3d) {
+        self.quality3d = quality;
+        if cfg!(test) {
+            return;
+        }
+        if let Some(file) = quality_file() {
+            if let Some(dir) = file.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(file, quality.name());
         }
     }
 
@@ -2365,10 +2966,32 @@ fn fast_descent_steps(steps: &[crate::arcs::Step], gap: f64) -> Vec<crate::arcs:
     out
 }
 
+/// Takes a saved group's shapes off the sheet and makes the group of them. With only one shape
+/// found there's nothing to group.
+fn saved_group(doc: &mut Doc, by_mark: &std::collections::HashMap<[u8; 16], u64>, group: &crate::crv3d::SavedGroup) -> Option<Vector> {
+    let mut members = Vec::new();
+    for item in &group.items {
+        match item {
+            crate::crv3d::SavedItem::Shape(mark) => {
+                let at = by_mark.get(mark).and_then(|id| doc.vectors.iter().position(|v| v.id == *id));
+                members.extend(at.map(|at| doc.vectors.remove(at)));
+            }
+            crate::crv3d::SavedItem::Group(inner) => members.extend(saved_group(doc, by_mark, inner)),
+        }
+    }
+    if members.len() < 2 {
+        return members.pop();
+    }
+    let layer = group.layer.unwrap_or(members[0].layer);
+    let paths = members.iter().flat_map(|m| m.paths.iter().cloned()).collect();
+    Some(Vector { id: doc.new_id(), paths, layer, prim: Prim::Free, construction: false, members, piece: None })
+}
+
 /// Sets a toolpath up the way the file says, so that working it out again gives the same cut.
 fn saved_options(op: &mut Op, o: &crate::crv3d::SavedOptions) {
     op.climb = o.climb.unwrap_or(op.climb);
     op.tabs = o.tabs;
+    op.zigzag_open = o.zigzag_open;
     op.tab_length = o.tab_length.unwrap_or(op.tab_length);
     op.tab_thickness = o.tab_thickness.unwrap_or(op.tab_thickness);
     op.tab_count = o.tab_count.unwrap_or(op.tab_count);
@@ -2566,6 +3189,158 @@ mod tests {
         b.left = LeftForm::Xform(XformForm { count: 4, dx: 5.0, dy: 5.0, ..XformForm::new(Xform::CircularCopy, &b.doc.job) });
         b.apply_xform();
         assert_eq!(b.doc.vectors.len(), 4);
+    }
+
+    #[test]
+    fn a_circle_comes_out_of_a_group_still_a_circle_where_the_group_went() {
+        let mut a = working();
+        let one = add_circle(&mut a, [3.0, 3.0], 1.0);
+        let two = add_circle(&mut a, [7.0, 3.0], 0.5);
+        a.selected = vec![two, one];
+        a.group_selected();
+        assert_eq!(a.doc.vectors.len(), 1);
+        assert!(a.doc.vectors[0].is_group());
+        assert_eq!(a.doc.vectors[0].paths.len(), 2);
+        a.translate_selected(1.0, 2.0);
+        a.ungroup_selected();
+        assert_eq!(a.selected, [two, one], "the shapes come back as themselves, and selected");
+        let circle = a.doc.vectors.iter().find(|v| v.id == one).unwrap();
+        let Prim::Circle { c, r } = circle.prim else { panic!("{:?}", circle.prim) };
+        assert!((c[0] - 4.0).abs() < 1e-9 && (c[1] - 5.0).abs() < 1e-9 && (r - 1.0).abs() < 1e-9, "{c:?} {r}");
+        let (lo, _) = geom::bbox(&circle.paths).unwrap();
+        assert!((lo[0] - 3.0).abs() < 1e-6, "its lines moved too");
+    }
+
+    #[test]
+    fn a_shape_changed_out_of_its_kind_in_a_group_comes_back_as_lines() {
+        let mut a = working();
+        let one = add_circle(&mut a, [3.0, 3.0], 1.0);
+        let two = add_circle(&mut a, [7.0, 3.0], 1.0);
+        a.selected = vec![one, two];
+        a.group_selected();
+        for p in &mut a.doc.vectors[0].paths {
+            for q in &mut p.pts {
+                q[0] *= 2.0;
+            }
+        }
+        a.ungroup_selected();
+        assert_eq!(a.doc.vectors.len(), 2);
+        assert!(a.doc.vectors.iter().all(|v| v.prim == Prim::Free), "a stretched circle isn't one");
+    }
+
+    #[test]
+    fn groups_inside_groups_come_apart_one_level_or_all_at_once() {
+        let mut a = working();
+        let (one, two, three) = (add_circle(&mut a, [1.0, 1.0], 0.2), add_circle(&mut a, [2.0, 1.0], 0.2), add_circle(&mut a, [3.0, 1.0], 0.2));
+        a.selected = vec![one, two];
+        a.group_selected();
+        let inner = a.selected[0];
+        a.selected = vec![inner, three];
+        a.group_selected();
+        assert_eq!(a.doc.vectors.len(), 1);
+        let outer = a.selected[0];
+        a.ungroup_selected();
+        assert_eq!(a.selected, [inner, three], "one level");
+        a.selected = vec![inner, three];
+        a.group_selected();
+        assert_ne!(a.selected, [outer]);
+        a.ungroup_with(true, true);
+        assert_eq!(a.selected, [one, two, three], "all of them");
+        assert!(a.doc.vectors.iter().all(|v| !v.is_group()));
+    }
+
+    #[test]
+    fn a_group_goes_on_the_layer_its_shapes_share_and_gives_them_back_theirs() {
+        let mut a = working();
+        a.doc.layers.push(Layer::named("Other"));
+        a.doc.layers.push(Layer::named("Third"));
+        a.doc.active_layer = 1;
+        let (one, two) = (add_circle(&mut a, [1.0, 1.0], 0.2), add_circle(&mut a, [2.0, 1.0], 0.2));
+        a.doc.active_layer = 2;
+        a.doc.layers[1].visible = false;
+        a.selected = vec![one, two];
+        a.group_selected();
+        assert_eq!(a.doc.vectors[0].layer, 1, "not the active layer");
+        assert!(a.doc.layers[1].visible, "its layer is shown");
+        a.ungroup_selected();
+
+        // On different layers, the group goes on the active one; each shape then goes home.
+        a.doc.vectors.iter_mut().find(|v| v.id == two).unwrap().layer = 0;
+        a.selected = vec![one, two];
+        a.group_selected();
+        assert_eq!(a.doc.vectors[0].layer, 2);
+        a.ungroup_selected();
+        let layer = |a: &App, id| a.doc.vectors.iter().find(|v| v.id == id).unwrap().layer;
+        assert_eq!((layer(&a, one), layer(&a, two)), (1, 0));
+
+        // Or all stay with the group.
+        a.selected = vec![one, two];
+        a.group_selected();
+        a.ungroup_with(false, false);
+        assert_eq!((layer(&a, one), layer(&a, two)), (2, 2));
+    }
+
+    #[test]
+    fn toolpaths_go_on_following_shapes_put_in_a_group() {
+        use crate::toolpath::OpKind;
+        let mut a = working();
+        let (one, two) = (add_circle(&mut a, [3.0, 3.0], 1.0), add_circle(&mut a, [7.0, 3.0], 1.0));
+        let tool = default_tools()[0].clone();
+        let paths = a.doc.vectors[0].paths.clone();
+        let mut op = toolpath::blank_op(OpKind::Profile, "One".into(), tool, 0.1, paths);
+        op.source = vec![one];
+        a.keep_calculated(vec![(op, Arc::new(vec![Move { p: [3.0, 3.0, 0.0], rapid: false }]))], None);
+        a.selected = vec![one, two];
+        a.group_selected();
+        assert!(a.follow_tasks().is_empty(), "nothing changed yet");
+        assert_eq!(a.output_problem(None), None);
+        a.translate_selected(1.0, 0.0);
+        let tasks = a.follow_tasks();
+        assert_eq!(tasks.len(), 1, "it follows the shape inside");
+        assert_eq!(tasks[0].1.paths.len(), 1, "that one only");
+        // Going back into it selects the group that holds it.
+        assert_eq!(a.doc.top_of(one), Some(a.selected[0]));
+
+        // A toolpath made from a whole group goes on with what was in it.
+        let group = a.selected[0];
+        a.doc.toolpaths[0].op.source = vec![group];
+        a.ungroup_selected();
+        assert_eq!(a.doc.toolpaths[0].op.source, [one, two]);
+    }
+
+    #[test]
+    fn a_copied_group_comes_apart_into_shapes_of_their_own() {
+        let mut a = working();
+        let (one, two) = (add_circle(&mut a, [3.0, 3.0], 1.0), add_circle(&mut a, [7.0, 3.0], 1.0));
+        a.selected = vec![one, two];
+        a.group_selected();
+        let first = a.selected[0];
+        a.copy_selected();
+        a.paste();
+        let second = a.selected[0];
+        assert_ne!(first, second);
+        a.selected = vec![first, second];
+        a.ungroup_selected();
+        let mut ids: Vec<u64> = a.doc.vectors.iter().map(|v| v.id).collect();
+        assert_eq!(ids.len(), 4);
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 4, "no two the same");
+    }
+
+    #[test]
+    fn a_group_is_saved_with_what_it_holds() {
+        let mut a = working();
+        let (one, two) = (add_circle(&mut a, [3.0, 3.0], 1.0), add_circle(&mut a, [7.0, 3.0], 1.0));
+        a.selected = vec![one, two];
+        a.group_selected();
+        let text = serde_json::to_string(&a.doc).unwrap();
+        let back: Doc = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.vectors[0].members.len(), 2);
+        assert!(matches!(back.vectors[0].members[0].prim, Prim::Circle { .. }));
+        // A project saved before groups were kept like this still opens.
+        let plain = serde_json::to_string(&Doc::default()).unwrap();
+        assert!(serde_json::from_str::<Doc>(&plain).is_ok());
     }
 
     #[test]

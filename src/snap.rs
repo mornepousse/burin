@@ -21,13 +21,13 @@ pub enum SnapKind {
 impl SnapKind {
     fn label(self) -> &'static str {
         match self {
-            SnapKind::Point => "Point",
-            SnapKind::Middle => "Midpoint",
-            SnapKind::Center => "Center",
-            SnapKind::Crossing => "Crossing",
-            SnapKind::Edge => "On shape",
-            SnapKind::Guide => "Guide",
-            SnapKind::Aligned => "Aligned",
+            SnapKind::Point => crate::i18n::tr("Point"),
+            SnapKind::Middle => crate::i18n::tr("Midpoint"),
+            SnapKind::Center => crate::i18n::tr("Center"),
+            SnapKind::Crossing => crate::i18n::tr("Crossing"),
+            SnapKind::Edge => crate::i18n::tr("On shape"),
+            SnapKind::Guide => crate::i18n::tr("Guide"),
+            SnapKind::Aligned => crate::i18n::tr("Aligned"),
         }
     }
 }
@@ -129,7 +129,8 @@ impl App {
     /// Shapes being moved or reshaped can't catch on themselves.
     fn snap_skips(&self) -> Vec<u64> {
         match &self.drag {
-            Drag::Move { .. } | Drag::Scale { .. } => self.selected.clone(),
+            Drag::Move { .. } => self.moving_ids(),
+            Drag::Scale { .. } => self.selected.clone(),
             Drag::Node { id, .. } => vec![*id],
             Drag::Sketch { elem, .. } => vec![elem.vector_id()],
             _ => Vec::new(),
@@ -336,7 +337,7 @@ impl App {
 
     /// The guide close to a screen position.
     pub(crate) fn guide_at(&self, p: egui::Pos2) -> Option<usize> {
-        if !self.show_guides {
+        if !self.show_guides || self.guides_locked {
             return None;
         }
         self.doc.guides.iter().position(|g| {

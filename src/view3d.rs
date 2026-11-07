@@ -1,6 +1,6 @@
 //! The 3D view: draws the material, the model or the carve result as a shaded surface.
 
-use crate::app::{App, Machined, MATERIALS};
+use crate::app::{App, Machined, Quality3d, MATERIALS};
 use crate::relief::Grid;
 use egui::epaint::{Mesh, Vertex};
 use egui::{pos2, vec2, Color32, Pos2, Rect, Sense, Shape, Stroke};
@@ -113,11 +113,13 @@ struct ImageKey {
     fill: [u8; 3],
     colours: Vec<[u8; 3]>,
     fine: bool,
+    quality: Quality3d,
 }
 
 /// The last picture of the surface, and what was prepared to make it.
-/// What a surface was made from, and whether it is only the small copy.
-type BakedFor = (u64, [f64; 3], bool, u32, bool);
+/// What a surface was made from, whether it is only the small copy, and whether the true surface
+/// was left out for the lightest pictures.
+type BakedFor = (u64, [f64; 3], bool, u32, bool, bool);
 type WoodFor = (Option<usize>, [f64; 3]);
 
 pub struct SurfaceCache {
@@ -131,6 +133,7 @@ pub struct SurfaceCache {
 
 /// A picture being made away from the window, which keeps showing the last one until it is ready.
 pub struct SurfaceJob {
+    started: std::time::Instant,
     key: ImageKey,
     stop: Arc<AtomicBool>,
     pictures: Receiver<Finished>,
@@ -149,6 +152,7 @@ struct Finished {
     wood_for: WoodFor,
     wood: Option<Arc<WoodTable>>,
     picture: egui::ColorImage,
+    seconds: f32,
 }
 
 /// Where the surface comes from.
@@ -157,7 +161,7 @@ enum Source {
     Ready(Arc<Baked>),
     /// The small copy of a carve, while the tool moves.
     Small(Grid),
-    /// All of it; first a small copy, so there's something to see right away.
+    /// All of it.
     Whole(Box<WholeSource>),
 }
 
@@ -188,8 +192,22 @@ struct Order {
     quick_pixels: f32,
 }
 
+/// How far along a picture is.
+#[derive(Clone, Copy, PartialEq)]
+enum Stage {
+    /// Small, while the view moves.
+    Moving,
+    /// Every pixel, from the grid alone: much quicker, and already free of the small copy's blur.
+    First,
+    /// As good as the chosen quality asks.
+    Last,
+}
+
+/// Spots per side of a pixel on edges, in the first full-sized picture.
+const FIRST_EDGE_SAMPLES: usize = 3;
+
 impl Order {
-    fn draw(&self, baked: &Baked, wood: Option<&WoodTable>, fine: bool, stop: &AtomicBool) -> egui::ColorImage {
+    fn draw(&self, baked: &Baked, wood: Option<&WoodTable>, stage: Stage, stop: &AtomicBool) -> egui::ColorImage {
         let scene = Scene {
             proj: self.proj,
             baked,
@@ -199,15 +217,22 @@ impl Order {
             machined: self.machined,
             fill: self.fill,
             palette: self.palette.clone(),
-            quick: !fine,
+            quick: stage != Stage::Last,
             stop: Some(stop),
         };
-        let (width, height, samples) = picture_size(self.rect, self.key.pixels_per_point, self.proj.scale, baked.cell, fine, self.quick_pixels);
-        egui::ColorImage::new([width, height], scene.render(self.rect, width, height, samples, if fine { EDGE_SAMPLES } else { 1 }))
+        let (width, height, samples) = picture_size(self.rect, self.key.pixels_per_point, self.proj.scale, baked.cell, stage != Stage::Moving, self.quick_pixels);
+        let (most, edges) = self.key.quality.samples();
+        let (samples, refine) = match stage {
+            Stage::Moving => (1, 1),
+            Stage::First => (1, FIRST_EDGE_SAMPLES),
+            Stage::Last => (samples.min(most), edges),
+        };
+        egui::ColorImage::new([width, height], scene.render(self.rect, width, height, samples, refine))
     }
 
     /// Makes the picture, handing over each one as it is ready, unless it is no longer wanted.
     fn run(self, stop: &AtomicBool, hand_over: &mut dyn FnMut(Finished)) {
+        let started = std::time::Instant::now();
         let wood = self.wood.clone().or_else(|| {
             self.wood_for.0.map(|m| {
                 let (_, a, b) = MATERIALS[m.min(MATERIALS.len() - 1)];
@@ -219,34 +244,35 @@ impl Order {
             Source::Ready(b) => b.clone(),
             Source::Small(g) => Arc::new(Baked::quick(g, top, thick, w, h)),
             Source::Whole(whole) => {
-                let grid = match whole.as_ref() {
-                    WholeSource::Carved(s) => &s.grid,
-                    WholeSource::Grid(g) => g,
+                let baked = match whole.as_ref() {
+                    WholeSource::Carved(s) => Baked::new(&s.grid, Some(s), top, thick, w, h),
+                    WholeSource::Grid(g) => Baked::new(g, None, top, thick, w, h),
                 };
-                // Something to look at while the whole of it is made.
-                if self.key.fine {
-                    let small = Arc::new(Baked::quick(grid, top, thick, w, h));
-                    let picture = self.draw(&small, wood.as_deref(), false, stop);
-                    if stop.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    let mut baked_for = self.baked_for;
-                    baked_for.4 = true;
-                    hand_over(Finished { key: ImageKey { fine: false, ..self.key.clone() }, baked_for, baked: small, wood_for: self.wood_for, wood: wood.clone(), picture });
-                }
-                let carved = match whole.as_ref() {
-                    WholeSource::Carved(s) => Some(s),
-                    WholeSource::Grid(_) => None,
-                };
-                Arc::new(Baked::new(grid, carved, top, thick, w, h))
+                Arc::new(baked)
             }
         };
         if stop.load(Ordering::Relaxed) {
             return;
         }
-        let picture = self.draw(&baked, wood.as_deref(), self.key.fine, stop);
+        if !self.key.fine {
+            let picture = self.draw(&baked, wood.as_deref(), Stage::Moving, stop);
+            if !stop.load(Ordering::Relaxed) {
+                hand_over(Finished { key: self.key.clone(), baked_for: self.baked_for, baked, wood_for: self.wood_for, wood, picture, seconds: started.elapsed().as_secs_f32() });
+            }
+            return;
+        }
+        // Something good to look at right away; the rest of the time only cleans it up.
+        if self.key.quality != Quality3d::Light {
+            let picture = self.draw(&baked, wood.as_deref(), Stage::First, stop);
+            if stop.load(Ordering::Relaxed) {
+                return;
+            }
+            let key = ImageKey { fine: false, ..self.key.clone() };
+            hand_over(Finished { key, baked_for: self.baked_for, baked: baked.clone(), wood_for: self.wood_for, wood: wood.clone(), picture, seconds: started.elapsed().as_secs_f32() });
+        }
+        let picture = self.draw(&baked, wood.as_deref(), Stage::Last, stop);
         if !stop.load(Ordering::Relaxed) {
-            hand_over(Finished { key: self.key, baked_for: self.baked_for, baked, wood_for: self.wood_for, wood, picture });
+            hand_over(Finished { key: self.key, baked_for: self.baked_for, baked, wood_for: self.wood_for, wood, picture, seconds: started.elapsed().as_secs_f32() });
         }
     }
 }
@@ -804,7 +830,8 @@ impl Scene<'_> {
     }
 }
 
-/// Spots per side of a pixel on edges, in the sharp picture.
+/// Spots per side of a pixel on edges, in the sharpest picture.
+#[cfg(test)]
 const EDGE_SAMPLES: usize = 6;
 
 /// Picture size and samples per pixel: quick while things move, sharp once they stop.
@@ -850,7 +877,7 @@ impl App {
         let top = model.map_or(0.0, |g| self.doc.machine.model_top(self.doc.job.thickness, g.max() as f64) as f32);
         // While the tool is moving there's a new surface at every frame: a smaller one will do.
         let small = self.anim.playing && carved;
-        ((self.surface_rev, key.size, carved, top.to_bits(), small), top)
+        ((self.surface_rev, key.size, carved, top.to_bits(), small, key.quality == Quality3d::Light), top)
     }
 
     /// Everything a picture needs, with the surface and wood kept if they haven't changed.
@@ -863,6 +890,7 @@ impl App {
             Some(c) => Source::Ready(c.baked.clone()),
             None => match (&self.sim, &self.model) {
                 (Some(s), _) if baked_for.4 => Source::Small(s.grid.clone()),
+                (Some(s), _) if baked_for.5 => Source::Whole(Box::new(WholeSource::Grid(s.grid.clone()))),
                 (Some(s), _) => Source::Whole(Box::new(WholeSource::Carved(s.clone()))),
                 (None, Some(g)) => Source::Whole(Box::new(WholeSource::Grid(g.clone()))),
                 (None, None) => Source::Whole(Box::new(WholeSource::Grid(Grid::new(job.width, job.height, 16, 0.0)))),
@@ -891,6 +919,13 @@ impl App {
     }
 
     fn keep_picture(&mut self, ctx: &egui::Context, done: Finished) {
+        if done.key.fine {
+            self.picture_seconds = Some(done.seconds);
+            if let Some(started) = self.preview_started.filter(|_| !self.anim.playing) {
+                self.preview_seconds = Some(started.elapsed().as_secs_f32());
+                self.preview_started = None;
+            }
+        }
         let old = self.mesh.take();
         let texture = match old {
             Some(mut c) => {
@@ -956,8 +991,15 @@ impl App {
                 return;
             }
         }
+        let cutting = self.anim.playing && self.surface_in_background;
+        if cutting && self.next_cut_picture.is_some_and(|t| std::time::Instant::now() < t) {
+            return;
+        }
         self.surface_job = None;
+        let before = std::time::Instant::now();
         let order = self.order(proj, rect, key.clone());
+        // Copying a big carve is done on the window's time, so it may only take a share of it.
+        self.next_cut_picture = cutting.then(|| std::time::Instant::now() + before.elapsed() * 4);
         let stop = Arc::new(AtomicBool::new(false));
         if !self.surface_in_background {
             let mut last = None;
@@ -976,7 +1018,7 @@ impl App {
             });
             repaint.request_repaint();
         });
-        self.surface_job = Some(SurfaceJob { key, stop, pictures });
+        self.surface_job = Some(SurfaceJob { started: std::time::Instant::now(), key, stop, pictures });
     }
 
     fn gradient_background(painter: &egui::Painter, rect: Rect) {
@@ -992,6 +1034,25 @@ impl App {
         }
         mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
         painter.add(Shape::mesh(Arc::new(mesh)));
+    }
+
+    /// What the picture must show now.
+    fn image_key(&self, rect: Rect, pixels_per_point: f32, fine: bool) -> ImageKey {
+        let job = &self.doc.job;
+        ImageKey {
+            rev: self.surface_rev,
+            cam: self.cam,
+            rect,
+            pixels_per_point,
+            size: [job.width, job.height, job.thickness],
+            material: self.shown_material(),
+            solid: job.solid,
+            machined: self.machined,
+            fill: self.global_fill,
+            colours: self.doc.toolpaths.iter().map(|t| t.color).collect(),
+            fine,
+            quality: self.quality3d,
+        }
     }
 
     pub fn view_3d(&mut self, ui: &mut egui::Ui, rect: Rect) {
@@ -1023,34 +1084,22 @@ impl App {
                 let removed = self.sim.as_mut().is_some_and(|sim| sim.remove_waste(at[0], at[1]));
                 if removed {
                     self.bump_surface();
-                    self.status = "Removed the loose piece".into();
+                    self.status = crate::i18n::tr("Removed the loose piece").into();
                 } else {
-                    self.status = "Only pieces that are cut free can be removed.".into();
+                    self.status = crate::i18n::tr("Only pieces that are cut free can be removed.").into();
                 }
             }
         }
 
         // Quick while the view moves or the tool cuts, then one sharp picture.
         let moving = response.dragged() || ui.input(|i| i.smooth_scroll_delta != egui::Vec2::ZERO) || self.anim.playing;
-        let key = ImageKey {
-            rev: self.surface_rev,
-            cam: self.cam,
-            rect,
-            pixels_per_point: ui.ctx().pixels_per_point(),
-            size: [job.width, job.height, job.thickness],
-            material: self.shown_material(),
-            solid: job.solid,
-            machined: self.machined,
-            fill: self.global_fill,
-            colours: self.doc.toolpaths.iter().map(|t| t.color).collect(),
-            fine: !moving,
-        };
+        let key = self.image_key(rect, ui.ctx().pixels_per_point(), !moving);
         self.poll_surface(ui.ctx());
         if self.mesh.as_ref().is_none_or(|m| m.key != key) {
             // Only the view moved, and there's a surface: a quick picture at once. All else takes
             // its time away from the window, which goes on showing the last picture meanwhile.
             let (wanted, _) = self.wanted_baked(&key);
-            let same_surface = self.mesh.as_ref().is_some_and(|m| m.baked_for.0 == wanted.0 && m.baked_for.1 == wanted.1 && m.baked_for.2 == wanted.2 && m.baked_for.3 == wanted.3);
+            let same_surface = self.mesh.as_ref().is_some_and(|m| m.baked_for.0 == wanted.0 && m.baked_for.1 == wanted.1 && m.baked_for.2 == wanted.2 && m.baked_for.3 == wanted.3 && m.baked_for.5 == wanted.5);
             if moving && !self.anim.playing && same_surface && self.surface_in_background {
                 self.quick_picture(ui.ctx(), &proj, rect, key);
             } else {
@@ -1066,6 +1115,11 @@ impl App {
         if let Some(cache) = &self.mesh {
             let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
             painter.image(cache.texture.id(), rect, whole, Color32::WHITE);
+        }
+        // Saying so once it's been a moment, so a slow computer doesn't look stuck.
+        if let Some(job) = self.surface_job.as_ref().filter(|j| j.key.fine && !self.anim.playing && j.started.elapsed().as_secs_f32() > 0.5) {
+            let seconds = job.started.elapsed().as_secs_f32() as u32;
+            painter.text(rect.left_bottom() + vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, tf!("Sharpening the picture... {seconds} s"), egui::FontId::proportional(12.0), crate::theme::MUTED);
         }
 
         // The grid lies on the top of the material.
@@ -1093,8 +1147,9 @@ impl App {
                 let mut line: Vec<Pos2> = Vec::new();
                 let mut fast = false;
                 let mut last: Option<Pos2> = None;
+                let draw_rapids = self.draw_rapids;
                 let flush = |points: &mut Vec<Pos2>, fast: bool| {
-                    if points.len() >= 2 {
+                    if points.len() >= 2 && (draw_rapids || !fast) {
                         let colour = if fast { crate::theme::RAPID } else { crate::theme::CUT };
                         painter.add(Shape::line(std::mem::take(points), Stroke::new(1.0, colour)));
                     } else {
@@ -1145,11 +1200,11 @@ impl App {
         // View direction buttons, top right.
         use crate::icons::Icon;
         let buttons = [
-            (Icon::ViewFit, "Fit view", None),
-            (Icon::ViewIso, "Angled view", Some(Camera::iso())),
-            (Icon::ViewZ, "View from above", Some(Camera::look(0.0, 0.0))),
-            (Icon::ViewX, "View along X", Some(Camera::look(-90.0, 85.0))),
-            (Icon::ViewY, "View along Y", Some(Camera::look(0.0, 85.0))),
+            (Icon::ViewFit, crate::i18n::tr("Fit view"), None),
+            (Icon::ViewIso, crate::i18n::tr("Angled view"), Some(Camera::iso())),
+            (Icon::ViewZ, crate::i18n::tr("View from above"), Some(Camera::look(0.0, 0.0))),
+            (Icon::ViewX, crate::i18n::tr("View along X"), Some(Camera::look(-90.0, 85.0))),
+            (Icon::ViewY, crate::i18n::tr("View along Y"), Some(Camera::look(0.0, 85.0))),
         ];
         for (i, (icon, tip, cam)) in buttons.into_iter().enumerate() {
             let r = Rect::from_min_size(rect.right_top() + vec2(-133.0 + i as f32 * 25.0, 6.0), vec2(24.0, 24.0));
@@ -1358,6 +1413,53 @@ mod tests {
         assert_eq!(samples, 1, "zoomed in, one look per pixel is enough away from edges");
         let (w, h, _) = picture_size(VIEW, 2.0, 35.0, 0.01, true, MOST_QUICK_PIXELS);
         assert_eq!((w, h), (1400, 1400), "follows the screen's real pixels");
+    }
+
+    /// A carve of the sample project.
+    fn carved_sample() -> App {
+        let mut a = App::default();
+        a.load_sample();
+        let all: Vec<usize> = (0..a.doc.toolpaths.len()).collect();
+        a.preview(all);
+        a.message = None;
+        a.finish_preview();
+        a
+    }
+
+    #[test]
+    fn a_good_picture_comes_first_unless_the_light_one_is_all_there_is() {
+        let mut a = carved_sample();
+        let job = a.doc.job.clone();
+        let proj = Projection::new(a.cam, VIEW, job.width, job.height);
+        let handed = |a: &App| {
+            let mut stages = Vec::new();
+            let mut surfaces = 0;
+            a.order(&proj, VIEW, a.image_key(VIEW, 1.0, true)).run(&AtomicBool::new(false), &mut |done| {
+                stages.push(done.key.fine);
+                surfaces += usize::from(done.baked.cuts.is_some());
+                assert_eq!((done.picture.size[0], done.picture.size[1]), (VIEW.width() as usize, VIEW.height() as usize), "never the small picture");
+            });
+            (stages, surfaces)
+        };
+        for q in [Quality3d::Balanced, Quality3d::Sharp] {
+            a.quality3d = q;
+            assert_eq!(handed(&a), (vec![false, true], 2), "{q:?}");
+        }
+        a.quality3d = Quality3d::Light;
+        assert_eq!(handed(&a), (vec![true], 0), "the light picture needs nothing more than the grid");
+    }
+
+    #[test]
+    fn the_quality_decides_how_much_each_picture_looks_at() {
+        assert_eq!(Quality3d::Sharp.samples(), (3, EDGE_SAMPLES), "sharp is the picture there was before");
+        assert!(Quality3d::Light.samples().0 == 1 && Quality3d::Balanced.samples().1 < EDGE_SAMPLES);
+        let mut a = App::default();
+        a.load_sample();
+        a.doc.toolpaths[0].op.tool.dia = 0.001;
+        for (q, most) in [(Quality3d::Light, 4_000_000), (Quality3d::Balanced, 8_000_000), (Quality3d::Sharp, 16_000_000)] {
+            a.quality3d = q;
+            assert_eq!(a.sim_points(), most);
+        }
     }
 
     #[test]

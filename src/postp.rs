@@ -114,6 +114,11 @@ const SETTINGS_WITHOUT_EFFECT: [&str; 6] = [
 ];
 
 impl PostDef {
+    /// Without this section, a second tool in the same file would never be asked for.
+    pub fn can_change_tool(&self) -> bool {
+        self.blocks.contains_key("TOOLCHANGE")
+    }
+
     /// Whether the file says how to write arcs both ways round, and how to write their centres:
     /// an arc without a proper centre would send the machine somewhere else entirely.
     pub fn can_write_arcs(&self) -> bool {
@@ -153,9 +158,9 @@ impl PostDef {
         });
         if let Some(name) = base_name {
             if depth >= 5 {
-                return Err("It builds on too many other files in a row.".into());
+                return Err(crate::i18n::tr("It builds on too many other files in a row.").into());
             }
-            let base_text = base_loader(&name).ok_or_else(|| format!("It builds on \"{name}\", which isn't next to it."))?;
+            let base_text = base_loader(&name).ok_or_else(|| tf!("It builds on \"{name}\", which isn't next to it."))?;
             def = Self::parse_inner(&base_text, base_loader, depth + 1)?;
             def.name = String::new();
         }
@@ -210,7 +215,7 @@ impl PostDef {
                 "LINE_NUMBER_MAXIMUM" => def.line_max = value.trim().parse().unwrap_or(999_999.0),
                 "POST_BASE" => {}
                 "RAPID_PLUNGE_TO_STARTZ" => def.rapid_plunge = !value.trim().eq_ignore_ascii_case("NO"),
-                k if SETTINGS_WITHOUT_EFFECT.contains(&k) => def.notes.push(format!("{k} is not applied.")),
+                k if SETTINGS_WITHOUT_EFFECT.contains(&k) => def.notes.push(tf!("{k} is not applied.")),
                 _ => {}
             }
         }
@@ -219,11 +224,11 @@ impl PostDef {
         }
         if depth == 0 {
             if def.name.trim().is_empty() {
-                return Err("It has no POST_NAME, so it isn't a post processor.".into());
+                return Err(crate::i18n::tr("It has no POST_NAME, so it isn't a post processor.").into());
             }
             let has_rapid = ["INITIAL_RAPID_MOVE", "FIRST_RAPID_MOVE", "RAPID_MOVE"].iter().any(|b| def.blocks.contains_key(*b));
             if !has_rapid || !(def.blocks.contains_key("FEED_MOVE") || def.blocks.contains_key("FIRST_FEED_MOVE")) {
-                return Err("It has no blocks for fast moves and cutting moves.".into());
+                return Err(crate::i18n::tr("It has no blocks for fast moves and cutting moves.").into());
             }
             def.note_unknown_fields();
             def.notes.sort();
@@ -247,13 +252,13 @@ impl PostDef {
             }
         }
         for t in unknown {
-            self.notes.push(format!("[{t}] is left blank."));
+            self.notes.push(tf!("[{t}] is left blank."));
         }
     }
 
     /// Reads a post processor file, and any file it builds on from the same folder.
     pub fn load(path: &Path) -> Result<PostDef, String> {
-        let bytes = std::fs::read(path).map_err(|e| format!("Could not read it: {e}"))?;
+        let bytes = std::fs::read(path).map_err(|e| tf!("Could not read it: {e}"))?;
         let dir = path.parent().map(Path::to_path_buf);
         let loader = move |name: &str| -> Option<String> {
             let dir = dir.as_ref()?;

@@ -1,5 +1,10 @@
+// A released Windows program opens its own window only, with no console behind it.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 //! Burin: a desktop program for designing and carving with a CNC machine.
 
+#[macro_use]
+mod i18n;
 mod app;
 mod arcs;
 mod bitmap;
@@ -10,13 +15,19 @@ mod crv3d;
 mod distort;
 mod edit;
 mod geom;
+mod fr;
 mod icons;
+mod keys;
+mod menus;
+mod merge;
 mod opdialogs;
 mod panels;
+mod pieces;
 mod recalc;
 mod planetcnc;
 mod postp;
 mod snap;
+mod startup;
 mod svg;
 mod theme;
 mod relief;
@@ -30,6 +41,9 @@ mod ui_tests;
 use app::App;
 use std::path::PathBuf;
 
+/// Once the window has been drawn, trying another way of drawing it no longer helps.
+static SHOWING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 struct Program {
     app: App,
     screenshot: Option<PathBuf>,
@@ -40,6 +54,9 @@ struct Program {
 
 impl eframe::App for Program {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if !SHOWING.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            startup::log("The window is showing.");
+        }
         let ctx = ui.ctx().clone();
         fit_scale(&ctx);
         self.app.frame(ui);
@@ -91,6 +108,47 @@ fn write_png(path: &std::path::Path, image: &egui::ColorImage) -> Result<(), Str
     let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
     let bytes: Vec<u8> = image.pixels.iter().flat_map(|c| [c.r(), c.g(), c.b(), 255]).collect();
     writer.write_image_data(&bytes).map_err(|e| e.to_string())
+}
+
+/// A square part held by tabs, cut with a 6 mm tool, with one tab in the middle of the job.
+fn tab_demo(app: &mut App, tab_length: f64) {
+    use toolpath::{blank_op, default_tools, generate, JobSize, OpKind, Side};
+    app.load_sample();
+    app.doc = app::Doc::default();
+    app.doc.set_units(app::Units::Mm);
+    let job = &mut app.doc.job;
+    (job.width, job.height, job.thickness) = (240.0, 240.0, 12.0);
+    let size = JobSize { width: 240.0, height: 240.0, thickness: 12.0 };
+    let machine = app.doc.machine_on_job();
+    let mut tool = default_tools().into_iter().find(|t| t.metric && t.kind == relief::ToolKind::EndMill).expect("an end mill in millimetres");
+    tool.name = "End Mill (6 mm)".into();
+    (tool.dia, tool.pass_depth) = (6.0, 6.0);
+    let op_at = |c: [f64; 2]| {
+        let mut op = blank_op(OpKind::Profile, "Part with tabs".into(), tool.clone(), 12.0, vec![geom::Path::closed(geom::rect(c, 80.0, 80.0, 0.0))]);
+        op.side = Side::Outside;
+        op.tabs = true;
+        op.tab_length = tab_length;
+        op.tab_thickness = 3.0;
+        op.tab_count = 4;
+        op
+    };
+    // Where the first tab falls, to move the part so it's in the middle.
+    let first = generate(&op_at([120.0, 120.0]), machine, &size, None).expect("the demo's toolpath");
+    let raised: Vec<[f64; 3]> = first.iter().filter(|m| !m.rapid && (m.p[2] + 9.0).abs() < 1e-9).map(|m| m.p).collect();
+    let end = raised.iter().position(|p| (p[0] - raised[0][0]).hypot(p[1] - raised[0][1]) > 30.0).unwrap_or(raised.len());
+    let (a, b) = (raised[0], raised[end - 1]);
+    let centre = [240.0 - (a[0] + b[0]) / 2.0, 240.0 - (a[1] + b[1]) / 2.0];
+    let op = op_at(centre);
+    let moves = generate(&op, machine, &size, None).expect("the demo's toolpath");
+    app.keep_calculated(vec![(op, std::sync::Arc::new(moves))], None);
+    app.message = None;
+    app.view3d = true;
+    app.preview(vec![0]);
+    app.message = None;
+    app.finish_preview();
+    app.doc.toolpaths[0].visible = false;
+    app.right_open = false;
+    app.cam = view3d::Camera { yaw: 25f32.to_radians(), tilt: 35f32.to_radians(), zoom: 12.0, pan: egui::Vec2::ZERO };
 }
 
 /// Opens one of the known screens, for checking the look against the pictures.
@@ -560,12 +618,83 @@ fn open_state(app: &mut App, state: &str) {
                 _ => app.left = LeftForm::Draw(DrawForm::new(DrawKind::Polyline, &app.doc.job)),
             }
         }
+        "unsaved" => {
+            app.load_sample();
+            app.dirty = true;
+            app.leave_for(app::Leave::New);
+        }
         "model" => {
             app.load_sample();
             app.right_open = true;
             app.right = RightMode::List;
             app.view3d = true;
         }
+        // A shape selected for moving beside one selected for resizing can't be shown at once: this is the second.
+        "handles" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            app.screen = app::Screen::Work;
+            let id = app.doc.add_vector(vec![geom::Path::closed(geom::rect([4.0, 5.0], 4.0, 3.0, 0.2))], Prim::Rect { c: [4.0, 5.0], w: 4.0, h: 3.0, corner: 0.2 });
+            app.selected = vec![id];
+            app.handles_on = Some(vec![id]);
+        }
+        "material-changed" => {
+            app.load_sample();
+            app.view3d = false;
+            app.right = RightMode::List;
+            app.ask_recalc = true;
+        }
+        // A piece with one of its shapes selected, on a layer with a long name.
+        "piece" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            app.screen = app::Screen::Work;
+            app.doc.layers[0].name = "vue_du_solide_percages_et_decoupe".into();
+            let plate = app.doc.add_vector(vec![geom::Path::closed(geom::rect([3.2, 6.0], 4.0, 3.0, 0.2))], Prim::Rect { c: [3.2, 6.0], w: 4.0, h: 3.0, corner: 0.2 });
+            let mut holes = Vec::new();
+            for c in [[2.0, 5.2], [4.4, 5.2], [2.0, 6.8], [4.4, 6.8]] {
+                holes.push(app.doc.add_vector(vec![geom::Path::closed(geom::circle(c, 0.2))], Prim::Circle { c, r: 0.2 }));
+            }
+            let c = [7.5, 3.0];
+            app.doc.add_vector(vec![geom::Path::closed(geom::circle(c, 1.0))], Prim::Circle { c, r: 1.0 });
+            app.selected = holes.iter().copied().chain([plate]).collect();
+            app.make_piece();
+            app.selected = vec![holes[1]];
+        }
+        // The list of pieces beside a piece that's cut, and the form to save it alone.
+        "pieces" | "savepiece" => {
+            open_state(app, "piece");
+            app.selected = app.doc.pieces()[0].shapes.iter().copied().skip(1).collect();
+            app.start_op(toolpath::OpKind::Drill);
+            app.calculate_op();
+            app.view3d = false;
+            app.left_tab = app::LeftTab::Layers;
+            app.right = if state == "savepiece" { app::RightMode::Save } else { app::RightMode::List };
+            app.right_open = true;
+            app.save_piece = (state == "savepiece").then(|| app.doc.pieces()[0].id);
+            app.selected.clear();
+        }
+        // The sample's shapes in a group, selected.
+        "preferences" => {
+            app.load_sample();
+            app.view3d = false;
+            app.prefs_open = true;
+        }
+        "merge" => {
+            app.load_sample();
+            app.view3d = false;
+            app.open_merge_form();
+        }
+        "grouped" => {
+            app.load_sample();
+            app.selected = app.doc.vectors.iter().take(2).map(|v| v.id).collect();
+            app.group_selected();
+            app.view3d = false;
+            app.right = RightMode::List;
+        }
+        // A 6 mm tab with a 6 mm tool, and the same tool stopping only 6 mm apart as it used to.
+        "tabs" => tab_demo(app, 6.0),
+        "tabs-before" => tab_demo(app, 0.001),
         "carved" => {
             app.load_sample();
             app.right_open = true;
@@ -604,21 +733,51 @@ fn demo_picture() -> bitmap::Image {
     bitmap::Image { w, h, rgba: std::sync::Arc::new(rgba) }
 }
 
-fn main() -> eframe::Result {
+fn icon() -> egui::IconData {
+    let picture = image::load_from_memory(include_bytes!("../release/burin.png")).expect("the icon is part of the program").into_rgba8();
+    egui::IconData { width: picture.width(), height: picture.height(), rgba: picture.into_raw() }
+}
+
+fn main() {
     let mut screenshot = None;
     let mut state = None;
+    let mut asked = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--screenshot" => screenshot = args.next().map(PathBuf::from),
             "--open" => state = args.next(),
+            "--renderer" => asked = args.next(),
             _ => {}
         }
     }
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("Burin").with_inner_size([1910.0, 1040.0]).with_min_inner_size([900.0, 600.0]),
+    startup::begin_log();
+    startup::log_panics();
+    let mut reasons = Vec::new();
+    for engine in startup::attempts(asked.as_deref()) {
+        startup::log(&format!("Trying: {}", engine.word()));
+        let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| open_window(engine, screenshot.clone(), state.clone())));
+        let reason = match opened {
+            Ok(Ok(())) => return,
+            Ok(Err(e)) => e.to_string(),
+            Err(crash) => startup::panic_text(crash.as_ref()),
+        };
+        let line = format!("{}: {reason}", engine.word());
+        startup::log(&line);
+        reasons.push(line);
+        if SHOWING.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
+    }
+    startup::show_failure(&startup::failure_text(SHOWING.load(std::sync::atomic::Ordering::Relaxed), &reasons));
+    std::process::exit(1);
+}
+
+fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Option<String>) -> eframe::Result {
+    let options = engine.options(eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_title("Burin").with_icon(icon()).with_inner_size([1910.0, 1040.0]).with_min_inner_size([900.0, 600.0]),
         ..Default::default()
-    };
+    });
     eframe::run_native(
         "Burin",
         options,

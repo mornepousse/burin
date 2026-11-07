@@ -1237,7 +1237,7 @@ fn a_shape_moved_keeps_its_place_in_the_form_and_a_reshaped_one_is_not_trusted()
 }
 
 #[test]
-fn toolpaths_follow_a_shape_edited_this_way() {
+fn toolpaths_wait_for_recalculate_when_a_shape_is_edited_this_way() {
     let (mut h, id) = job_with_shape(Prim::Circle { c: [5.0, 5.0], r: 1.0 });
     h.state_mut().start_op(crate::toolpath::OpKind::Drill);
     h.state_mut().calculate_op();
@@ -1250,9 +1250,13 @@ fn toolpaths_follow_a_shape_edited_this_way() {
     }
     h.run();
     click(&mut h, "Apply");
-    let a = h.state();
-    assert!(a.doc.toolpaths[0].moves.iter().any(|m| !m.rapid && (m.p[0] - 7.0).abs() < 1e-6 && (m.p[1] - 7.0).abs() < 1e-6), "the drill moved with the circle");
-    assert!(a.status.contains("recalculated 1"), "{}", a.status);
+    let drilled = |h: &Harness<'static, App>| h.state().doc.toolpaths[0].moves.iter().any(|m| !m.rapid && (m.p[0] - 7.0).abs() < 1e-6 && (m.p[1] - 7.0).abs() < 1e-6);
+    assert!(!drilled(&h), "nothing is worked out on its own");
+    assert_eq!(h.state().behind, [0], "it's noted as out of date");
+    h.state_mut().recalculate_all();
+    h.run();
+    assert!(drilled(&h), "the drill moved with the circle");
+    assert!(h.state().behind.is_empty());
 }
 
 #[test]
@@ -1682,7 +1686,7 @@ fn its_moves_stay_exact_through_saving_until_the_toolpath_is_calculated_here() {
             q[0] += 5.0;
         }
     }
-    assert_eq!(b.relink_toolpaths(), 1);
+    b.recalculate_all();
     assert!(b.doc.toolpaths[0].kept_moves.is_none() && b.doc.toolpaths[0].kept_steps.is_none());
 }
 
@@ -1906,7 +1910,7 @@ fn cut_right_edge(h: &Harness<'static, App>) -> f64 {
 }
 
 #[test]
-fn a_toolpath_follows_a_shape_dragged_somewhere_else() {
+fn a_toolpath_stays_as_it_is_when_its_shape_is_dragged_until_recalculate() {
     let mut h = square_with_profile();
     let before = cut_right_edge(&h);
     let (from, to) = {
@@ -1919,11 +1923,15 @@ fn a_toolpath_follows_a_shape_dragged_somewhere_else() {
     h.run();
     h.hover_at(to);
     h.run();
-    assert_eq!(cut_right_edge(&h), before, "not while the shape is still being dragged");
     h.drop_at(to);
     h.run();
+    assert_eq!(cut_right_edge(&h), before, "moving a shape doesn't recalculate");
+    assert_eq!(h.state().behind, [0]);
+    assert!(h.state().status.contains("no longer match"), "{}", h.state().status);
+    click(&mut h, "Recalculate all toolpaths");
     assert!((cut_right_edge(&h) - before - 2.0).abs() < 0.03, "{before} then {}", cut_right_edge(&h));
     assert!(h.state().status.contains("Recalculated 1"), "{}", h.state().status);
+    assert!(h.state().behind.is_empty());
     // Undo brings the path back with the shape.
     h.state_mut().do_undo();
     h.run();
@@ -1931,7 +1939,7 @@ fn a_toolpath_follows_a_shape_dragged_somewhere_else() {
 }
 
 #[test]
-fn a_toolpath_follows_any_other_change_of_its_shape() {
+fn a_toolpath_stays_as_it_is_after_any_other_change_of_its_shape() {
     let mut h = square_with_profile();
     let before = cut_right_edge(&h);
     // Changed from anywhere, not through a form the toolpaths are told about.
@@ -1939,6 +1947,9 @@ fn a_toolpath_follows_any_other_change_of_its_shape() {
         q[0] += 1.0;
     }
     h.run();
+    assert_eq!(cut_right_edge(&h), before);
+    assert_eq!(h.state().behind, [0]);
+    click(&mut h, "Recalculate all toolpaths");
     assert!((cut_right_edge(&h) - before - 1.0).abs() < 0.03);
 }
 
@@ -1955,7 +1966,7 @@ fn recalculating_says_what_it_did_and_clears_the_old_carving() {
 }
 
 #[test]
-fn a_drawing_change_clears_a_carving_made_from_the_old_moves() {
+fn a_carving_stays_until_its_toolpaths_are_recalculated() {
     let mut h = square_with_profile();
     h.state_mut().preview(vec![0]);
     h.state_mut().anim.playing = false;
@@ -1964,6 +1975,9 @@ fn a_drawing_change_clears_a_carving_made_from_the_old_moves() {
     for q in h.state_mut().doc.vectors[0].paths.iter_mut().flat_map(|p| p.pts.iter_mut()) {
         q[1] += 1.0;
     }
+    h.run();
+    assert!(h.state().sim.is_some(), "its toolpath hasn't changed");
+    h.state_mut().recalculate_all();
     h.run();
     assert!(h.state().sim.is_none());
 }
@@ -1987,7 +2001,7 @@ fn a_toolpath_from_a_project_file_follows_its_shape_and_keeps_its_settings() {
     a.doc.toolpaths[0].op.climb = false;
     let saved = a.doc.toolpaths[0].moves.clone();
     // Nothing changed: its moves stay exactly as they came, even when asked to recalculate.
-    a.follow_shapes();
+    a.recalculate_all();
     a.recalculate_all();
     assert!(std::sync::Arc::ptr_eq(&saved, &a.doc.toolpaths[0].moves) || saved == a.doc.toolpaths[0].moves);
     assert!(a.status.contains("kept as saved"), "{}", a.status);
@@ -1995,7 +2009,7 @@ fn a_toolpath_from_a_project_file_follows_its_shape_and_keeps_its_settings() {
     for q in a.doc.vectors.iter_mut().filter(|v| v.id == id).flat_map(|v| v.paths.iter_mut()).flat_map(|p| p.pts.iter_mut()) {
         q[0] += 5.0;
     }
-    a.follow_shapes();
+    a.recalculate_all();
     let t = &a.doc.toolpaths[0];
     assert!(t.kept_moves.is_none(), "worked out again");
     assert_ne!(saved, t.moves);
@@ -2010,7 +2024,7 @@ fn a_toolpath_that_cannot_follow_says_so_when_recalculated() {
     for q in a.doc.vectors.iter_mut().flat_map(|v| v.paths.iter_mut()).flat_map(|p| p.pts.iter_mut()) {
         q[0] += 5.0;
     }
-    a.follow_shapes();
+    a.recalculate_all();
     a.recalculate_all();
     assert_eq!(saved, a.doc.toolpaths[0].moves, "kept, not silently emptied");
     assert!(a.status.contains("can't follow"), "{}", a.status);
@@ -2084,6 +2098,23 @@ fn the_arrow_keys_move_the_selection_further_with_modifiers() {
 }
 
 #[test]
+fn ctrl_and_shift_with_an_arrow_move_a_fixed_distance() {
+    use egui::{Key, Modifiers};
+    let both = Modifiers::COMMAND | Modifiers::SHIFT;
+    let mut h = job_with_square([5.0, 5.0]);
+    let x = square_left(&h);
+    h.key_press_modifiers(both, Key::ArrowRight);
+    h.run();
+    assert!((square_left(&h) - x - 0.125).abs() < 1e-9, "in inches");
+    h.state_mut().doc.set_units(Units::Mm);
+    h.run();
+    let x = square_left(&h);
+    h.key_press_modifiers(both, Key::ArrowRight);
+    h.run();
+    assert!((square_left(&h) - x - 0.1).abs() < 1e-9, "in millimetres");
+}
+
+#[test]
 fn an_arrow_step_is_a_round_number_in_millimetres() {
     let mut h = job_with_square([5.0, 5.0]);
     h.state_mut().doc.set_units(Units::Mm);
@@ -2117,7 +2148,7 @@ fn arrows_need_a_selection_and_leave_typing_alone() {
 }
 
 #[test]
-fn holding_an_arrow_is_one_undo_and_the_toolpath_waits_for_the_end() {
+fn holding_an_arrow_is_one_undo_and_the_toolpath_stays() {
     use egui::{Event, Key, Modifiers};
     let (mut h, _) = profile_of_square();
     let (x, cut, steps) = (square_left(&h), cut_right_edge(&h), h.state().undo.len());
@@ -2130,9 +2161,11 @@ fn holding_an_arrow_is_one_undo_and_the_toolpath_waits_for_the_end() {
     }
     assert!((square_left(&h) - x - 0.25).abs() < 1e-9, "five steps");
     assert_eq!(cut_right_edge(&h), cut, "not while the key is held");
+    assert!(h.state().behind.is_empty(), "nor is it even looked at yet");
     h.event(Event::Key { key: Key::ArrowRight, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE });
     h.run();
-    assert!((cut_right_edge(&h) - cut - 0.25).abs() < 0.03, "follows on release: {}", cut_right_edge(&h) - cut);
+    assert_eq!(cut_right_edge(&h), cut, "nor on release");
+    assert_eq!(h.state().behind, [0]);
     assert_eq!(h.state().undo.len(), steps + 1);
     h.state_mut().do_undo();
     h.run();
@@ -2280,17 +2313,14 @@ fn toolpaths_are_worked_out_away_from_the_window_with_the_same_result() {
         q[0] += 1.0;
     }
     h.step();
-    assert!(h.state().recalc.is_some(), "the shape's change starts the work");
-    wait_for_recalc(&mut h);
-    assert!((cut_right_edge(&h) - cut - 1.0).abs() < 0.03);
-    assert!(h.state().status.contains("Recalculated 1"), "{}", h.state().status);
-    assert_eq!(h.state().doc.toolpaths[0].op.source, [id]);
-    // The button too.
+    assert!(h.state().recalc.is_none(), "the shape's change starts nothing");
     h.get_by_label("Recalculate all toolpaths").click();
     h.step();
     h.step();
-    assert!(h.state().recalc.is_some());
+    assert!(h.state().recalc.is_some(), "the button does");
     wait_for_recalc(&mut h);
+    assert!((cut_right_edge(&h) - cut - 1.0).abs() < 0.03);
+    assert_eq!(h.state().doc.toolpaths[0].op.source, [id]);
     assert!(h.state().status.contains("Recalculated 1 toolpath"), "{}", h.state().status);
     // And the form's Calculate, ending in the preview as it should.
     h.state_mut().selected_tp = Some(0);
@@ -2328,7 +2358,7 @@ fn a_bar_shows_how_far_it_has_gone_and_nothing_else_can_be_touched() {
     let (mut h, _) = profile_of_square();
     let op = h.state().doc.toolpaths[0].op.clone();
     let x = square_left(&h);
-    let send = hold_recalc(&mut h, Finish::Follow);
+    let send = hold_recalc(&mut h, Finish::All { unchanged: 0, no_shapes: 0, warn: false });
     h.step();
     h.step();
     h.get_by_label_contains("Toolpath 1 of 3: Contour 1");
@@ -2448,11 +2478,13 @@ fn recalculating_warns_of_every_toolpath_past_the_material() {
 }
 
 #[test]
-fn a_toolpath_following_its_shape_warns_too_but_not_one_within_the_material() {
+fn recalculating_after_a_shape_changed_warns_too_but_not_within_the_material() {
     let mut h = deep_profile();
     for q in h.state_mut().doc.vectors[0].paths.iter_mut().flat_map(|p| p.pts.iter_mut()) {
         q[0] += 1.0;
     }
+    h.run();
+    h.state_mut().recalculate_all();
     h.run();
     assert!(h.state().message.as_deref().unwrap_or("").contains("Profile 1"), "{:?}", h.state().message);
     // Within the material nothing is said.
@@ -2551,7 +2583,7 @@ fn the_carve_preview_is_as_fine_as_the_smallest_tool_needs() {
     // A huge one stops at what a computer can hold.
     h.state_mut().doc.job.width = 3000.0;
     h.state_mut().doc.job.height = 2000.0;
-    assert_eq!(h.state().sim_points(), 12_000_000);
+    assert_eq!(h.state().sim_points(), crate::app::Quality3d::Balanced.most_points());
     // A small job with a big tool needs no less than the usual.
     h.state_mut().doc.job.width = 100.0;
     h.state_mut().doc.job.height = 100.0;
@@ -2720,7 +2752,7 @@ fn a_saved_ramp_keeps_its_own_kind_and_limit_when_followed() {
     for q in a.doc.vectors.iter_mut().filter(|v| v.id == id).flat_map(|v| v.paths.iter_mut()).flat_map(|p| p.pts.iter_mut()) {
         q[0] += 5.0;
     }
-    a.follow_shapes();
+    a.recalculate_all();
     assert_eq!(a.doc.toolpaths[0].op.ramp_kind, crate::toolpath::RampKind::ZigZag);
 }
 
@@ -2907,3 +2939,1499 @@ fn a_panel_section_folds_away_and_comes_back() {
     assert!(h.query_by_label("Draw circle").is_some());
 }
 
+
+#[test]
+fn leaving_unsaved_work_asks_first() {
+    use crate::app::Leave;
+    let mut h = harness();
+    click(&mut h, "Create a new file");
+    click(&mut h, "OK");
+    // A new job with nothing in it has nothing to lose.
+    h.state_mut().leave_for(Leave::New);
+    assert_eq!(h.state().leave, None);
+
+    let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle([3.0, 3.0], 1.0))], Prim::Circle { c: [3.0, 3.0], r: 1.0 });
+    h.state_mut().checkpoint();
+    assert!(h.state().has_unsaved_work());
+    h.state_mut().leave_for(Leave::New);
+    h.run();
+    assert_eq!(h.state().leave, Some(Leave::New));
+    // A form behind it may have its own: the window on top is the last one.
+    h.get_all_by_label("Cancel").last().unwrap().click();
+    h.run();
+    assert_eq!(h.state().leave, None);
+    assert!(h.state().doc.vectors.iter().any(|v| v.id == id), "cancel keeps it");
+
+    h.state_mut().leave_for(Leave::New);
+    h.run();
+    click(&mut h, "Don't Save");
+    h.run();
+    assert!(h.state().doc.vectors.is_empty(), "the person chose to drop it");
+    assert!(!h.state().has_unsaved_work());
+}
+
+#[test]
+fn a_project_saved_over_itself_is_whole_and_leaves_nothing_beside_it() {
+    let dir = std::env::temp_dir().join(format!("burin-save-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("one.burin");
+    let mut a = App::default();
+    a.load_sample();
+    a.save_to(file.clone()).unwrap();
+    a.save_to(file.clone()).unwrap();
+    let names: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert_eq!(names.len(), 1, "{names:?}");
+    let mut b = App::default();
+    b.open_path(file).unwrap();
+    assert_eq!(b.doc.vectors.len(), a.doc.vectors.len());
+    // Somewhere it can't be written is said, and the work still counts as unsaved.
+    a.dirty = true;
+    assert!(a.save_to(dir.join("missing").join("two.burin")).is_err());
+    assert!(a.dirty);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_machine_file_is_refused_when_it_would_cut_the_wrong_thing() {
+    use crate::postp::PostDef;
+    use crate::toolpath::{blank_op, default_tools, generate, JobSize, OpKind};
+    let mut a = App::default();
+    let tools = default_tools();
+    let id = a.doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle([3.0, 3.0], 1.0))], Prim::Circle { c: [3.0, 3.0], r: 1.0 });
+    let paths = a.doc.vectors[0].paths.clone();
+    let (machine, job) = (a.doc.machine_on_job(), JobSize { width: 10.0, height: 10.0, thickness: 1.0 });
+    let add = |a: &mut App, tool: crate::toolpath::Tool, name: &str| {
+        let mut op = blank_op(OpKind::Profile, name.to_string(), tool, 0.1, paths.clone());
+        op.source = vec![id];
+        let moves = generate(&op, machine, &job, None).unwrap();
+        a.keep_for_test(op, moves);
+    };
+    add(&mut a, tools[0].clone(), "First");
+    assert_eq!(a.output_problem(None), None);
+
+    // The shape moved and the toolpath didn't manage to follow.
+    let keep = a.doc.vectors[0].paths.clone();
+    a.doc.vectors[0].paths = vec![crate::geom::Path::closed(crate::geom::circle([6.0, 6.0], 1.0))];
+    assert!(a.output_problem(None).is_some_and(|m| m.contains("First")));
+    // Only the toolpath being saved counts.
+    a.doc.toolpaths[0].visible = false;
+    assert_eq!(a.output_problem(None), None);
+    a.doc.toolpaths[0].visible = true;
+    a.doc.vectors.clear();
+    assert!(a.output_problem(None).is_some_and(|m| m.contains("First")), "its shape has gone");
+    a.doc.add_vector(keep, Prim::Free);
+    let new_id = a.doc.vectors[0].id;
+    a.doc.toolpaths[0].op.source = vec![new_id];
+    assert_eq!(a.output_problem(None), None);
+
+    // Two different tools, through a post that has no way to ask for the second.
+    let other = tools.iter().find(|t| t.dia != tools[0].dia).unwrap().clone();
+    add(&mut a, other, "Second");
+    a.doc.toolpaths[1].op.source = vec![new_id];
+    let base = "POST_NAME = \"Plain (*.nc)\"\nFILE_EXTENSION = \"nc\"\nUNITS = \"INCHES\"\nVAR X_POSITION = [X|A|X|1.3]\nVAR Y_POSITION = [Y|A|Y|1.3]\nVAR Z_POSITION = [Z|A|Z|1.3]\nbegin RAPID_MOVE\n\"G0[X][Y][Z]\"\nbegin FEED_MOVE\n\"G1[X][Y][Z]\"\n";
+    a.loaded_posts.push(PostDef::parse(base, &|_| None).unwrap());
+    a.post_index = crate::toolpath::POSTS.len();
+    assert!(a.output_problem(None).is_some_and(|m| m.contains("can't change tool")));
+    assert_eq!(a.output_problem(Some(0)), None, "one at a time is fine");
+    a.loaded_posts[0] = PostDef::parse(&format!("{base}begin TOOLCHANGE\n\"M6\"\n"), &|_| None).unwrap();
+    assert_eq!(a.output_problem(None), None);
+    // The built-in formats all stop for the tool, so they're never refused for it.
+    a.post_index = 0;
+    assert_eq!(a.output_problem(None), None);
+}
+
+#[test]
+fn the_look_stays_dark_on_a_computer_set_to_light() {
+    let ctx = egui::Context::default();
+    ctx.set_theme(egui::ThemePreference::Light);
+    crate::ui::setup_style(&ctx);
+    assert_eq!(ctx.options(|o| o.theme_preference), egui::ThemePreference::Dark);
+    assert_eq!(ctx.global_style().visuals.panel_fill, crate::theme::PANEL);
+    assert!(ctx.global_style().visuals.dark_mode);
+}
+
+#[test]
+fn the_3d_quality_can_be_chosen_from_the_preview_panel() {
+    use crate::app::Quality3d;
+    let mut h = carved_square();
+    wait_for_picture(&mut h);
+    assert_eq!(h.state().quality3d, Quality3d::Balanced);
+    assert!(h.state().mesh_is_sharp());
+    assert!(h.state().picture_seconds.is_some(), "the time it took is told");
+    h.state_mut().set_quality3d(Quality3d::Light);
+    h.run();
+    wait_for_picture(&mut h);
+    assert!(h.state().mesh_is_sharp(), "the picture is made again for the new quality");
+}
+
+/// How long each tab is in the carve along the middle of the cut, and how many there are.
+fn tabs_in_the_carve(app: &App) -> (f64, usize) {
+    let sim = app.sim.as_ref().unwrap();
+    let height = |x: f64, y: f64| {
+        let (i, j) = ((x / sim.grid.cell).round() as usize, (y / sim.grid.cell).round() as usize);
+        sim.grid.data[j * sim.grid.nx + i] as f64
+    };
+    let moves = crate::toolpath::working_moves(&app.doc.toolpaths[0].moves);
+    let bottom = moves.iter().position(|m| m.p[2] < -11.9).unwrap();
+    let (mut standing, mut count, mut inside) = (0.0, 0, false);
+    for w in moves[bottom..].windows(2).take_while(|w| !w[1].rapid) {
+        let length = (w[1].p[0] - w[0].p[0]).hypot(w[1].p[1] - w[0].p[1]);
+        let steps = (length / 0.02).ceil() as usize;
+        for s in 0..steps {
+            let t = s as f64 / steps as f64;
+            let there = height(w[0].p[0] + (w[1].p[0] - w[0].p[0]) * t, w[0].p[1] + (w[1].p[1] - w[0].p[1]) * t) > -11.5;
+            if there {
+                standing += length / steps as f64;
+            }
+            count += usize::from(there && !inside);
+            inside = there;
+        }
+    }
+    (standing / count.max(1) as f64, count)
+}
+
+#[test]
+fn a_tab_is_as_long_in_the_carve_as_was_asked() {
+    let mut app = App::default();
+    crate::tab_demo(&mut app, 6.0);
+    let (long, count) = tabs_in_the_carve(&app);
+    println!("with the fix: {count} tabs, each {long:.2} mm");
+    assert_eq!(count, 4);
+    assert!((long - 6.0).abs() < 0.6, "{long}");
+    // The tool stopping only the tab's length apart, as it did before.
+    let mut before = App::default();
+    crate::tab_demo(&mut before, 0.001);
+    let (long, count) = tabs_in_the_carve(&before);
+    println!("before the fix: {count} tabs, each {long:.2} mm");
+    assert!(long < 0.6, "{long}");
+}
+
+#[test]
+fn g_groups_and_u_ungroups_from_the_keyboard() {
+    use egui::{Key, Modifiers};
+    let mut h = job_with_square([5.0, 5.0]);
+    let c = [2.0, 2.0];
+    let other = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle(c, 0.5))], Prim::Circle { c, r: 0.5 });
+    let first = h.state().doc.vectors[0].id;
+    h.state_mut().selected = vec![first, other];
+    h.run();
+    h.key_press(Key::G);
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 1);
+    assert!(h.state().doc.vectors[0].is_group());
+    // Clicking any shape in it takes the whole group, which moves as one.
+    h.key_press(Key::ArrowRight);
+    h.run();
+    h.key_press(Key::U);
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 2);
+    let circle = h.state().doc.vectors.iter().find(|v| v.id == other).unwrap().prim.clone();
+    let Prim::Circle { c: moved, .. } = circle else { panic!("{circle:?}") };
+    assert!((moved[0] - 2.05).abs() < 1e-9, "{moved:?}");
+    // With Shift it takes every level.
+    h.key_press(Key::G);
+    h.run();
+    let inner = h.state().selected[0];
+    let extra = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle([8.0, 8.0], 0.5))], Prim::Free);
+    h.state_mut().selected = vec![inner, extra];
+    h.run();
+    h.key_press(Key::G);
+    h.run();
+    h.key_press_modifiers(Modifiers::SHIFT, Key::U);
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 3);
+    assert!(h.state().doc.vectors.iter().all(|v| !v.is_group()));
+}
+
+#[test]
+fn edit_objects_has_buttons_to_group_and_ungroup() {
+    let mut h = job_with_square([5.0, 5.0]);
+    use egui_kittest::kittest::NodeT;
+    let enabled = |h: &Harness<'static, App>, label: &str| !h.get_by_label(label).accesskit_node().is_disabled();
+    h.state_mut().selected.clear();
+    h.run();
+    assert!(!enabled(&h, "Group") && !enabled(&h, "Ungroup") && !enabled(&h, "Ungroup All"), "nothing to do yet");
+    let c = [2.0, 2.0];
+    let (first, other) = (h.state().doc.vectors[0].id, h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle(c, 0.5))], Prim::Circle { c, r: 0.5 }));
+    h.state_mut().selected = vec![first, other];
+    h.run();
+    assert!(enabled(&h, "Group"));
+    click(&mut h, "Group");
+    assert!(h.state().doc.vectors[0].is_group());
+    assert!(!enabled(&h, "Group"), "one group selected: nothing to group it with");
+    assert!(enabled(&h, "Ungroup") && enabled(&h, "Ungroup All"));
+    click(&mut h, "Ungroup");
+    assert_eq!(h.state().doc.vectors.len(), 2);
+    click(&mut h, "Group");
+    let inner = h.state().selected[0];
+    let extra = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle([8.0, 8.0], 0.5))], Prim::Free);
+    h.state_mut().selected = vec![inner, extra];
+    h.run();
+    click(&mut h, "Group");
+    click(&mut h, "Ungroup All");
+    assert_eq!(h.state().doc.vectors.len(), 3, "every level");
+    assert!(h.state().doc.vectors.iter().all(|v| !v.is_group()));
+}
+
+/// Three shapes: a part's outline and hole in a piece, and something beside them.
+fn sheet_with_a_piece() -> (Harness<'static, App>, u64, u64, u64) {
+    let mut h = job_with_square([3.0, 3.0]);
+    let outline = h.state().doc.vectors[0].id;
+    let c = [3.0, 3.0];
+    let hole = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle(c, 0.25))], Prim::Circle { c, r: 0.25 });
+    let c = [8.0, 8.0];
+    let beside = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle(c, 0.25))], Prim::Circle { c, r: 0.25 });
+    h.state_mut().selected = vec![outline, hole];
+    h.run();
+    click(&mut h, "Make Piece");
+    (h, outline, hole, beside)
+}
+
+fn left_of(h: &Harness<'static, App>, id: u64) -> f64 {
+    crate::geom::bbox(&h.state().doc.vectors.iter().find(|v| v.id == id).unwrap().paths).unwrap().0[0]
+}
+
+#[test]
+fn a_piece_keeps_each_shape_selectable_alone_but_moves_together() {
+    let (mut h, outline, hole, beside) = sheet_with_a_piece();
+    assert_eq!(h.state().doc.vectors.len(), 3, "still separate shapes");
+    // Clicking the hole takes the hole alone, as a toolpath needs.
+    h.state_mut().selected.clear();
+    h.run();
+    let at = h.state().to_screen([3.25, 3.0]);
+    click_at(&mut h, at);
+    assert_eq!(h.state().selected, [hole]);
+    // Moving it brings the rest of the piece, and nothing else.
+    let (o, b, s) = (left_of(&h, outline), left_of(&h, hole), left_of(&h, beside));
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert!((left_of(&h, outline) - o - 0.05).abs() < 1e-9 && (left_of(&h, hole) - b - 0.05).abs() < 1e-9);
+    assert_eq!(left_of(&h, beside), s);
+    assert_eq!(h.state().selected, [hole], "still only the hole selected");
+    // Its own circle goes along as a circle.
+    let v = h.state().doc.vectors.iter().find(|v| v.id == hole).unwrap();
+    assert!(matches!(v.prim, Prim::Circle { c, .. } if (c[0] - 3.05).abs() < 1e-9));
+}
+
+#[test]
+fn a_shape_can_be_adjusted_alone_in_its_piece() {
+    let (mut h, outline, hole, _) = sheet_with_a_piece();
+    h.state_mut().selected = vec![hole];
+    h.run();
+    click(&mut h, "Adjust Alone");
+    let (o, b) = (left_of(&h, outline), left_of(&h, hole));
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert_eq!(left_of(&h, outline), o, "the rest stays where it is");
+    assert!((left_of(&h, hole) - b - 0.05).abs() < 1e-9);
+    click(&mut h, "Adjust Alone");
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert!((left_of(&h, outline) - o - 0.05).abs() < 1e-9, "linked again");
+    // Its size only ever changes for what's selected.
+    let width = |h: &Harness<'static, App>, id| {
+        let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors.iter().find(|v| v.id == id).unwrap().paths).unwrap();
+        hi[0] - lo[0]
+    };
+    let before = width(&h, outline);
+    h.state_mut().resize_each(Some(1.0), None, None, Datum::Centre);
+    h.run();
+    assert!((width(&h, hole) - 1.0).abs() < 1e-6);
+    assert_eq!(width(&h, outline), before);
+}
+
+#[test]
+fn a_piece_can_be_selected_whole_and_released() {
+    let (mut h, outline, hole, beside) = sheet_with_a_piece();
+    h.state_mut().selected = vec![hole];
+    h.run();
+    click(&mut h, "Select Piece");
+    let mut got = h.state().selected.clone();
+    got.sort_unstable();
+    let mut want = vec![outline, hole];
+    want.sort_unstable();
+    assert_eq!(got, want);
+    click(&mut h, "Release Piece");
+    assert!(h.state().doc.vectors.iter().all(|v| v.piece.is_none()));
+    h.state_mut().selected = vec![hole];
+    h.run();
+    let o = left_of(&h, outline);
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert_eq!(left_of(&h, outline), o, "no longer linked");
+    let _ = beside;
+}
+
+#[test]
+fn a_group_becomes_a_piece_of_its_own_shapes_with_their_kinds() {
+    let mut h = job_with_square([3.0, 3.0]);
+    let outline = h.state().doc.vectors[0].id;
+    let c = [3.0, 3.0];
+    let hole = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle(c, 0.25))], Prim::Circle { c, r: 0.25 });
+    h.state_mut().selected = vec![outline, hole];
+    h.run();
+    click(&mut h, "Group");
+    assert_eq!(h.state().doc.vectors.len(), 1);
+    click(&mut h, "Make Piece");
+    assert_eq!(h.state().doc.vectors.len(), 2);
+    let piece = h.state().doc.vectors[0].piece;
+    assert!(piece.is_some() && h.state().doc.vectors.iter().all(|v| v.piece == piece && !v.is_group()));
+    assert!(matches!(h.state().doc.vectors.iter().find(|v| v.id == hole).unwrap().prim, Prim::Circle { .. }));
+}
+
+#[test]
+fn a_whole_piece_copied_is_a_new_piece_and_part_of_one_stays_in_it() {
+    let (mut h, outline, hole, _) = sheet_with_a_piece();
+    h.state_mut().selected = vec![outline, hole];
+    h.state_mut().copy_selected();
+    h.state_mut().paste();
+    h.run();
+    let copies = h.state().selected.clone();
+    let piece_of = |h: &Harness<'static, App>, id: u64| h.state().doc.vectors.iter().find(|v| v.id == id).unwrap().piece;
+    assert_eq!(copies.len(), 2);
+    assert_eq!(piece_of(&h, copies[0]), piece_of(&h, copies[1]));
+    assert!(piece_of(&h, copies[0]).is_some());
+    assert_ne!(piece_of(&h, copies[0]), piece_of(&h, outline), "moves on its own");
+    // Another hole copied within the piece belongs to it.
+    h.state_mut().selected = vec![hole];
+    h.state_mut().copy_selected();
+    h.state_mut().paste();
+    h.run();
+    let extra = h.state().selected[0];
+    assert_eq!(piece_of(&h, extra), piece_of(&h, outline));
+}
+
+#[test]
+fn moving_a_piece_leaves_its_toolpaths_until_recalculate_and_the_file_says_why() {
+    let (mut h, outline, hole, _) = sheet_with_a_piece();
+    h.state_mut().selected = vec![hole];
+    h.state_mut().start_op(crate::toolpath::OpKind::Drill);
+    h.state_mut().calculate_op();
+    h.state_mut().right = RightMode::List;
+    h.state_mut().view3d = false;
+    h.run();
+    let moves = h.state().doc.toolpaths[0].moves.clone();
+    assert_eq!(h.state().doc.toolpaths[0].op.source, [hole], "made from the hole alone");
+    h.state_mut().selected = vec![outline];
+    h.run();
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert!(std::sync::Arc::ptr_eq(&moves, &h.state().doc.toolpaths[0].moves), "not recalculated");
+    assert_eq!(h.state().behind, [0], "the hole went with the piece");
+    assert!(h.state_mut().output_problem(None).is_some_and(|m| m.contains("Recalculate")));
+    click(&mut h, "Recalculate all toolpaths");
+    assert!(h.state().behind.is_empty());
+    assert_eq!(h.state_mut().output_problem(None), None);
+}
+
+#[test]
+fn a_piece_is_saved_with_the_project() {
+    let (h, outline, hole, _) = sheet_with_a_piece();
+    let text = serde_json::to_string(&h.state().doc).unwrap();
+    let back: crate::app::Doc = serde_json::from_str(&text).unwrap();
+    let piece = |id: u64| back.vectors.iter().find(|v| v.id == id).unwrap().piece;
+    assert!(piece(outline).is_some());
+    assert_eq!(piece(outline), piece(hole));
+}
+
+#[test]
+fn a_piece_leaves_every_shape_on_its_own_layer() {
+    let mut h = job_with_square([3.0, 3.0]);
+    let outline = h.state().doc.vectors[0].id;
+    h.state_mut().doc.layers.push(crate::app::Layer::named("Holes"));
+    h.state_mut().doc.layers.push(crate::app::Layer::named("Third"));
+    h.state_mut().doc.active_layer = 1;
+    let c = [3.0, 3.0];
+    let hole = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle(c, 0.25))], Prim::Circle { c, r: 0.25 });
+    h.state_mut().doc.active_layer = 2;
+    let layer = |h: &Harness<'static, App>, id: u64| h.state().doc.vectors.iter().find(|v| v.id == id).unwrap().layer;
+    let (first, second) = (layer(&h, outline), layer(&h, hole));
+    assert_ne!(first, second);
+    h.state_mut().selected = vec![outline, hole];
+    h.run();
+    click(&mut h, "Make Piece");
+    assert_eq!((layer(&h, outline), layer(&h, hole)), (first, second), "made directly");
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert_eq!((layer(&h, outline), layer(&h, hole)), (first, second), "after moving");
+    click(&mut h, "Release Piece");
+    assert_eq!((layer(&h, outline), layer(&h, hole)), (first, second), "after releasing");
+    // A simple group holds them on one layer for now, but a piece made from it gives them back.
+    h.state_mut().selected = vec![outline, hole];
+    h.run();
+    click(&mut h, "Group");
+    assert_eq!(h.state().doc.vectors[0].layer, 2, "the active one, as they had none in common");
+    click(&mut h, "Make Piece");
+    assert_eq!((layer(&h, outline), layer(&h, hole)), (first, second), "made from a group");
+}
+
+#[test]
+fn changing_the_material_asks_before_recalculating() {
+    let mut h = square_with_profile();
+    let moves = h.state().doc.toolpaths[0].moves.clone();
+    // Nothing changed: nothing is asked, and nothing is worked out.
+    let before = h.state().doc.clone();
+    h.state_mut().material_accepted(&before);
+    h.run();
+    assert!(!h.state().ask_recalc);
+    assert!(std::sync::Arc::ptr_eq(&moves, &h.state().doc.toolpaths[0].moves));
+    // Thicker: it asks, and still hasn't worked anything out.
+    h.state_mut().doc.job.thickness += 0.1;
+    h.state_mut().material_accepted(&before);
+    h.run();
+    assert!(h.state().ask_recalc);
+    assert!(std::sync::Arc::ptr_eq(&moves, &h.state().doc.toolpaths[0].moves));
+    click(&mut h, "Later");
+    assert!(!h.state().ask_recalc);
+    assert!(std::sync::Arc::ptr_eq(&moves, &h.state().doc.toolpaths[0].moves), "still as it was");
+    h.run();
+    assert_eq!(h.state().behind, [0], "and marked out of date");
+    assert!(h.state_mut().output_problem(None).is_some());
+    // Asked again, the answer can be now.
+    h.state_mut().material_accepted(&before);
+    h.run();
+    click(&mut h, "Recalculate Now");
+    assert!(!h.state().all_behind);
+    assert!(!std::sync::Arc::ptr_eq(&moves, &h.state().doc.toolpaths[0].moves), "worked out");
+    h.run();
+    assert!(h.state().behind.is_empty());
+    assert_eq!(h.state_mut().output_problem(None), None);
+    // With no toolpaths there's nothing to ask.
+    h.state_mut().doc.toolpaths.clear();
+    h.state_mut().doc.job.thickness += 0.1;
+    h.state_mut().material_accepted(&before);
+    assert!(!h.state().ask_recalc);
+}
+
+#[test]
+fn a_click_on_one_of_several_selected_shapes_keeps_them_all() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let first = h.state().doc.vectors[0].id;
+    let second = {
+        let a = h.state_mut();
+        let mut copy = a.doc.vectors[0].clone();
+        copy.id = a.doc.new_id();
+        let far = a.doc.job.width / 4.0;
+        copy.paths.iter_mut().flat_map(|p| p.pts.iter_mut()).for_each(|p| p[1] -= far);
+        let id = copy.id;
+        a.doc.vectors.push(copy);
+        a.selected = vec![first, id];
+        id
+    };
+    h.run();
+    let edge = {
+        let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+        h.state().to_screen([hi[0], (lo[1] + hi[1]) / 2.0])
+    };
+    click_at(&mut h, edge);
+    assert_eq!(h.state().selected, [first, second]);
+    assert_eq!(h.state().handle_rects().len(), 8);
+}
+
+#[test]
+fn the_select_tool_mirrors_and_turns_from_the_keyboard() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let shape = |h: &Harness<'static, App>| crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    let first = |h: &Harness<'static, App>| h.state().doc.vectors[0].paths[0].pts[0];
+    let (lo, hi) = shape(&h);
+    let (w, size) = (h.state().doc.job.width, hi[0] - lo[0]);
+    let start = first(&h);
+
+    // About its own middle: it stays where it is, with its points swapped over.
+    h.key_press(egui::Key::H);
+    h.run();
+    assert!((first(&h)[0] - (lo[0] + hi[0] - start[0])).abs() < 1e-9 && (first(&h)[1] - start[1]).abs() < 1e-9);
+    assert!((shape(&h).0[0] - lo[0]).abs() < 1e-9);
+    h.key_press(egui::Key::H);
+    h.run();
+    h.key_press(egui::Key::V);
+    h.run();
+    assert!((first(&h)[1] - (lo[1] + hi[1] - start[1])).abs() < 1e-9 && (first(&h)[0] - start[0]).abs() < 1e-9);
+    h.key_press(egui::Key::V);
+    h.run();
+
+    // Shift: about the job's middle.
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::H);
+    h.run();
+    assert!((shape(&h).0[0] - (w - hi[0])).abs() < 1e-9);
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::H);
+    h.run();
+
+    // Ctrl: a copy, which ends up selected. Ctrl+V doesn't mirror.
+    let original = h.state().doc.vectors[0].id;
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::H);
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 2);
+    assert!(!h.state().selected.contains(&original));
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::V);
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 2, "Ctrl+V doesn't make a mirrored copy");
+    h.state_mut().doc.vectors.truncate(1);
+    h.state_mut().selected = vec![original];
+    h.run();
+
+    // 9 anticlockwise and 0 clockwise, by 45 degrees about the middle.
+    h.key_press(egui::Key::Num9);
+    h.run();
+    let (a, b) = shape(&h);
+    assert!((b[0] - a[0] - size * 2f64.sqrt()).abs() < 1e-6);
+    assert!(((a[0] + b[0]) - (lo[0] + hi[0])).abs() < 1e-6);
+    let turned = first(&h);
+    let (x, y) = (start[0] - (lo[0] + hi[0]) / 2.0, start[1] - (lo[1] + hi[1]) / 2.0);
+    let k = std::f64::consts::FRAC_1_SQRT_2;
+    assert!((turned[0] - ((lo[0] + hi[0]) / 2.0 + (x - y) * k)).abs() < 1e-6, "anticlockwise");
+    h.key_press(egui::Key::Num0);
+    h.run();
+    assert!((first(&h)[0] - start[0]).abs() < 1e-6 && (first(&h)[1] - start[1]).abs() < 1e-6);
+}
+
+#[test]
+fn escape_drops_the_selection_only_from_the_select_tool() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().selected = vec![id];
+    h.state_mut().tool = crate::app::Tool2::Nodes;
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.state().tool == crate::app::Tool2::Select);
+    assert_eq!(h.state().selected, [id], "it only left the other tool");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.state().selected.is_empty());
+}
+
+#[test]
+fn clicking_what_is_selected_changes_between_moving_and_resizing() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().selected.clear();
+    h.run();
+    let edge = {
+        let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+        h.state().to_screen([hi[0], (lo[1] + hi[1]) / 2.0])
+    };
+    click_at(&mut h, edge);
+    assert_eq!(h.state().selected, [id]);
+    assert!(h.state().handle_rects().is_empty(), "the first click is for moving");
+    click_at(&mut h, edge);
+    assert_eq!(h.state().selected, [id], "still selected");
+    assert_eq!(h.state().handle_rects().len(), 8, "the next shows the handles");
+    click_at(&mut h, edge);
+    assert!(h.state().handle_rects().is_empty(), "and the next takes them away");
+    click_at(&mut h, edge);
+    assert_eq!(h.state().handle_rects().len(), 8);
+    // Selecting afresh starts again for moving.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.state().handle_rects().is_empty());
+    click_at(&mut h, edge);
+    let empty = h.state().to_screen([0.2, 0.2]);
+    click_at(&mut h, empty);
+    assert!(h.state().selected.is_empty());
+    click_at(&mut h, edge);
+    assert_eq!(h.state().selected, [id]);
+    assert!(h.state().handle_rects().is_empty(), "what was on before doesn't come back");
+}
+
+#[test]
+fn with_handles_a_side_stretches_one_way_and_without_them_it_only_moves() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    let (w, tall) = (hi[0] - lo[0], hi[1] - lo[1]);
+    let side = h.state().to_screen([hi[0], (lo[1] + hi[1]) / 2.0]);
+    let further = h.state().to_screen([hi[0] + 1.0, (lo[1] + hi[1]) / 2.0]);
+    let size = |h: &Harness<'static, App>| {
+        let (a, b) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+        (a, b[0] - a[0], b[1] - a[1])
+    };
+    let id = h.state().doc.vectors[0].id;
+    // Selected, no handles: dragging there moves it, keeping its size.
+    h.state_mut().selected = vec![id];
+    h.state_mut().handles_on = None;
+    h.run();
+    drag(&mut h, side, further);
+    let (at, nw, nh) = size(&h);
+    assert!((nw - w).abs() < 1e-6 && (nh - tall).abs() < 1e-6, "same size");
+    assert!(at[0] > lo[0] + 0.5, "moved");
+    h.state_mut().do_undo();
+    h.state_mut().selected = vec![id];
+    h.run();
+    // With them: the left side stays, and only the width changes.
+    h.state_mut().handles_on = Some(vec![id]);
+    h.run();
+    drag(&mut h, side, further);
+    let (at, nw, nh) = size(&h);
+    assert!((at[0] - lo[0]).abs() < 1e-6, "the far side stays");
+    assert!((nw - w - 1.0).abs() < 0.1, "{nw}");
+    assert!((nh - tall).abs() < 1e-6, "the height doesn't change");
+}
+
+/// The test's language goes back to English when it ends, whatever happens.
+struct InFrench;
+impl InFrench {
+    fn start() -> InFrench {
+        crate::i18n::set_language(crate::i18n::Lang::French);
+        InFrench
+    }
+}
+impl Drop for InFrench {
+    fn drop(&mut self) {
+        crate::i18n::set_language(crate::i18n::Lang::English);
+    }
+}
+
+#[test]
+fn the_keys_can_be_changed_from_the_preferences() {
+    use crate::keys::Action;
+    let mut h = job_with_square([5.0, 5.0]);
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().prefs_open = true;
+    h.run();
+
+    // Press a new key for Delete.
+    h.state_mut().prefs_waiting = Some(Action::Delete);
+    h.run();
+    h.key_press(egui::Key::K);
+    h.run();
+    assert_eq!(h.state().prefs_waiting, None);
+    assert_eq!(h.state().keys.text(Action::Delete), "K");
+
+    // A key that's taken is refused and it says by what, and the list keeps waiting.
+    h.state_mut().prefs_waiting = Some(Action::Delete);
+    h.run();
+    h.key_press(egui::Key::G);
+    h.run();
+    assert!(h.state().prefs_note.contains("Group"), "{}", h.state().prefs_note);
+    assert_eq!(h.state().keys.text(Action::Delete), "K");
+    assert_eq!(h.state().prefs_waiting, Some(Action::Delete));
+
+    // So is one with a use of its own, and Escape gives up.
+    h.key_press(egui::Key::Space);
+    h.run();
+    assert!(h.state().prefs_note.contains("own use"), "{}", h.state().prefs_note);
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(h.state().prefs_waiting, None);
+    assert_eq!(h.state().keys.text(Action::Delete), "K");
+
+    // While the window is open, keys do nothing to the drawing.
+    h.key_press(egui::Key::K);
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 1);
+
+    // Afterwards the new key works, and the old one doesn't.
+    h.state_mut().prefs_open = false;
+    h.state_mut().selected = vec![id];
+    h.run();
+    h.key_press(egui::Key::Delete);
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 1, "that's not the key any more");
+    h.key_press(egui::Key::K);
+    h.run();
+    assert!(h.state().doc.vectors.is_empty());
+
+    // The second Delete key is still there until it's removed too, and the defaults come back.
+    h.state_mut().prefs_open = true;
+    h.run();
+    click(&mut h, "Restore Default Keys");
+    assert_eq!(h.state().keys, crate::keys::Keys::default());
+}
+
+#[test]
+fn a_key_can_be_chosen_by_clicking_its_button() {
+    use crate::keys::Action;
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().prefs_open = true;
+    h.run();
+    click(&mut h, "Ctrl+S");
+    assert_eq!(h.state().prefs_waiting, Some(Action::Save));
+    h.key_press_modifiers(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::K);
+    h.run();
+    assert_eq!(h.state().keys.text(Action::Save), "Ctrl+Shift+K");
+}
+
+#[test]
+fn the_language_changes_at_once_from_the_preferences() {
+    let _english_again = InFrench::start();
+    crate::i18n::set_language(crate::i18n::Lang::English);
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().prefs_open = true;
+    h.run();
+    h.get_by_label("Language");
+    click(&mut h, "Français");
+    h.run();
+    assert_eq!(crate::i18n::language(), crate::i18n::Lang::French);
+    h.get_by_label("Langue");
+    h.get_by_label("Raccourcis clavier");
+    click(&mut h, "English");
+    h.run();
+    h.get_by_label("Language");
+}
+
+#[test]
+fn the_interface_can_be_used_in_french() {
+    let _french = InFrench::start();
+    let mut h = harness();
+    click(&mut h, "Créer un nouveau fichier");
+    h.get_by_label("Une face");
+    click(&mut h, "OK");
+    let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 2.0, 2.0, 0.0))], crate::app::Prim::Free);
+    h.state_mut().selected = vec![id];
+    h.run();
+    h.get_by_label("Modifier les objets");
+    h.get_by_label("Créer une pièce");
+    assert_eq!(h.state().doc.layers[0].name, "Couche 1");
+    // A message with something filled in.
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowRight);
+    h.run();
+    assert!(h.state().status.starts_with("Sélection déplacée de"), "{}", h.state().status);
+    assert!(!h.state().status.contains("Moved"));
+    // The saved quality isn't translated, only what's shown of it.
+    assert_eq!(h.state().quality3d.name(), crate::app::Quality3d::Balanced.name());
+}
+
+#[test]
+fn files_for_the_machine_are_the_same_in_either_language() {
+    let mut a = App::default();
+    a.load_sample();
+    let english = a.gcode_text(None).unwrap();
+    let _french = InFrench::start();
+    assert_eq!(a.gcode_text(None).unwrap(), english);
+}
+
+/// What runs out of a side panel or the window on a screen of the program, not counting the menu bar
+/// and rulers, which go across the panels' edges anyway.
+fn out_of_place(state: &str) -> Vec<String> {
+    use egui_kittest::kittest::NodeT;
+    let mut h = harness();
+    crate::open_state(h.state_mut(), state);
+    for _ in 0..4 {
+        h.step();
+    }
+    let (w, left, right) = (1910.0, crate::ui::SIDE_W as f64, 1910.0 - crate::ui::RIGHT_W as f64);
+    let mut found = Vec::new();
+    for node in h.root().children_recursive() {
+        let node = node.accesskit_node();
+        let Some(b) = node.bounding_box() else { continue };
+        if b.y0 > 34.0 && b.x1 - b.x0 < 1000.0 && (b.x1 > w + 1.0 || (b.x0 < left - 1.0 && b.x1 > left + 1.0) || (b.x0 < right - 1.0 && b.x1 > right + 1.0)) {
+            found.push(format!("{state}: {:?} {:?} {:.0}..{:.0}", node.label(), node.value(), b.x0, b.x1));
+        }
+    }
+    found
+}
+
+#[test]
+fn french_wordings_stay_inside_their_panels() {
+    let mut too_wide = Vec::new();
+    for state in ["merge", "pieces", "savepiece", "3d", "align", "array", "board", "boardalert", "boardmaterial", "carved", "chamfer", "circle", "clipart", "corners", "cut", "distort", "distorted", "drawing", "drill", "editcircle", "engrave", "finish", "flute", "grid", "grid3d", "grouped", "handles", "job", "layers", "leads", "lines", "material", "material-changed", "millimetres", "model", "modeling", "move", "order", "origin", "origin_set", "passes", "paths2d", "piece", "pocket", "posts", "preferences", "profile", "progress", "ramp", "relief", "relief3d", "rough", "rules", "save", "selector", "sharp3d", "sharp3dfar", "similar", "sketch", "startat", "sweep", "tabs", "tabs-before", "tee_after", "tee_before", "through", "toodeep", "toolrates", "tools", "trace", "traced", "trim_after", "trim_before", "unsaved", "vcarve", "zero"] {
+        let english = out_of_place(state).len();
+        let french = {
+            let _french = InFrench::start();
+            out_of_place(state)
+        };
+        if french.len() > english {
+            too_wide.extend(french);
+        }
+    }
+    assert!(too_wide.is_empty(), "{}", too_wide.join("\n"));
+}
+
+#[test]
+fn the_first_keys_open_the_tools_and_views() {
+    use egui::{Key, Modifiers};
+    use crate::app::{LeftTab, Tool2};
+    let mut h = job_with_square([1.0, 1.0]);
+    let id = h.state().doc.vectors[0].id;
+    let form = |h: &Harness<'static, App>| match &h.state().left {
+        LeftForm::Xform(f) => Some(f.kind),
+        _ => None,
+    };
+    for (key, kind) in [(Key::M, Xform::Move), (Key::T, Xform::Scale), (Key::R, Xform::Rotate), (Key::J, Xform::Join), (Key::F10, Xform::Align)] {
+        h.key_press(key);
+        h.run();
+        assert_eq!(form(&h), Some(kind), "{key:?}");
+    }
+    h.key_press(Key::Escape);
+    h.run();
+    h.state_mut().selected = vec![id];
+    h.run();
+
+    // F9 puts the selection in the middle of the material.
+    h.key_press(Key::F9);
+    h.run();
+    let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    let job = h.state().doc.job.clone();
+    assert!((lo[0] + hi[0] - job.width).abs() < 1e-9 && (lo[1] + hi[1] - job.height).abs() < 1e-9);
+
+    // N goes to editing points and back.
+    h.key_press(Key::N);
+    h.run();
+    assert!(h.state().tool == Tool2::Nodes);
+    h.key_press(Key::N);
+    h.run();
+    assert!(h.state().tool == Tool2::Select);
+
+    // The tabs and views.
+    h.key_press_modifiers(Modifiers::COMMAND, Key::L);
+    h.run();
+    assert!(h.state().left_tab == LeftTab::Layers);
+    h.key_press(Key::F8);
+    h.run();
+    assert!(h.state().left_tab == LeftTab::Modeling);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::D);
+    h.run();
+    assert!(h.state().left_tab == LeftTab::Drawing);
+    h.key_press(Key::F3);
+    h.run();
+    assert!(h.state().view3d);
+    h.key_press(Key::F2);
+    h.run();
+    assert!(!h.state().view3d);
+    let open = h.state().left_open;
+    h.key_press(Key::F11);
+    h.run();
+    assert_ne!(h.state().left_open, open);
+}
+
+#[test]
+fn ctrl_shift_v_makes_a_mirrored_copy_about_the_job_centre() {
+    let mut h = job_with_square([1.0, 1.0]);
+    let height = h.state().doc.job.height;
+    let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    h.key_press_modifiers(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::V);
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 2);
+    let (a, b) = crate::geom::bbox(&h.state().doc.vectors[1].paths).unwrap();
+    assert!((a[1] - (height - hi[1])).abs() < 1e-9 && (b[1] - (height - lo[1])).abs() < 1e-9);
+}
+
+#[test]
+fn letters_start_the_drawing_tools() {
+    use crate::app::{DrawKind, LeftForm};
+    let mut h = job_with_square([1.0, 1.0]);
+    for (key, kind) in [
+        (egui::Key::L, DrawKind::Polyline),
+        (egui::Key::C, DrawKind::Circle),
+        (egui::Key::E, DrawKind::Ellipse),
+        (egui::Key::Q, DrawKind::Rect),
+        (egui::Key::P, DrawKind::Polygon),
+        (egui::Key::I, DrawKind::Star),
+        (egui::Key::A, DrawKind::Arc),
+        (egui::Key::B, DrawKind::Curve),
+        (egui::Key::S, DrawKind::Spiral),
+        (egui::Key::X, DrawKind::Text),
+    ] {
+        h.key_press(key);
+        h.run();
+        assert!(matches!(&h.state().left, LeftForm::Draw(f) if f.kind == kind), "{key:?}");
+    }
+    // With Ctrl, they stay what they were: Ctrl+A selects everything, and doesn't draw an arc.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    assert!(matches!(h.state().left, LeftForm::None));
+    assert_eq!(h.state().selected.len(), h.state().doc.vectors.len());
+}
+
+#[test]
+fn locked_guides_stay_where_they_are() {
+    let mut h = job_with_square([1.0, 1.0]);
+    h.state_mut().doc.guides.push(crate::snap::Guide { vertical: true, at: 6.0 });
+    h.run();
+    let at = h.state().to_screen([6.0, 6.0]);
+    assert_eq!(h.state().guide_at(at), Some(0));
+    h.state_mut().guides_locked = true;
+    assert_eq!(h.state().guide_at(at), None);
+}
+
+#[test]
+fn the_menus_have_the_entries_of_the_original() {
+    let mut h = job_with_square([1.0, 1.0]);
+    for (menu, entries) in [
+        ("File", &["Close", "Increment and Save", "Import", "Export", "Recent Files", "Print..."][..]),
+        ("Edit", &["Selection", "Align Selected Objects", "Join Vectors", "Curve Fit Vectors", "Snap Options", "Preferences..."][..]),
+        ("Model", &["Create Component", "Export as STL", "Sculpt Visible Model", "Selected Component Properties"][..]),
+        ("Toolpaths", &["Toolpath Drawing", "Preview Simulation Quality", "Templates", "Install Post Processor..."][..]),
+        ("View", &["Guide Lines", "Refresh 2D View", "Draw Origin", "Save Shaded Image"][..]),
+        ("Help", &["Keyboard Shortcuts", "Help Contents", "About"][..]),
+    ] {
+        h.get_all_by_role_and_label(egui::accesskit::Role::Button, menu).next().unwrap().click();
+        h.run();
+        for entry in entries {
+            h.get_by_label(entry);
+        }
+        h.key_press(egui::Key::Escape);
+        h.run();
+    }
+}
+
+fn box_of(h: &Harness<'static, App>, id: u64) -> ([f64; 2], [f64; 2]) {
+    crate::geom::bbox(&h.state().doc.vectors.iter().find(|v| v.id == id).unwrap().paths).unwrap()
+}
+
+#[test]
+fn a_whole_piece_is_aligned_once_and_keeps_its_shape() {
+    let (mut h, outline, hole, beside) = sheet_with_a_piece();
+    let apart = left_of(&h, hole) - left_of(&h, outline);
+    h.state_mut().selected = vec![outline, hole, beside];
+    h.state_mut().align_to_last_edge(crate::edit::Edge::Left, true);
+    h.run();
+    let target = left_of(&h, beside);
+    assert!((left_of(&h, outline) - target).abs() < 1e-9, "the piece's own left side reaches it");
+    assert!((left_of(&h, hole) - left_of(&h, outline) - apart).abs() < 1e-9, "the piece didn't change");
+    assert!((target - 7.75).abs() < 1e-9, "the shape it's lined up with stays");
+}
+
+#[test]
+fn a_shape_is_aligned_alone_to_another_of_its_piece() {
+    let (mut h, outline, hole, _) = sheet_with_a_piece();
+    let before = box_of(&h, outline);
+    h.state_mut().selected = vec![hole, outline];
+    h.state_mut().align_to_last_edge(crate::edit::Edge::Left, true);
+    h.run();
+    assert_eq!(box_of(&h, outline), before, "the outline stays");
+    assert!((left_of(&h, hole) - before.0[0]).abs() < 1e-9);
+}
+
+#[test]
+fn turning_or_flipping_a_shape_takes_its_piece_along_unless_adjusting() {
+    let (mut h, outline, hole, _) = sheet_with_a_piece();
+    // The hole, off to one side, then shows whether the piece turned around its own middle.
+    h.state_mut().adjust_piece = true;
+    h.state_mut().selected = vec![hole];
+    h.state_mut().translate_selected(0.5, 0.0);
+    h.state_mut().adjust_piece = false;
+    h.run();
+    let (lo, hi) = box_of(&h, outline);
+    let middle = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+    let centre = |h: &Harness<'static, App>, id: u64| {
+        let (a, b) = box_of(h, id);
+        [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]
+    };
+    let hole_at = centre(&h, hole);
+    h.state_mut().selected = vec![hole];
+    h.state_mut().turn_selected(90.0);
+    h.run();
+    let turned = centre(&h, hole);
+    let (x, y) = (hole_at[0] - middle[0], hole_at[1] - middle[1]);
+    assert!((turned[0] - (middle[0] - y)).abs() < 1e-6 && (turned[1] - (middle[1] + x)).abs() < 1e-6, "{turned:?}");
+    assert!((centre(&h, outline)[0] - middle[0]).abs() < 1e-6, "the outline turned on the spot");
+    // Flipping the same way, and it comes back.
+    let before = centre(&h, hole);
+    h.state_mut().mirror(true, None, false, false);
+    h.run();
+    assert!((centre(&h, hole)[0] - (2.0 * middle[0] - before[0])).abs() < 1e-6);
+    h.state_mut().mirror(true, None, false, false);
+    h.run();
+    // With adjusting on, only the shape chosen turns.
+    h.state_mut().adjust_piece = true;
+    let outline_before = box_of(&h, outline);
+    let hole_before = centre(&h, hole);
+    h.state_mut().turn_selected(45.0);
+    h.run();
+    assert_eq!(box_of(&h, outline), outline_before);
+    assert!((centre(&h, hole)[0] - hole_before[0]).abs() < 1e-6, "on its own middle");
+}
+
+#[test]
+fn a_mirrored_copy_of_a_hole_lands_across_its_piece_and_belongs_to_it() {
+    let (mut h, outline, hole, _) = sheet_with_a_piece();
+    h.state_mut().adjust_piece = true;
+    h.state_mut().selected = vec![hole];
+    h.state_mut().translate_selected(0.5, 0.0);
+    h.state_mut().adjust_piece = false;
+    let (lo, hi) = box_of(&h, outline);
+    let (a, b) = box_of(&h, hole);
+    h.state_mut().mirror(true, None, false, true);
+    h.run();
+    let copy = h.state().selected[0];
+    assert_ne!(copy, hole);
+    let (c, d) = box_of(&h, copy);
+    assert!((c[0] - (lo[0] + hi[0] - b[0])).abs() < 1e-6 && (d[0] - (lo[0] + hi[0] - a[0])).abs() < 1e-6);
+    let piece = |id: u64| h.state().doc.vectors.iter().find(|v| v.id == id).unwrap().piece;
+    assert_eq!(piece(copy), piece(outline));
+}
+
+#[test]
+fn centring_one_shape_centres_its_piece() {
+    let (mut h, outline, hole, _) = sheet_with_a_piece();
+    h.state_mut().adjust_piece = true;
+    h.state_mut().selected = vec![hole];
+    h.state_mut().translate_selected(0.5, 0.0);
+    h.state_mut().adjust_piece = false;
+    h.state_mut().align_selected(Some(0), Some(0));
+    h.run();
+    let (lo, hi) = box_of(&h, outline);
+    let job = h.state().doc.job.clone();
+    assert!((lo[0] + hi[0] - job.width).abs() < 1e-9 && (lo[1] + hi[1] - job.height).abs() < 1e-9);
+}
+
+#[test]
+fn nesting_and_spacing_count_a_piece_once() {
+    let (mut h, outline, hole, beside) = sheet_with_a_piece();
+    let apart = left_of(&h, hole) - left_of(&h, outline);
+    h.state_mut().selected = vec![outline, hole, beside];
+    h.state_mut().start_xform(Xform::Nest);
+    h.state_mut().apply_xform();
+    h.run();
+    assert!((left_of(&h, hole) - left_of(&h, outline) - apart).abs() < 1e-9, "a piece isn't pulled apart");
+    assert!(h.state().status.contains('2'), "two parts: {}", h.state().status);
+    // Three holes of one piece are spaced inside it.
+    let (mut h, outline, hole, _) = sheet_with_a_piece();
+    let add = |h: &mut Harness<'static, App>, x: f64| {
+        let c = [x, 3.0];
+        let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle(c, 0.1))], Prim::Circle { c, r: 0.1 });
+        let piece = h.state().doc.vectors.iter().find(|v| v.id == outline).unwrap().piece;
+        h.state_mut().doc.put_in_piece(&[id], piece);
+        id
+    };
+    let (two, three) = (add(&mut h, 3.2), add(&mut h, 3.8));
+    let before = box_of(&h, outline);
+    h.state_mut().selected = vec![hole, two, three];
+    h.state_mut().space_selection(true);
+    h.run();
+    assert_eq!(box_of(&h, outline), before, "the outline wasn't selected");
+    let middle = |h: &Harness<'static, App>, id: u64| {
+        let (a, b) = box_of(h, id);
+        (a[0] + b[0]) / 2.0
+    };
+    assert!((middle(&h, two) - (middle(&h, hole) + middle(&h, three)) / 2.0).abs() < 1e-6);
+}
+
+#[test]
+fn what_is_made_from_a_piece_stays_in_it_and_one_shape_left_is_no_piece() {
+    let (mut h, outline, hole, _) = sheet_with_a_piece();
+    let piece = h.state().doc.vectors.iter().find(|v| v.id == outline).unwrap().piece;
+    let c = [3.0, 2.0];
+    let third = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle(c, 0.25))], Prim::Circle { c, r: 0.25 });
+    h.state_mut().doc.put_in_piece(&[third], piece);
+    h.state_mut().selected = vec![outline, third];
+    h.state_mut().offset_selected(0.1, true);
+    let offset = h.state().selected[0];
+    assert_eq!(h.state().doc.vectors.iter().find(|v| v.id == offset).unwrap().piece, piece);
+    // Deleting all but one ends the piece.
+    h.state_mut().selected = vec![outline, third, offset];
+    h.state_mut().delete_selected();
+    h.run();
+    assert_eq!(h.state().doc.vectors.iter().find(|v| v.id == hole).unwrap().piece, None);
+    // And undo brings it all back.
+    h.state_mut().do_undo();
+    h.run();
+    assert_eq!(h.state().doc.vectors.iter().find(|v| v.id == hole).unwrap().piece, piece);
+}
+
+#[test]
+fn a_double_click_selects_the_whole_piece_and_keys_work_too() {
+    let (mut h, outline, hole, beside) = sheet_with_a_piece();
+    h.state_mut().selected.clear();
+    h.run();
+    let (a, b) = box_of(&h, hole);
+    let at = h.state().to_screen([b[0], (a[1] + b[1]) / 2.0]);
+    // The test's clock takes big steps, so a double click has to be allowed more time here. The
+    // wait keeps the click on the button before out of it, or this would count as a triple click.
+    h.ctx.options_mut(|o| o.input_options.max_double_click_delay = 3.0);
+    for _ in 0..20 {
+        h.step();
+    }
+    click_at(&mut h, at);
+    assert_eq!(h.state().selected, [hole], "one click is one shape");
+    click_at(&mut h, at);
+    let mut got = h.state().selected.clone();
+    got.sort_unstable();
+    let mut want = vec![outline, hole];
+    want.sort_unstable();
+    assert_eq!(got, want);
+    assert!(!got.contains(&beside) && h.state().handle_rects().is_empty());
+    // A second click taking its time still changes between moving and resizing.
+    h.ctx.options_mut(|o| o.input_options.max_double_click_delay = 0.0);
+    h.state_mut().selected.clear();
+    h.run();
+    click_at(&mut h, at);
+    assert_eq!(h.state().selected, [hole]);
+    click_at(&mut h, at);
+    assert_eq!(h.state().selected, [hole]);
+    assert_eq!(h.state().handle_rects().len(), 8);
+    // The keys.
+    h.state_mut().selected = vec![hole];
+    h.key_press_modifiers(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::G);
+    h.run();
+    assert_eq!(h.state().selected.len(), 2);
+    h.key_press(egui::Key::D);
+    h.run();
+    assert!(h.state().adjust_piece);
+    h.key_press(egui::Key::D);
+    h.run();
+    assert!(!h.state().adjust_piece);
+    h.key_press_modifiers(egui::Modifiers::COMMAND | egui::Modifiers::ALT, egui::Key::G);
+    h.run();
+    assert!(h.state().doc.vectors.iter().all(|v| v.piece.is_none()));
+    h.state_mut().selected = vec![outline, hole];
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::G);
+    h.run();
+    assert!(h.state().doc.vectors.iter().find(|v| v.id == outline).unwrap().piece.is_some());
+}
+
+/// A sheet with the piece, its hole drilled and its outline cut.
+fn cut_piece() -> (Harness<'static, App>, u64, u64, u64) {
+    let (mut h, outline, hole, beside) = sheet_with_a_piece();
+    h.state_mut().selected = vec![hole];
+    h.state_mut().start_op(crate::toolpath::OpKind::Drill);
+    h.state_mut().calculate_op();
+    h.state_mut().selected = vec![outline];
+    h.state_mut().start_op(crate::toolpath::OpKind::Profile);
+    h.state_mut().calculate_op();
+    h.state_mut().right = RightMode::List;
+    h.state_mut().view3d = false;
+    h.state_mut().selected.clear();
+    h.run();
+    (h, outline, hole, beside)
+}
+
+#[test]
+fn a_copied_piece_joins_the_toolpaths_of_what_it_came_from() {
+    let (mut h, outline, hole, beside) = cut_piece();
+    let moves = h.state().doc.toolpaths[0].moves.clone();
+    h.state_mut().selected = vec![outline, hole];
+    h.state_mut().copy_selected();
+    h.state_mut().paste();
+    h.run();
+    let copies = h.state().selected.clone();
+    assert_eq!(copies.len(), 2);
+    let (hole_copy, outline_copy) = (copies[1], copies[0]);
+    assert_eq!(h.state().doc.toolpaths[0].op.source, [hole, hole_copy]);
+    assert_eq!(h.state().doc.toolpaths[1].op.source, [outline, outline_copy]);
+    // Not worked out yet, as for any change: it says so and waits.
+    assert!(std::sync::Arc::ptr_eq(&moves, &h.state().doc.toolpaths[0].moves));
+    assert_eq!(h.state().behind, [0, 1]);
+    h.state_mut().recalculate_all();
+    h.run();
+    assert!(h.state().behind.is_empty());
+    assert_eq!(h.state().doc.toolpaths[0].op.paths.len(), 2);
+    // A shape in no piece stays out of it, however it's copied.
+    h.state_mut().selected = vec![beside];
+    h.state_mut().start_op(crate::toolpath::OpKind::Drill);
+    h.state_mut().calculate_op();
+    h.state_mut().right = RightMode::List;
+    h.state_mut().view3d = false;
+    h.state_mut().selected = vec![beside];
+    h.state_mut().copy_selected();
+    h.state_mut().paste();
+    h.run();
+    assert_eq!(h.state().doc.toolpaths[2].op.source, [beside]);
+    // Undo takes the copy back out of the toolpath.
+    h.state_mut().selected = vec![outline, hole];
+    h.state_mut().copy_selected();
+    h.state_mut().paste();
+    h.state_mut().do_undo();
+    h.run();
+    assert_eq!(h.state().doc.toolpaths[0].op.source, [hole, hole_copy]);
+}
+
+#[test]
+fn pieces_are_named_and_listed_with_what_cuts_them() {
+    let (mut h, outline, hole, _) = cut_piece();
+    h.state_mut().left_tab = crate::app::LeftTab::Layers;
+    h.run();
+    h.get_by_label_contains("2 shapes. Toolpaths: ");
+    click(&mut h, "Select Piece 1");
+    let mut got = h.state().selected.clone();
+    got.sort_unstable();
+    let mut want = vec![outline, hole];
+    want.sort_unstable();
+    assert_eq!(got, want);
+    // A copy is the next piece, the name is kept with the project, and goes with the piece.
+    h.state_mut().copy_selected();
+    h.state_mut().paste();
+    h.run();
+    let rows = h.state().doc.pieces();
+    assert_eq!(rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["Piece 1", "Piece 2"]);
+    let first = rows[0].id;
+    h.state_mut().doc.piece_names.insert(first, "Roue avant".into());
+    h.run();
+    h.get_by_label("Select Roue avant");
+    let text = serde_json::to_string(&h.state().doc).unwrap();
+    let back: crate::app::Doc = serde_json::from_str(&text).unwrap();
+    assert_eq!(back.piece_name(first), "Roue avant");
+    click(&mut h, "Release Roue avant");
+    assert_eq!(h.state().doc.pieces().len(), 1);
+    assert!(!h.state().doc.piece_names.contains_key(&first));
+    // A project from before pieces had names still shows them.
+    h.state_mut().doc.piece_names.clear();
+    assert_eq!(h.state().doc.pieces()[0].name, "Piece 1");
+    assert_eq!(h.state().doc.next_piece_name(), "Piece 2");
+}
+
+#[test]
+fn the_toolpaths_of_one_piece_can_be_recalculated_from_the_list() {
+    let (mut h, _, hole, beside) = cut_piece();
+    // Something else is out of date too, and stays so.
+    h.state_mut().selected = vec![beside];
+    h.state_mut().start_op(crate::toolpath::OpKind::Drill);
+    h.state_mut().calculate_op();
+    h.state_mut().right = RightMode::List;
+    h.state_mut().view3d = false;
+    h.state_mut().left_tab = crate::app::LeftTab::Layers;
+    h.state_mut().selected = vec![beside];
+    h.state_mut().translate_selected(0.5, 0.0);
+    h.state_mut().selected = vec![hole];
+    h.state_mut().translate_selected(0.5, 0.0);
+    h.run();
+    assert_eq!(h.state().behind, [0, 1, 2]);
+    click(&mut h, "Recalculate for Piece 1");
+    assert_eq!(h.state().behind, [2]);
+}
+
+#[test]
+fn one_piece_is_cut_alone_and_the_project_stays_as_it_was() {
+    let (mut h, outline, hole, _) = cut_piece();
+    h.state_mut().selected = vec![outline, hole];
+    h.state_mut().copy_selected();
+    h.state_mut().paste();
+    h.state_mut().translate_selected(4.0, 0.0);
+    h.state_mut().recalculate_all();
+    h.run();
+    let rows = h.state().doc.pieces();
+    let (first, second) = (rows[0].id, rows[1].id);
+    let across = |moves: &[crate::toolpath::Move]| {
+        let cut: Vec<f64> = moves.iter().filter(|m| m.p[2] < -1e-9).map(|m| m.p[0]).collect();
+        (cut.iter().copied().fold(f64::MAX, f64::min), cut.iter().copied().fold(f64::MIN, f64::max))
+    };
+    let whole = across(&h.state().doc.toolpaths[1].moves);
+    assert!(whole.1 - whole.0 > 4.0, "the shared toolpath cuts both");
+    let kept = h.state().doc.toolpaths[1].moves.clone();
+    let made = h.state_mut().piece_toolpaths(first, None).unwrap();
+    assert_eq!(made.len(), 2);
+    let (lo, hi) = across(&made[1].moves);
+    assert!(hi - lo < 3.0 && hi < 6.0, "the first alone: {lo} to {hi}");
+    let (lo2, _) = across(&h.state_mut().piece_toolpaths(second, None).unwrap()[1].moves);
+    assert!(lo2 > lo + 3.0, "the second alone");
+    assert!(std::sync::Arc::ptr_eq(&kept, &h.state().doc.toolpaths[1].moves), "the project's toolpath is untouched");
+    let text = h.state_mut().piece_gcode(first, None, "piece").unwrap();
+    assert!(text.len() < h.state().gcode_text(None).unwrap().len());
+    // Only ticked toolpaths, and none that cut it means no file.
+    for t in &mut h.state_mut().doc.toolpaths {
+        t.visible = false;
+    }
+    assert!(h.state_mut().piece_gcode(first, None, "piece").is_err());
+    assert_eq!(h.state_mut().piece_toolpaths(first, Some(0)).unwrap().len(), 1);
+}
+
+#[test]
+fn the_save_form_can_choose_one_piece() {
+    let (mut h, _, _, _) = cut_piece();
+    let first = h.state().doc.pieces()[0].id;
+    h.state_mut().right = RightMode::Save;
+    h.run();
+    h.state_mut().save_piece = Some(first);
+    h.run();
+    // A piece that's gone isn't kept as the choice.
+    h.state_mut().selected = h.state().doc.pieces()[0].shapes.clone();
+    h.state_mut().release_piece();
+    h.run();
+    assert_eq!(h.state().save_piece, None);
+}
+
+#[test]
+fn a_toolpath_with_no_moves_is_not_written() {
+    let (mut h, _, _, _) = cut_piece();
+    assert_eq!(h.state_mut().output_problem(None), None);
+    h.state_mut().doc.toolpaths[0].moves = std::sync::Arc::new(Vec::new());
+    h.state_mut().doc.toolpaths[0].kept_moves = None;
+    let name = h.state().doc.toolpaths[0].op.name.clone();
+    let problem = h.state_mut().output_problem(None).unwrap();
+    assert!(problem.contains("no moves") && problem.contains(&name), "{problem}");
+    // Not if it isn't going in the file.
+    assert_eq!(h.state_mut().output_problem(Some(1)), None);
+}
+
+#[test]
+fn the_icon_is_a_rounded_square_with_clear_corners() {
+    let icon = crate::icon();
+    assert_eq!((icon.width, icon.height), (512, 512));
+    let alpha = |x: u32, y: u32| icon.rgba[((y * icon.width + x) * 4 + 3) as usize];
+    assert_eq!(alpha(0, 0), 0, "the corner is clear");
+    assert_eq!(alpha(256, 256), 255, "the middle is solid");
+    // The first screen makes its small copy without trouble.
+    let mut h = harness();
+    h.run();
+    assert!(h.state().start_logo.is_some());
+}
+
+/// Two toolpaths with the same tool: a pocket inside a square, and the square's outline; another
+/// square further on with the same again, so the file has two parts.
+#[cfg(test)]
+fn two_parts_in_two_toolpaths(h: &mut Harness<'static, App>) {
+    use crate::toolpath::{self, Move, OpKind};
+    let square = |x: f64, y: f64, size: f64, z: f64| -> Vec<Move> {
+        let mut m = vec![Move { p: [x, y, 0.2], rapid: true }, Move { p: [x, y, z], rapid: false }];
+        for p in [[x + size, y], [x + size, y + size], [x, y + size], [x, y]] {
+            m.push(Move { p: [p[0], p[1], z], rapid: false });
+        }
+        m.push(Move { p: [x, y, 0.8], rapid: true });
+        m
+    };
+    let home = Move { p: [0.0, 0.0, 0.8], rapid: true };
+    let path = |parts: Vec<Vec<Move>>| {
+        let mut m = vec![home];
+        m.extend(parts.into_iter().flatten());
+        m.push(home);
+        std::sync::Arc::new(m)
+    };
+    let tool = toolpath::default_tools().remove(0);
+    let inner = path(vec![square(2.0, 2.0, 1.0, -0.1), square(7.0, 2.0, 1.0, -0.1)]);
+    let outer = path(vec![square(1.0, 1.0, 3.0, -0.5), square(6.0, 1.0, 3.0, -0.5)]);
+    for (name, moves) in [("Holes", inner), ("Outlines", outer)] {
+        let op = toolpath::blank_op(OpKind::Profile, name.into(), tool.clone(), 0.5, Vec::new());
+        h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves, kept_moves: None, kept_steps: None });
+    }
+}
+
+#[cfg(test)]
+fn merged_depths(h: &Harness<'static, App>) -> Vec<(f64, f64)> {
+    // Where each cut goes in: its first move down, in order.
+    let moves = &h.state().doc.toolpaths.last().unwrap().moves;
+    moves.windows(2).filter(|w| w[0].rapid && !w[1].rapid).map(|w| (w[1].p[0], w[1].p[2])).collect()
+}
+
+#[test]
+fn merging_keeps_each_part_together_in_toolpath_order() {
+    let mut h = job_with_square([1.0, 1.0]);
+    two_parts_in_two_toolpaths(&mut h);
+    h.state_mut().open_merge_form();
+    h.run();
+    assert_eq!(h.state().merge_form.as_ref().unwrap().name, "Merged Toolpath 1");
+    click(&mut h, "Merge");
+    assert!(h.state().merge_form.is_none(), "{:?}", h.state().merge_form);
+    let list = &h.state().doc.toolpaths;
+    assert_eq!(list.len(), 3);
+    assert!(!list[0].visible && !list[1].visible && list[2].visible, "only the merged one still shows");
+    assert_eq!(list[2].op.name, "Merged Toolpath 1");
+    assert!(list[2].op.merged);
+    assert_eq!(h.state().selected_tp, Some(2));
+    // Each part's hole, then its outline; no order ticked, so the parts stay as the toolpaths had them.
+    assert_eq!(merged_depths(&h), [(2.0, -0.1), (1.0, -0.5), (7.0, -0.1), (6.0, -0.5)]);
+    let moves = &h.state().doc.toolpaths[2].moves;
+    assert_eq!(moves.first(), moves.last(), "out from home and back");
+    assert!(moves[0].rapid);
+    let cutting = |m: &[crate::toolpath::Move]| m.iter().filter(|m| !m.rapid).count();
+    let sources: usize = h.state().doc.toolpaths[..2].iter().map(|t| cutting(&t.moves)).sum();
+    assert_eq!(cutting(moves), sources, "every cutting move is still there");
+    // Any fast move across happens at the clearance height.
+    let safe = h.state().doc.machine_on_job().safe_z;
+    for w in moves.windows(2) {
+        let across = (w[0].p[0] - w[1].p[0]).hypot(w[0].p[1] - w[1].p[1]) > 1e-9;
+        if w[1].rapid && across && w[1].p != moves[0].p {
+            assert!(w[0].p[2] >= safe - 1e-9 && w[1].p[2] >= safe - 1e-9, "{w:?}");
+        }
+    }
+}
+
+#[test]
+fn merging_without_parts_can_mix_the_cuts_and_says_so() {
+    let mut h = job_with_square([1.0, 1.0]);
+    two_parts_in_two_toolpaths(&mut h);
+    h.state_mut().merge_choices.by_part = false;
+    h.state_mut().merge_choices.left_to_right = true;
+    h.state_mut().open_merge_form();
+    h.run();
+    h.get_by_label("Warning: cuts can change order, within a toolpath and between toolpaths.");
+    click(&mut h, "Merge");
+    let depths = merged_depths(&h);
+    assert_eq!(depths.len(), 4);
+    assert_eq!(depths[0].0, 1.0, "the left-most first, whichever toolpath it was in");
+    assert!(depths[1].0 < 3.0 && depths[3].0 > 5.0, "{depths:?}");
+}
+
+#[test]
+fn merging_says_why_it_cannot() {
+    let mut h = job_with_square([1.0, 1.0]);
+    h.state_mut().open_merge_form();
+    h.run();
+    click(&mut h, "Merge");
+    h.get_by_label("No Toolpaths");
+    two_parts_in_two_toolpaths(&mut h);
+    h.state_mut().doc.toolpaths[1].visible = false;
+    h.run();
+    click(&mut h, "Merge");
+    h.get_by_label("Two visible toolpaths at least are needed to merge.");
+    h.state_mut().doc.toolpaths[1].visible = true;
+    h.state_mut().doc.toolpaths[1].op.tool.dia *= 2.0;
+    h.run();
+    click(&mut h, "Merge");
+    h.get_by_label("All the toolpaths to merge must use the same tool. The visible ones don't.");
+    h.state_mut().doc.toolpaths[1].op.tool.dia /= 2.0;
+    h.state_mut().doc.toolpaths[1].moves = Default::default();
+    h.run();
+    click(&mut h, "Merge");
+    assert_eq!(h.state().doc.toolpaths.len(), 2, "nothing was added");
+    assert!(h.state().merge_form.as_ref().unwrap().problem.as_ref().unwrap().contains("Outlines"));
+}
+
+#[test]
+fn a_merged_toolpath_warns_of_rates_and_stays_as_it_is() {
+    let mut h = job_with_square([1.0, 1.0]);
+    two_parts_in_two_toolpaths(&mut h);
+    h.state_mut().doc.toolpaths[1].op.tool.feed *= 2.0;
+    h.state_mut().open_merge_form();
+    h.run();
+    let name = h.state().doc.toolpaths[0].op.tool.name.clone();
+    h.get_by_label(&format!("These toolpaths have different feed rates or spindle speeds. The merged toolpath uses those of the first: {name}"));
+    click(&mut h, "Merge");
+    let moves = h.state().doc.toolpaths[2].moves.clone();
+
+    // Editing is refused, and calculating everything again leaves it alone.
+    h.state_mut().selected_tp = Some(2);
+    h.state_mut().edit_toolpath();
+    assert!(h.state().message.as_ref().unwrap().contains("merged"));
+    h.state_mut().message = None;
+    h.state_mut().recalculate_all();
+    h.run();
+    assert_eq!(*h.state().doc.toolpaths[2].moves, *moves);
+
+    // The next one gets the next free name, and the choices are remembered.
+    h.state_mut().merge_choices.grid = true;
+    h.state_mut().open_merge_form();
+    h.run();
+    assert_eq!(h.state().merge_form.as_ref().unwrap().name, "Merged Toolpath 2");
+    assert!(h.state().merge_choices.grid);
+}
+
+#[test]
+fn merging_real_toolpaths_keeps_every_cut_and_makes_a_machine_file() {
+    use crate::geom::{rect, Path};
+    use crate::toolpath::{self, JobSize, OpKind};
+    let mut h = job_with_square([1.0, 1.0]);
+    let tool = toolpath::default_tools().remove(0);
+    let squares = |size: f64| vec![Path::closed(rect([2.5, 2.5], size, size, 0.0)), Path::closed(rect([7.5, 2.5], size, size, 0.0))];
+    let (machine, job) = {
+        let d = &h.state().doc;
+        (d.machine_on_job(), JobSize { width: d.job.width, height: d.job.height, thickness: d.job.thickness })
+    };
+    for (kind, name, depth, paths) in [(OpKind::Pocket, "Inside", 0.1, squares(1.0)), (OpKind::Profile, "Around", 0.4, squares(3.0))] {
+        let op = toolpath::blank_op(kind, name.into(), tool.clone(), depth, paths);
+        let moves = toolpath::generate(&op, machine, &job, None).unwrap();
+        assert!(!moves.is_empty());
+        h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(moves), kept_moves: None, kept_steps: None });
+    }
+    h.state_mut().open_merge_form();
+    h.run();
+    click(&mut h, "Merge");
+    let list = &h.state().doc.toolpaths;
+    let moves = list[2].moves.clone();
+    let cutting = |m: &[toolpath::Move]| m.iter().filter(|m| !m.rapid).count();
+    assert_eq!(cutting(&moves), cutting(&list[0].moves) + cutting(&list[1].moves));
+
+    // Everything on the left is cut before anything on the right, and each part goes shallow, then deep.
+    let cuts: Vec<(f64, f64)> = toolpath::cuts_of(&moves, 0).iter().map(|c| (c.moves[1].p[0], c.moves.iter().map(|m| m.p[2]).fold(f64::MAX, f64::min))).collect();
+    let part = |x: f64| x > 5.0;
+    assert!(cuts.windows(2).all(|w| part(w[0].0) <= part(w[1].0)), "{cuts:?}");
+    for side in [false, true] {
+        let deepest: Vec<f64> = cuts.iter().filter(|c| part(c.0) == side).map(|c| c.1).collect();
+        assert!(deepest.first().unwrap() > deepest.last().unwrap(), "the pocket before the outline: {deepest:?}");
+    }
+    let chosen = [&h.state().doc.toolpaths[2]];
+    let file = h.state().gcode_from(&chosen, "merged.nc");
+    assert!(file.is_some_and(|f| f.lines().count() as f64 > cutting(&moves) as f64 / 2.0));
+}

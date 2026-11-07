@@ -120,8 +120,10 @@ pub fn gcode(paths: &[PostPath], job: &PlanetJob) -> String {
                     let (ci, cj) = ((centre[0] - prev[0]) * k, (centre[1] - prev[1]) * k);
                     written.axis[0] = Some(mm(x));
                     written.axis[1] = Some(mm(y));
+                    // Only an arc that also goes down says so; the flat ones stay as in their files.
+                    let height = written.axis(2, (end[2] + job.z_shift) * k);
                     let feed = written.feed(tool_feed(tool, k));
-                    let _ = write!(s, "{} X{} Y{} I{} J{}{feed}{LINE}", if *counter_clockwise { "G03" } else { "G02" }, mm(x), mm(y), mm(ci), mm(cj));
+                    let _ = write!(s, "{} X{} Y{}{height} I{} J{}{feed}{LINE}", if *counter_clockwise { "G03" } else { "G02" }, mm(x), mm(y), mm(ci), mm(cj));
                     prev = *end;
                     continue;
                 }
@@ -191,6 +193,24 @@ mod tests {
 
     fn job(arcs: Option<f64>) -> PlanetJob<'static> {
         PlanetJob { name: "sample", created: "2026-11-05 10:00".into(), material: [300.0, 200.0, 13.0], origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs }
+    }
+
+    #[test]
+    fn an_arc_that_goes_down_says_how_far() {
+        let t = tool();
+        let start = Move { p: [10.0, 0.0, -1.0], rapid: false };
+        let steps = [
+            Step::Straight(Move { p: [10.0, 0.0, 15.0], rapid: true }),
+            Step::Straight(start),
+            Step::Arc { end: [-10.0, 0.0, -2.0], centre: [0.0, 0.0], counter_clockwise: true },
+            Step::Arc { end: [10.0, 0.0, -2.0], centre: [0.0, 0.0], counter_clockwise: true },
+        ];
+        let moves = [start];
+        let path = PostPath { name: "Down", tool: &t, moves: &moves, dwell: 0.0, steps: Some(&steps) };
+        let text = gcode(&[path], &job(Some(0.012)));
+        let arcs: Vec<&str> = text.lines().filter(|l| l.starts_with("G03")).collect();
+        assert!(arcs[0].contains(" Z-2.000"), "{}", arcs[0]);
+        assert!(!arcs[1].contains('Z'), "{}", arcs[1]);
     }
 
     fn profile() -> (Vec<Move>, Tool) {

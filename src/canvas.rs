@@ -122,10 +122,10 @@ impl App {
         let Some(stroke) = self.trim_stroke.take() else { return };
         // However many pieces went, one undo brings them all back.
         self.undo.truncate(stroke.undo_mark + usize::from(stroke.trimmed > 0));
-        if stroke.trimmed > 1 && !self.status.contains("rule") {
-            self.status = format!("Trimmed {} sections.", stroke.trimmed);
-        } else if stroke.trimmed > 0 && self.status.contains("doesn't cross") {
-            self.status = "Ready".into();
+        if stroke.trimmed > 1 && !self.status.contains(crate::i18n::tr("rule")) {
+            self.status = tf!("Trimmed {} sections.", stroke.trimmed);
+        } else if stroke.trimmed > 0 && self.status == crate::i18n::tr("That line doesn't cross anything. Hold Shift and click to delete it.") {
+            self.status = crate::i18n::tr("Ready").into();
         }
     }
 
@@ -196,12 +196,27 @@ impl App {
             .collect()
     }
 
-    fn handle_rects(&self) -> Vec<(Pos2, P)> {
+    /// The handles for resizing, each with the point that stays put: the corners, then the middles
+    /// of the sides. Only once a click on the selection has asked for them.
+    pub(crate) fn handle_rects(&self) -> Vec<(Pos2, P)> {
+        if self.handles_on.as_deref() != Some(self.selected.as_slice()) {
+            return Vec::new();
+        }
         let Some((lo, hi)) = self.selected_bbox() else { return Vec::new() };
-        [([lo[0], lo[1]], [hi[0], hi[1]]), ([hi[0], lo[1]], [lo[0], hi[1]]), ([hi[0], hi[1]], [lo[0], lo[1]]), ([lo[0], hi[1]], [hi[0], lo[1]])]
-            .into_iter()
-            .map(|(corner, anchor)| (self.to_screen(corner), anchor))
-            .collect()
+        let (mx, my) = ((lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0);
+        [
+            ([lo[0], lo[1]], [hi[0], hi[1]]),
+            ([hi[0], lo[1]], [lo[0], hi[1]]),
+            ([hi[0], hi[1]], [lo[0], lo[1]]),
+            ([lo[0], hi[1]], [hi[0], lo[1]]),
+            ([mx, lo[1]], [mx, hi[1]]),
+            ([hi[0], my], [lo[0], my]),
+            ([mx, hi[1]], [mx, lo[1]]),
+            ([lo[0], my], [hi[0], my]),
+        ]
+        .into_iter()
+        .map(|(corner, anchor)| (self.to_screen(corner), anchor))
+        .collect()
     }
 
     pub fn fit_selection(&mut self, rect: Rect) {
@@ -236,8 +251,8 @@ impl App {
         // Guides are pulled out of the rulers.
         let top = Rect::from_min_max(pos2(sheet_rect.left(), full.top()), pos2(sheet_rect.right(), sheet_rect.top()));
         let side = Rect::from_min_max(pos2(full.left(), sheet_rect.top()), pos2(sheet_rect.left(), sheet_rect.bottom()));
-        for (rect, vertical, name) in [(top, false, "Top ruler"), (side, true, "Side ruler")] {
-            let ruler = ui.interact(rect, ui.scope_id().with(name), Sense::drag()).on_hover_text("Drag onto the sheet to add a guide line");
+        for (rect, vertical, name) in [(top, false, crate::i18n::tr("Top ruler")), (side, true, crate::i18n::tr("Side ruler"))] {
+            let ruler = ui.interact(rect, ui.scope_id().with(name), Sense::drag()).on_hover_text(crate::i18n::tr("Drag onto the sheet to add a guide line"));
             crate::ui::label_widget(&ruler, name);
             if ruler.drag_started() {
                 self.checkpoint();
@@ -496,7 +511,7 @@ impl App {
                     if f.load_shape(&shape) {
                         self.selected = vec![id];
                     } else {
-                        self.status = "That shape is a different kind, so this form can't edit it.".into();
+                        self.status = crate::i18n::tr("That shape is a different kind, so this form can't edit it.").into();
                     }
                 }
             }
@@ -585,7 +600,7 @@ impl App {
             self.measure = Some((start, now));
             let d = (now[0] - start[0]).hypot(now[1] - start[1]);
             let angle = (now[1] - start[1]).atan2(now[0] - start[0]).to_degrees();
-            self.status = format!("Distance {:.4} {}, angle {angle:.1} degrees", d, self.doc.job.unit());
+            self.status = tf!("Distance {:.4} {}, angle {angle:.1} degrees", d, self.doc.job.unit());
             if response.drag_stopped() {
                 self.drag = Drag::None;
             }
@@ -649,18 +664,48 @@ impl App {
     }
 
     fn handle_select(&mut self, response: &egui::Response, pointer: Option<Pos2>, press: Option<Pos2>, shift: bool) {
+        if let Some(p) = response.hover_pos() {
+            use egui::CursorIcon::{ResizeHorizontal, ResizeNeSw, ResizeNwSe, ResizeVertical};
+            // The sheet's Y goes up: its first corner is bottom left on the screen.
+            let icons = [ResizeNeSw, ResizeNwSe, ResizeNeSw, ResizeNwSe, ResizeVertical, ResizeHorizontal, ResizeVertical, ResizeHorizontal];
+            if let Some(i) = self.handle_rects().iter().position(|(h, _)| (*h - p).length() < 7.0) {
+                response.ctx.set_cursor_icon(icons[i]);
+            }
+        }
+        // A double click takes in the whole of a piece, without choosing it from the buttons.
+        if response.double_clicked() && !shift && !self.adjust_piece {
+            let hit = pointer.and_then(|p| self.pick(p)).filter(|id| self.doc.vectors.iter().any(|v| v.id == *id && v.piece.is_some()));
+            if let Some(id) = hit {
+                self.selected = vec![id];
+                self.select_piece();
+                self.handles_on = None;
+                return;
+            }
+        }
         if response.clicked() {
             let hit = pointer.and_then(|p| self.pick(p));
             match (hit, shift) {
                 (Some(id), true) => {
+                    self.handles_on = None;
                     if let Some(i) = self.selected.iter().position(|s| *s == id) {
                         self.selected.remove(i);
                     } else {
                         self.selected.push(id);
                     }
                 }
-                (Some(id), false) => self.selected = vec![id],
-                (None, false) => self.selected.clear(),
+                // A click on what's already selected changes between just moving it and resizing it.
+                (Some(id), false) if self.selected.contains(&id) => {
+                    let shown = self.handles_on.as_deref() == Some(self.selected.as_slice());
+                    self.handles_on = (!shown).then(|| self.selected.clone());
+                }
+                (Some(id), false) => {
+                    self.handles_on = None;
+                    self.selected = vec![id];
+                }
+                (None, false) => {
+                    self.handles_on = None;
+                    self.selected.clear();
+                }
                 (None, true) => {}
             }
             return;
@@ -712,6 +757,7 @@ impl App {
         }
         if response.drag_stopped() {
             if let Drag::Box(start) = self.drag {
+                self.handles_on = None;
                 let ids = self.box_picks(self.to_world(start), self.to_world(p), box_touches(start, p));
                 if !shift {
                     self.selected.clear();
@@ -762,8 +808,10 @@ impl App {
 
         if self.show_vectors {
             let dash = Stroke::new(1.2, MAGENTA);
+            let in_selected_piece = self.doc.with_their_pieces(&self.selected);
             for v in self.visible_vectors() {
                 let chosen = self.selected.contains(&v.id);
+                let piece_mate = !chosen && in_selected_piece.contains(&v.id);
                 let colour = self.doc.layers.get(v.layer).map_or([24, 26, 30], |l| l.color);
                 // Lines under rules show how settled they are: blue can still move, red disagrees.
                 let colour = match (self.constraint_conflict, self.defined.get(&v.id)) {
@@ -779,6 +827,11 @@ impl App {
                             pts.push(pts[0]);
                         }
                         painter.extend(Shape::dashed_line(&pts, dash, 4.0, 3.0));
+                    } else if piece_mate {
+                        if p.closed && !pts.is_empty() {
+                            pts.push(pts[0]);
+                        }
+                        painter.add(Shape::line(pts, Stroke::new(1.6, theme::PIECE)));
                     } else if v.construction {
                         if p.closed && !pts.is_empty() {
                             pts.push(pts[0]);
@@ -790,6 +843,24 @@ impl App {
                         painter.add(Shape::line(pts, line));
                     }
                 }
+            }
+        }
+
+        // A frame around each piece with something selected in it.
+        if self.show_vectors {
+            let mut pieces: Vec<u64> = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id)).filter_map(|v| v.piece).collect();
+            pieces.sort_unstable();
+            pieces.dedup();
+            for piece in pieces {
+                let lines = self.doc.vectors.iter().filter(|v| v.piece == Some(piece)).flat_map(|v| v.paths.iter());
+                let Some((lo, hi)) = geom::bbox(lines) else { continue };
+                let (a, b) = (self.to_screen(lo), self.to_screen(hi));
+                let frame = Rect::from_two_pos(a, b).expand(7.0);
+                let corners = [frame.left_top(), frame.right_top(), frame.right_bottom(), frame.left_bottom(), frame.left_top()];
+                painter.extend(Shape::dashed_line(&corners, Stroke::new(1.2, theme::PIECE), 7.0, 4.0));
+                let name = self.doc.piece_name(piece);
+                let label = if self.adjust_piece { tf!("{}: adjusting", name) } else { name };
+                painter.text(frame.left_top() + vec2(2.0, -3.0), Align2::LEFT_BOTTOM, label, FontId::proportional(12.0), theme::PIECE);
             }
         }
 

@@ -85,7 +85,37 @@ fn along(pts: &[P], s: f64) -> (P, P) {
     (pts[0], [1.0, 0.0])
 }
 
+/// Shapes that move as one, with the box around them.
+struct Block {
+    ids: Vec<u64>,
+    lo: P,
+    hi: P,
+}
+
 impl App {
+    /// What these shapes move as: each on its own, but a whole piece only once, by the box around
+    /// all of it. Shapes in the piece `within`, or any with adjusting on, are arranged inside their
+    /// piece and move alone.
+    fn blocks(&self, items: &[Vector], within: Option<u64>) -> Vec<Block> {
+        let mut done = Vec::new();
+        let mut blocks = Vec::new();
+        for v in items {
+            let ids = match v.piece.filter(|p| !self.adjust_piece && Some(*p) != within) {
+                Some(piece) if done.contains(&piece) => continue,
+                Some(piece) => {
+                    done.push(piece);
+                    self.doc.vectors.iter().filter(|o| o.piece == Some(piece)).map(|o| o.id).collect()
+                }
+                None => vec![v.id],
+            };
+            let lines = self.doc.vectors.iter().filter(|o| ids.contains(&o.id)).flat_map(|o| o.paths.iter());
+            if let Some((lo, hi)) = geom::bbox(lines) {
+                blocks.push(Block { ids, lo, hi });
+            }
+        }
+        blocks
+    }
+
     fn selection_in_click_order(&self) -> Vec<Vector> {
         self.selected.iter().filter_map(|id| self.doc.vectors.iter().find(|v| v.id == *id).cloned()).collect()
     }
@@ -93,35 +123,32 @@ impl App {
     fn copy_selection(&mut self, f: impl Fn(P) -> P, prim_kept: bool) -> Vec<u64> {
         let items = self.selection_in_click_order();
         let mut made = Vec::new();
+        let mut pairs = Vec::new();
         for mut v in items {
+            let original = v.id;
             v.id = self.doc.new_id();
+            pairs.push((original, v.id));
+            let before = v.paths.clone();
             for p in v.paths.iter_mut().flat_map(|p| p.pts.iter_mut()) {
                 *p = f(*p);
             }
             if !prim_kept {
-                v.prim = Prim::Free;
+                // A copy that's still the same kind of shape stays one.
+                v.prim = v.prim.following(&before, &v.paths);
             }
             made.push(v.id);
             self.doc.vectors.push(v);
         }
+        self.doc.sort_out_copied_pieces(&made);
+        self.doc.join_copies_to_toolpaths(&pairs);
         made
-    }
-
-    fn group_ids(&mut self, ids: &[u64]) {
-        let paths: Vec<Path> = self.doc.vectors.iter().filter(|v| ids.contains(&v.id)).flat_map(|v| v.paths.iter().cloned()).collect();
-        if paths.is_empty() {
-            return;
-        }
-        self.doc.vectors.retain(|v| !ids.contains(&v.id));
-        let id = self.doc.add_vector(paths, Prim::Free);
-        self.selected.push(id);
     }
 
     pub fn apply_xform(&mut self) {
         let LeftForm::Xform(f) = &self.left else { return };
         let f = f.clone();
         let Some((lo, hi)) = self.selected_bbox() else {
-            self.status = "Select one or more shapes first.".into();
+            self.status = crate::i18n::tr("Select one or more shapes first.").into();
             return;
         };
         let at = anchor_point(lo, hi, f.anchor);
@@ -145,10 +172,10 @@ impl App {
             Xform::Rotate if f.each => {
                 self.checkpoint();
                 let (s, k) = f.angle.to_radians().sin_cos();
-                for id in self.selected.clone() {
-                    let Some((a, b)) = self.doc.vectors.iter().find(|v| v.id == id).and_then(|v| geom::bbox(&v.paths)) else { continue };
-                    let c = anchor_point(a, b, f.anchor);
-                    let keep = std::mem::replace(&mut self.selected, vec![id]);
+                let items = self.selection_in_click_order();
+                for block in self.blocks(&items, None) {
+                    let c = anchor_point(block.lo, block.hi, f.anchor);
+                    let keep = std::mem::replace(&mut self.selected, block.ids);
                     self.map_selected(|p| {
                         let (x, y) = (p[0] - c[0], p[1] - c[1]);
                         [c[0] + x * k - y * s, c[1] + x * s + y * k]
@@ -165,7 +192,7 @@ impl App {
                 self.checkpoint();
                 let (s, k) = f.angle.to_radians().sin_cos();
                 let c = f.pivot;
-                self.map_selected(|p| {
+                self.map_moving(|p| {
                     let (x, y) = (p[0] - c[0], p[1] - c[1]);
                     [c[0] + x * k - y * s, c[1] + x * s + y * k]
                 });
@@ -206,7 +233,8 @@ impl App {
         let middle = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
         let mut made = Vec::new();
         for i in 1..f.count.max(1) {
-            let (s, k) = (step * i as f64).to_radians().sin_cos();
+            // A positive angle goes clockwise.
+            let (s, k) = (-step * i as f64).to_radians().sin_cos();
             let rotate = f.rotate_copies;
             made.extend(self.copy_selection(
                 move |p| {
@@ -224,11 +252,12 @@ impl App {
         self.finish_copies(made, f.group);
     }
 
+    /// The originals stay selected with their copies, and go in the group with them.
     fn finish_copies(&mut self, made: Vec<u64>, group: bool) {
-        if group {
-            self.group_ids(&made);
-        } else {
-            self.selected.extend(made);
+        self.selected.extend(made);
+        if group && self.selected.len() > 1 {
+            let chosen = self.selected.clone();
+            self.keep_rules(|a| a.group_now(chosen));
         }
     }
 
@@ -238,7 +267,7 @@ impl App {
         let Some(rail) = items.last().and_then(|v| v.paths.first()).cloned() else { return };
         let others: Vec<Vector> = items[..items.len() - 1].to_vec();
         if !f.copy_circles && others.is_empty() {
-            self.status = "Select the object to copy first, then the shape to copy along.".into();
+            self.status = crate::i18n::tr("Select the object to copy first, then the shape to copy along.").into();
             return;
         }
         let mut route = rail.pts.clone();
@@ -270,14 +299,17 @@ impl App {
             if f.copy_circles {
                 let id = self.doc.new_id();
                 let (c, r) = (at, f.size / 2.0);
-                self.doc.vectors.push(Vector { id, paths: vec![Path::closed(geom::circle(c, r))], layer, prim: Prim::Circle { c, r }, construction: false });
+                self.doc.vectors.push(Vector { id, paths: vec![Path::closed(geom::circle(c, r))], layer, prim: Prim::Circle { c, r }, construction: false, members: Vec::new(), piece: None });
                 made.push(id);
                 continue;
             }
             let (c, s) = if f.align { (dir[0], dir[1]) } else { (1.0, 0.0) };
+            let mut now = Vec::new();
+            let mut pairs = Vec::new();
             for v in &others {
                 let mut copy = v.clone();
                 copy.id = self.doc.new_id();
+                pairs.push((v.id, copy.id));
                 copy.layer = layer;
                 copy.prim = Prim::Free;
                 for p in copy.paths.iter_mut().flat_map(|p| p.pts.iter_mut()) {
@@ -285,15 +317,18 @@ impl App {
                     *p = [at[0] + x * c - y * s, at[1] + x * s + y * c];
                 }
                 made.push(copy.id);
+                now.push(copy.id);
                 self.doc.vectors.push(copy);
             }
+            self.doc.sort_out_copied_pieces(&now);
+            self.doc.join_copies_to_toolpaths(&pairs);
         }
         self.selected = made;
     }
 
     /// Mirrors about the selection's own centre, the job's centre, or one of its edges.
     pub fn mirror(&mut self, horizontal: bool, edge: Option<Edge>, about_job: bool, copy: bool) {
-        let Some((lo, hi)) = self.selected_bbox() else { return };
+        let Some((lo, hi)) = self.moving_bbox() else { return };
         self.checkpoint();
         let line = match edge {
             Some(Edge::Left) => lo[0],
@@ -310,39 +345,73 @@ impl App {
             let made = self.copy_selection(flip, false);
             self.selected = made;
         } else {
-            self.map_selected(flip);
+            self.map_moving(flip);
         }
+    }
+
+    /// Turns the selection about the middle of its box. A positive angle goes anticlockwise.
+    pub fn turn_selected(&mut self, degrees: f64) {
+        let Some((lo, hi)) = self.moving_bbox() else { return };
+        self.checkpoint();
+        let c = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+        let (s, k) = degrees.to_radians().sin_cos();
+        self.map_moving(|p| {
+            let (x, y) = (p[0] - c[0], p[1] - c[1]);
+            [c[0] + x * k - y * s, c[1] + x * s + y * k]
+        });
     }
 
     /// Lines up the other selected shapes with the last one selected. `axis` picks which directions.
     pub fn align_to_last_center(&mut self, x: bool, y: bool) {
+        self.align_to_last_center_as(x, y, false);
+    }
+
+    /// What moves when lining up with the last selected: each shape by its own box, or all of them
+    /// by the box around them, so they stay as they are to each other. A shape in the same piece as
+    /// the last one is arranged inside that piece, so it moves alone.
+    fn blocks_to_align(&self, items: &[Vector], together: bool) -> Vec<Block> {
+        let within = items.last().and_then(|v| v.piece);
+        let mut blocks = self.blocks(&items[..items.len() - 1], within);
+        if together {
+            let lo = blocks.iter().fold([f64::MAX; 2], |m, b| [m[0].min(b.lo[0]), m[1].min(b.lo[1])]);
+            let hi = blocks.iter().fold([f64::MIN; 2], |m, b| [m[0].max(b.hi[0]), m[1].max(b.hi[1])]);
+            for block in &mut blocks {
+                (block.lo, block.hi) = (lo, hi);
+            }
+        }
+        blocks
+    }
+
+    pub fn align_to_last_center_as(&mut self, x: bool, y: bool, together: bool) {
         let items = self.selection_in_click_order();
         let Some(target) = items.last().and_then(|v| geom::bbox(&v.paths)) else { return };
         if items.len() < 2 {
-            self.status = "Select the shapes to move, then the one to align to.".into();
+            self.status = crate::i18n::tr("Select the shapes to move, then the one to align to.").into();
             return;
         }
         self.checkpoint();
         let c = [(target.0[0] + target.1[0]) / 2.0, (target.0[1] + target.1[1]) / 2.0];
-        for v in &items[..items.len() - 1] {
-            let Some((lo, hi)) = geom::bbox(&v.paths) else { continue };
+        for Block { ids, lo, hi } in self.blocks_to_align(&items, together) {
             let dx = if x { c[0] - (lo[0] + hi[0]) / 2.0 } else { 0.0 };
             let dy = if y { c[1] - (lo[1] + hi[1]) / 2.0 } else { 0.0 };
-            self.translate_one(v.id, dx, dy);
+            self.translate_ids(&ids, dx, dy);
         }
     }
 
     /// Moves the others to an edge of the last selected shape, inside it or just outside it.
     pub fn align_to_last_edge(&mut self, edge: Edge, inside: bool) {
+        self.align_to_last_edge_as(edge, inside, false);
+    }
+
+    pub fn align_to_last_edge_as(&mut self, edge: Edge, inside: bool, together: bool) {
         let items = self.selection_in_click_order();
         let Some((tlo, thi)) = items.last().and_then(|v| geom::bbox(&v.paths)) else { return };
         if items.len() < 2 {
-            self.status = "Select the shapes to move, then the one to align to.".into();
+            self.status = crate::i18n::tr("Select the shapes to move, then the one to align to.").into();
             return;
         }
         self.checkpoint();
-        for v in &items[..items.len() - 1] {
-            let Some((lo, hi)) = geom::bbox(&v.paths) else { continue };
+        for Block { ids, lo, hi } in self.blocks_to_align(&items, together) {
             let (dx, dy) = match (edge, inside) {
                 (Edge::Left, true) => (tlo[0] - lo[0], 0.0),
                 (Edge::Left, false) => (tlo[0] - hi[0], 0.0),
@@ -353,41 +422,34 @@ impl App {
                 (Edge::Bottom, true) => (0.0, tlo[1] - lo[1]),
                 (Edge::Bottom, false) => (0.0, tlo[1] - hi[1]),
             };
-            self.translate_one(v.id, dx, dy);
+            self.translate_ids(&ids, dx, dy);
         }
     }
 
     /// Spaces the selected shapes evenly between the outermost two.
     pub fn space_selection(&mut self, horizontal: bool) {
-        let mut items: Vec<(u64, P, P)> = self
-            .selection_in_click_order()
-            .iter()
-            .filter_map(|v| geom::bbox(&v.paths).map(|(lo, hi)| (v.id, lo, hi)))
-            .collect();
-        if items.len() < 3 {
-            self.status = "Select three or more shapes to space them.".into();
+        // Shapes all in one piece are arranged inside it.
+        let within = self.doc.shared_piece(&self.selected);
+        let items = self.selection_in_click_order();
+        let mut blocks = self.blocks(&items, within);
+        if blocks.len() < 3 {
+            self.status = crate::i18n::tr("Select three or more shapes to space them.").into();
             return;
         }
         let axis = if horizontal { 0 } else { 1 };
-        items.sort_by(|a, b| (a.1[axis] + a.2[axis]).total_cmp(&(b.1[axis] + b.2[axis])));
-        let first = (items[0].1[axis] + items[0].2[axis]) / 2.0;
-        let last = (items[items.len() - 1].1[axis] + items[items.len() - 1].2[axis]) / 2.0;
-        let gap = (last - first) / (items.len() - 1) as f64;
+        blocks.sort_by(|a, b| (a.lo[axis] + a.hi[axis]).total_cmp(&(b.lo[axis] + b.hi[axis])));
+        let first = (blocks[0].lo[axis] + blocks[0].hi[axis]) / 2.0;
+        let last = (blocks[blocks.len() - 1].lo[axis] + blocks[blocks.len() - 1].hi[axis]) / 2.0;
+        let gap = (last - first) / (blocks.len() - 1) as f64;
         self.checkpoint();
-        for (i, (id, lo, hi)) in items.iter().enumerate() {
-            let shift = first + gap * i as f64 - (lo[axis] + hi[axis]) / 2.0;
+        for (i, block) in blocks.iter().enumerate() {
+            let shift = first + gap * i as f64 - (block.lo[axis] + block.hi[axis]) / 2.0;
             if horizontal {
-                self.translate_one(*id, shift, 0.0);
+                self.translate_ids(&block.ids, shift, 0.0);
             } else {
-                self.translate_one(*id, 0.0, shift);
+                self.translate_ids(&block.ids, 0.0, shift);
             }
         }
-    }
-
-    pub fn translate_one(&mut self, id: u64, dx: f64, dy: f64) {
-        let keep = std::mem::replace(&mut self.selected, vec![id]);
-        self.translate_selected(dx, dy);
-        self.selected = keep;
     }
 
     /// How many closed and open lines the selection has, and would have after joining.
@@ -406,15 +468,17 @@ impl App {
     fn join_inner(&mut self, tolerance: f64) {
         let paths = self.selected_paths();
         if !paths.iter().any(|p| !p.closed) {
-            self.status = "Select open lines to join.".into();
+            self.status = crate::i18n::tr("Select open lines to join.").into();
             return;
         }
         self.checkpoint();
         let joined = join_paths(paths, tolerance);
         let sel = std::mem::take(&mut self.selected);
+        let piece = self.doc.shared_piece(&sel);
         self.doc.vectors.retain(|v| !sel.contains(&v.id));
         for p in joined {
             let id = self.doc.add_vector(vec![p], Prim::Free);
+            self.doc.put_in_piece(&[id], piece);
             self.selected.push(id);
         }
     }
@@ -441,18 +505,18 @@ impl App {
             }
         }
         let Some((_, vi, pi, i)) = best else {
-            self.status = "Click on a corner of a shape.".into();
+            self.status = crate::i18n::tr("Click on a corner of a shape.").into();
             return false;
         };
         let path = self.doc.vectors[vi].paths[pi].clone();
         let n = path.pts.len();
         if !path.closed && (i == 0 || i == n - 1) || n < 3 {
-            self.status = "That point is the end of a line, not a corner.".into();
+            self.status = crate::i18n::tr("That point is the end of a line, not a corner.").into();
             return false;
         }
         let (a, c, b) = (path.pts[(i + n - 1) % n], path.pts[i], path.pts[(i + 1) % n]);
         let Some(replacement) = corner_points(a, c, b, radius, kind) else {
-            self.status = "That corner is too small or too flat for this radius.".into();
+            self.status = crate::i18n::tr("That corner is too small or too flat for this radius.").into();
             return false;
         };
         self.checkpoint();
@@ -523,7 +587,7 @@ impl App {
         let mut cuts: Vec<f64> = crossings.iter().map(|c| c.0).collect();
         cuts.dedup_by(|x, y| (*x - *y).abs() < 1e-9);
         if cuts.is_empty() {
-            self.status = "That line doesn't cross anything. Hold Shift and click to delete it.".into();
+            self.status = crate::i18n::tr("That line doesn't cross anything. Hold Shift and click to delete it.").into();
             return false;
         }
         let (sa, sb) = segs[si];
@@ -641,7 +705,7 @@ impl App {
                 }
             }
         }
-        self.status = format!("Found {} issue(s).", issues.len());
+        self.status = tf!("Found {} issue(s).", issues.len());
         self.issues = issues;
     }
 
@@ -712,12 +776,12 @@ impl App {
         let layer = match self.doc.layers.iter().position(|l| l.name == "Dimensions") {
             Some(i) => i,
             None => {
-                self.doc.layers.push(Layer::named("Dimensions"));
+                self.doc.layers.push(Layer::named(crate::i18n::tr("Dimensions")));
                 self.doc.layers.len() - 1
             }
         };
         let id = self.doc.new_id();
-        self.doc.vectors.push(Vector { id, paths, layer, prim: Prim::Free, construction: false });
+        self.doc.vectors.push(Vector { id, paths, layer, prim: Prim::Free, construction: false, members: Vec::new(), piece: None });
         self.selected = vec![id];
     }
 
@@ -733,12 +797,12 @@ impl App {
         let primary = if f.along_x { w } else { h };
         let (mut u, mut v, mut row) = (0.0f64, 0.0f64, 0.0f64);
         let mut placed = 0;
-        let mut sized: Vec<(u64, P, P)> = items.iter().filter_map(|i| geom::bbox(&i.paths).map(|(lo, hi)| (i.id, lo, hi))).collect();
+        let mut sized = self.blocks(&items, None);
         sized.sort_by(|a, b| {
-            let height = |x: &(u64, P, P)| if f.along_x { x.2[1] - x.1[1] } else { x.2[0] - x.1[0] };
+            let height = |x: &Block| if f.along_x { x.hi[1] - x.lo[1] } else { x.hi[0] - x.lo[0] };
             height(b).total_cmp(&height(a))
         });
-        for (id, lo, hi) in sized {
+        for Block { ids, lo, hi } in sized {
             let (bw, bh) = (hi[0] - lo[0], hi[1] - lo[1]);
             let (run, depth) = if f.along_x { (bw, bh) } else { (bh, bw) };
             if u > 0.0 && u + run > primary {
@@ -754,7 +818,7 @@ impl App {
                 Datum::TopRight => (self.doc.job.width - f.border - x - bw, self.doc.job.height - f.border - y - bh),
                 _ => (f.border + x, f.border + y),
             };
-            self.translate_one(id, tx - lo[0], ty - lo[1]);
+            self.translate_ids(&ids, tx - lo[0], ty - lo[1]);
             if run <= primary {
                 placed += 1;
             }
@@ -762,7 +826,7 @@ impl App {
             row = row.max(depth);
         }
         let over = v + row > if f.along_x { h } else { w };
-        self.status = if over { format!("Nested {placed} parts, but they run past the sheet.") } else { format!("Nested {placed} parts.") };
+        self.status = if over { tf!("Nested {placed} parts, but they run past the sheet.") } else { tf!("Nested {placed} parts.") };
     }
 
     /// Sets a selected text along the last selected shape, letter by letter.
@@ -774,7 +838,7 @@ impl App {
         });
         let curve = items.iter().rev().find(|v| !matches!(v.prim, Prim::Text { .. })).and_then(|v| v.paths.first().cloned());
         let (Some((text_id, text, height)), Some(curve)) = (text, curve) else {
-            self.status = "Select a line of text and the curve to wrap it onto.".into();
+            self.status = crate::i18n::tr("Select a line of text and the curve to wrap it onto.").into();
             return;
         };
         let mut route = curve.pts.clone();
@@ -1037,7 +1101,13 @@ mod tests {
         (f.rows, f.cols, f.group) = (2, 2, true);
         a.left = LeftForm::Xform(f);
         a.apply_xform();
-        assert_eq!(a.doc.vectors.len(), 2, "the copies are grouped into one");
+        assert_eq!(a.doc.vectors.len(), 1, "the shape and its copies are in one group");
+        assert_eq!(a.doc.vectors[0].members.len(), 4);
+        assert_eq!(a.selected, [a.doc.vectors[0].id]);
+        let undo = a.undo.len();
+        a.ungroup_selected();
+        assert_eq!(a.undo.len(), undo + 1);
+        assert_eq!(a.doc.vectors.len(), 4);
 
         let mut b = app();
         add(&mut b, vec![Path::closed(circle([8.0, 5.0], 0.5))]);
@@ -1045,8 +1115,23 @@ mod tests {
         (f.count, f.dx, f.dy, f.total_angle, f.angle) = (3, 5.0, 5.0, false, 90.0);
         b.left = LeftForm::Xform(f);
         b.apply_xform();
-        let (_, hi) = geom::bbox(&b.doc.vectors[1].paths).unwrap();
-        assert!((hi[1] - 8.5).abs() < 0.01, "the first copy is a quarter turn around, {hi:?}");
+        let (lo, _) = geom::bbox(&b.doc.vectors[1].paths).unwrap();
+        assert!((lo[1] - 1.5).abs() < 0.01, "the first copy is a quarter turn clockwise, {lo:?}");
+    }
+
+    #[test]
+    fn a_copied_circle_is_still_a_circle_unless_it_was_changed() {
+        let mut a = app();
+        let c = [1.0, 1.0];
+        let id = a.doc.add_vector(vec![Path::closed(circle(c, 0.5))], Prim::Circle { c, r: 0.5 });
+        a.selected = vec![id];
+        let mut f = XformForm::new(Xform::BlockCopy, &a.doc.job);
+        (f.rows, f.cols, f.use_offset, f.dx, f.dy) = (1, 2, true, 3.0, 0.0);
+        a.left = LeftForm::Xform(f);
+        a.apply_xform();
+        assert_eq!(a.doc.vectors.len(), 2);
+        let Prim::Circle { c, r } = a.doc.vectors[1].prim else { panic!("{:?}", a.doc.vectors[1].prim) };
+        assert!((c[0] - 4.0).abs() < 1e-9 && (c[1] - 1.0).abs() < 1e-9 && (r - 0.5).abs() < 1e-9, "{c:?} {r}");
     }
 
     #[test]
