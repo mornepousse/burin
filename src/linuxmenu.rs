@@ -57,9 +57,9 @@ pub fn install_in(data: &Path, program: &Path, icon_png: &[u8]) -> std::io::Resu
             std::fs::create_dir_all(dir)?;
         }
     }
-    std::fs::write(&icon, icon_png)?;
-    std::fs::write(&mime, mime_text())?;
-    std::fs::write(desktop_file(data), desktop_text(program, &icon))
+    crate::platform::write(&icon, icon_png)?;
+    crate::platform::write(&mime, mime_text())?;
+    crate::platform::write(desktop_file(data), desktop_text(program, &icon))
 }
 
 pub fn remove_from(data: &Path) {
@@ -100,8 +100,8 @@ mod tests {
         assert!(!installed_in(&data));
         install_in(&data, Path::new("/opt/burin"), b"png").unwrap();
         assert!(installed_in(&data));
-        assert_eq!(std::fs::read(data.join("icons/hicolor/512x512/apps/burin.png")).unwrap(), b"png");
-        assert!(std::fs::read_to_string(data.join("mime/packages/burin.xml")).unwrap().contains("*.burin"));
+        assert_eq!(crate::platform::read(data.join("icons/hicolor/512x512/apps/burin.png")).unwrap(), b"png");
+        assert!(crate::platform::read_to_string(data.join("mime/packages/burin.xml")).unwrap().contains("*.burin"));
         remove_from(&data);
         assert!(!installed_in(&data));
         let _ = std::fs::remove_dir_all(&data);

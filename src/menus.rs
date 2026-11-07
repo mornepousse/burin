@@ -353,13 +353,25 @@ impl App {
             return;
         }
         let (_, points) = self.file_units();
+        let bytes = crate::printing::pdf(&paths, [self.doc.job.width, self.doc.job.height], points, &self.print_setup);
+        if crate::platform::WEB {
+            // A page can't open a file of its own: the PDF downloads, to print from there.
+            let name = format!("{}.pdf", tr("Drawing"));
+            let file = crate::platform::FileDialog::new().add_filter("PDF", &["pdf"]).set_file_name(name).save_file();
+            match file.map(|f| crate::platform::write(&f, bytes)) {
+                Some(Ok(())) => self.status = tr("The drawing downloads as a PDF: print it from there.").into(),
+                Some(Err(e)) => self.message = Some(tf!("Could not write {}: {e}", "PDF")),
+                None => {}
+            }
+            return;
+        }
         let file = std::env::temp_dir().join(format!("burin-print-{}.pdf", std::process::id()));
-        match std::fs::write(&file, pdf_bytes(&paths, self.doc.job.width, self.doc.job.height, points)) {
+        match crate::platform::write(&file, bytes) {
             Ok(()) => {
                 let address = file.to_string_lossy().replace('\\', "/").replace(' ', "%20");
                 let slash = if address.starts_with('/') { "" } else { "/" };
                 ctx.open_url(egui::OpenUrl::new_tab(format!("file://{slash}{address}")));
-                self.status = tr("The drawing opens as a PDF, at its real size: print it from there.").into();
+                self.status = tr("The drawing opens as a PDF, laid out as Print Setup says: print it from there.").into();
             }
             Err(e) => self.message = Some(tf!("Could not write {}: {e}", file.display())),
         }
@@ -371,7 +383,7 @@ impl App {
             self.status = tr("There are no shapes to export.").into();
             return;
         }
-        let Some(path) = rfd::FileDialog::new().add_filter(tr("Drawing"), &[extension]).set_file_name(format!("{}.{extension}", tr("Drawing"))).save_file() else { return };
+        let Some(path) = crate::platform::FileDialog::new().add_filter(tr("Drawing"), &[extension]).set_file_name(format!("{}.{extension}", tr("Drawing"))).save_file() else { return };
         let (width, height) = (self.doc.job.width, self.doc.job.height);
         let (unit, points) = self.file_units();
         let bytes = match extension {
@@ -380,7 +392,7 @@ impl App {
             "pdf" => pdf_bytes(&paths, width, height, points),
             _ => geom::dxf_write(&paths).into_bytes(),
         };
-        match std::fs::write(&path, bytes) {
+        match crate::platform::write(&path, bytes) {
             Ok(()) => self.status = tf!("Exported {}", path.display()),
             Err(e) => self.message = Some(tf!("Could not write {}: {e}", path.display())),
         }
@@ -395,8 +407,8 @@ impl App {
 
     fn export_stl(&mut self) {
         let Some(model) = self.model_for_export() else { return };
-        let Some(path) = rfd::FileDialog::new().add_filter(tr("3D model"), &["stl"]).set_file_name("model.stl").save_file() else { return };
-        match std::fs::write(&path, stl_bytes(&model, 1_000_000)) {
+        let Some(path) = crate::platform::FileDialog::new().add_filter(tr("3D model"), &["stl"]).set_file_name("model.stl").save_file() else { return };
+        match crate::platform::write(&path, stl_bytes(&model, 1_000_000)) {
             Ok(()) => self.status = tf!("Exported {}", path.display()),
             Err(e) => self.message = Some(tf!("Could not write {}: {e}", path.display())),
         }
@@ -404,7 +416,7 @@ impl App {
 
     fn export_grey(&mut self) {
         let Some(model) = self.model_for_export() else { return };
-        let Some(path) = rfd::FileDialog::new().add_filter(tr("Picture"), &["png"]).set_file_name("model.png").save_file() else { return };
+        let Some(path) = crate::platform::FileDialog::new().add_filter(tr("Picture"), &["png"]).set_file_name("model.png").save_file() else { return };
         match grey_picture(&model).save(&path) {
             Ok(()) => self.status = tf!("Exported {}", path.display()),
             Err(e) => self.message = Some(tf!("Could not write {}: {e}", path.display())),
@@ -448,7 +460,10 @@ impl App {
         if entry(ui, "Print...", work, Some("Ctrl+P".into())) || entry(ui, "Print Preview", work, None) {
             self.print_drawing(ui.ctx());
         }
-        later(ui, "Print Setup...");
+        let setup = ui.push_id(crate::printing::PRINT_SETUP_COMMAND, |ui| entry(ui, "Print Setup...", work, None)).inner;
+        if setup {
+            self.print_setup_open = true;
+        }
         ui.separator();
         ui.add_enabled_ui(work, |ui| {
             ui.menu_button(tr("Import"), |ui| {
@@ -640,7 +655,10 @@ impl App {
         if entry(ui, "Notes", true, None) {
             self.notes_open = true;
         }
-        later(ui, "Document Variables");
+        let variables = ui.push_id(crate::formula::DOCUMENT_VARIABLES_COMMAND, |ui| entry(ui, "Document Variables...", true, None)).inner;
+        if variables {
+            self.open_variables();
+        }
         ui.menu_button(tr("Snap Options"), |ui| {
             ui.checkbox(&mut self.snap, tr("Snap to Grid"));
             ui.checkbox(&mut self.snap_shapes, tr("Snap to Shapes")).on_hover_text(tr("Hold Alt to turn it off for a moment."));
@@ -658,17 +676,32 @@ impl App {
             }
             later(ui, "Two Rail Sweep");
             later(ui, "Extrude and Weave");
-            later(ui, "Turn and Spin");
+            if ui.push_id(crate::modeltools::TURN_SPIN_COMMAND, |ui| entry(ui, "Turn and Spin", true, None)).inner {
+                self.open_turn_spin();
+            }
             later(ui, "Create Textured Area Component");
             later(ui, "Add Zero Plane");
         });
         ui.menu_button(tr("Create Component from..."), |ui| {
-            later(ui, "Bake Components");
-            later(ui, "Create Component from Visible Model");
-            later(ui, "Create Component with Draft from Visible Model");
-            later(ui, "Create an Offset Model");
-            later(ui, "Slice Model");
-            later(ui, "Create Component from Toolpath Preview");
+            if ui.push_id(crate::modeltools::BAKE_COMMAND, |ui| entry(ui, "Bake Components", self.selected_comp.is_some(), None)).inner {
+                self.bake_component();
+            }
+            let has_model = !self.doc.components.is_empty();
+            if ui.push_id(crate::modeltools::VISIBLE_MODEL_COMMAND, |ui| entry(ui, "Create Component from Visible Model", has_model, None)).inner {
+                self.component_from_visible_model();
+            }
+            if ui.push_id(crate::modeltools::DRAFT_COMMAND, |ui| entry(ui, "Create Component with Draft from Visible Model", has_model, None)).inner {
+                self.open_draft_model();
+            }
+            if ui.push_id(crate::modeltools::OFFSET_MODEL_COMMAND, |ui| entry(ui, "Create an Offset Model", has_model, None)).inner {
+                self.open_offset_model();
+            }
+            if ui.push_id(crate::modeltools::SLICE_COMMAND, |ui| entry(ui, "Slice Model", has_model, None)).inner {
+                self.open_slice_model();
+            }
+            if ui.push_id(crate::modeltools::PREVIEW_COMPONENT_COMMAND, |ui| entry(ui, "Create Component from Toolpath Preview", self.sim.is_some(), None)).inner {
+                self.component_from_preview();
+            }
         });
         ui.separator();
         if entry(ui, "3D Relief from Picture...", true, None) {
@@ -686,15 +719,30 @@ impl App {
         later(ui, "Export as 3D Clipart");
         ui.separator();
         later(ui, "Sculpt Visible Model");
-        later(ui, "Smooth Selected Components");
-        later(ui, "Reset Inside Selected Vectors");
-        later(ui, "Reset Outside Selected Vectors");
-        later(ui, "Split Selected Component");
-        later(ui, "Create Vector Boundary Around Selected Components");
+        if ui.push_id(crate::modeltools::SMOOTH_COMMAND, |ui| entry(ui, "Smooth Selected Components", has_model, None)).inner {
+            self.smooth_form = Some(crate::modeltools::SmoothForm::default());
+        }
+        let comp = self.selected_comp.is_some();
+        if ui.push_id(crate::modeltools::RESET_INSIDE_COMMAND, |ui| entry(ui, "Reset Inside Selected Vectors", comp, None)).inner {
+            self.reset_component(true);
+        }
+        if ui.push_id(crate::modeltools::RESET_OUTSIDE_COMMAND, |ui| entry(ui, "Reset Outside Selected Vectors", comp, None)).inner {
+            self.reset_component(false);
+        }
+        if ui.push_id(crate::modeltools::SPLIT_COMMAND, |ui| entry(ui, "Split Selected Component", comp, None)).inner {
+            self.split_component();
+        }
+        if ui.push_id(crate::modeltools::BOUNDARY_COMMAND, |ui| entry(ui, "Create Vector Boundary Around Selected Components", comp, None)).inner {
+            self.boundary_around_component();
+        }
         ui.separator();
         later(ui, "Emboss Component");
-        later(ui, "Scale Model Z Height");
-        later(ui, "Distort Selected Component");
+        if ui.push_id(crate::modeltools::SCALE_Z_COMMAND, |ui| entry(ui, "Scale Model Z Height", has_model, None)).inner {
+            self.open_scale_z();
+        }
+        if ui.push_id(crate::distort::DISTORT_COMPONENT_COMMAND, |ui| entry(ui, "Distort Selected Component", comp, None)).inner {
+            self.start_xform(crate::app::Xform::Distort);
+        }
         ui.separator();
         if entry(ui, "Selected Component Properties", self.selected_comp.is_some(), None) {
             self.open_shape_form(self.selected_comp);
@@ -777,7 +825,7 @@ impl App {
         }
         ui.separator();
         if entry(ui, "Install Post Processor...", true, None) {
-            if let Some(files) = rfd::FileDialog::new().add_filter(tr("Post processor"), &["pp"]).pick_files() {
+            if let Some(files) = crate::platform::FileDialog::new().add_filter(tr("Post processor"), &["pp"]).pick_files() {
                 self.report_loaded_posts(files);
             }
         }
@@ -821,25 +869,38 @@ impl App {
             }
         });
         ui.separator();
+        let kept = self.view_prefs();
         ui.checkbox(&mut self.draw_origin, tr("Draw Origin"));
-        later(ui, "Draw Modeling Plane");
+        ui.push_id(crate::view3d::MODELING_PLANE_COMMAND, |ui| {
+            ui.checkbox(&mut self.draw_modeling_plane, tr("Draw Modeling Plane"));
+        });
         ui.checkbox(&mut self.draw_block, tr("Draw Material Block"));
         ui.separator();
         later(ui, "Multi-Sided View");
         later(ui, "Auto-Wrapping View");
         later(ui, "Color Shaded View");
         ui.checkbox(&mut self.shaded_background, tr("Use Shaded Background"));
-        later(ui, "Light Follows Viewer");
-        later(ui, "Use Shadow Shading");
+        if self.view_prefs() != kept {
+            crate::viewprefs::save(self.view_prefs());
+        }
+        ui.push_id(crate::view3d::LIGHT_FOLLOWS_VIEWER_COMMAND, |ui| {
+            ui.checkbox(&mut self.light_follows_viewer, tr("Light Follows Viewer"));
+        });
+        ui.push_id(crate::view3d::SHADOW_SHADING_COMMAND, |ui| {
+            ui.checkbox(&mut self.shadow_shading, tr("Use Shadow Shading"));
+        });
         ui.menu_button(tr("3D Quality"), |ui| self.quality_list(ui));
         ui.separator();
         if entry(ui, "Save Shaded Image", self.view3d, None) {
-            self.save_preview = rfd::FileDialog::new().add_filter(tr("Picture"), &["png"]).set_file_name("preview.png").save_file();
+            self.save_preview = crate::platform::FileDialog::new().add_filter(tr("Picture"), &["png"]).set_file_name("preview.png").save_file();
         }
     }
 
     fn help_menu(&mut self, ui: &mut Ui) {
-        later(ui, "Help Contents");
+        let help = ui.push_id(crate::help::HELP_CONTENTS_COMMAND, |ui| entry(ui, "Help Contents", true, None)).inner;
+        if help {
+            self.help_open = true;
+        }
         if entry(ui, "Keyboard Shortcuts", true, None) {
             self.prefs_open = true;
         }
@@ -933,7 +994,7 @@ mod tests {
         let folder = std::env::temp_dir().join(format!("burin-increment-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         for n in 2..=102 {
-            std::fs::write(folder.join(format!("plate_{n}.burin")), "taken").unwrap();
+            crate::platform::write(folder.join(format!("plate_{n}.burin")), "taken").unwrap();
         }
         assert_eq!(incremented(&folder.join("plate_1.burin")), None);
         std::fs::remove_file(folder.join("plate_102.burin")).unwrap();

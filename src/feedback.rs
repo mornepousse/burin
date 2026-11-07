@@ -173,7 +173,7 @@ impl App {
                 }
                 let has_picture = form.picture.lock().is_ok_and(|p| p.is_some());
                 if ui.add_enabled(has_picture, egui::Button::new(tr("Save a Picture of the Window..."))).on_hover_text(tr("Pictures can show your work, so none goes in the draft. Add this one yourself if you want to.")).clicked() {
-                    if let Some(path) = rfd::FileDialog::new().add_filter("PNG", &["png"]).set_file_name("burin.png").save_file() {
+                    if let Some(path) = crate::platform::FileDialog::new().add_filter("PNG", &["png"]).set_file_name("burin.png").save_file() {
                         let image = form.picture.lock().ok().and_then(|p| p.clone());
                         form.said = image.map(|image| match crate::write_png(&crate::pieces::with_extension(path, "png"), &image) {
                             Ok(()) => tr("Saved.").to_string(),

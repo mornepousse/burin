@@ -164,9 +164,9 @@ fn arc_points(from: [f64; 3], to: [f64; 3], c: [f64; 2], clockwise: bool, tolera
 
 impl App {
     pub fn import_toolpath_dialog(&mut self) {
-        let Some(path) = rfd::FileDialog::new().add_filter(tr("Machine file"), &["nc", "gcode", "ngc", "tap", "txt", "cnc"]).pick_file() else { return };
+        let Some(path) = crate::platform::FileDialog::new().add_filter(tr("Machine file"), &["nc", "gcode", "ngc", "tap", "txt", "cnc"]).pick_file() else { return };
         let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().to_string());
-        match std::fs::read(&path) {
+        match crate::platform::read(&path) {
             Ok(bytes) => {
                 let text = String::from_utf8_lossy(&bytes).to_string();
                 if let Err(why) = self.import_toolpath(&name, &text) {

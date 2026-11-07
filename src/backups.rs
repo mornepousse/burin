@@ -33,7 +33,7 @@ pub fn load_settings() -> Settings {
     if cfg!(test) {
         return Settings::default();
     }
-    let text = settings_file("backups.txt").and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default();
+    let text = settings_file("backups.txt").and_then(|f| crate::platform::read_to_string(f).ok()).unwrap_or_default();
     let mut s = Settings::default();
     for line in text.lines() {
         match line.split_once('=').map(|(k, v)| (k.trim(), v.trim())) {
@@ -50,7 +50,7 @@ pub fn save_settings(s: Settings) {
         return;
     }
     if let Some(file) = settings_file("backups.txt") {
-        let _ = std::fs::write(file, format!("on={}\nmost_mb={}\n", if s.on { "yes" } else { "no" }, s.most_mb));
+        let _ = crate::platform::write(file, format!("on={}\nmost_mb={}\n", if s.on { "yes" } else { "no" }, s.most_mb));
     }
 }
 
@@ -151,12 +151,12 @@ pub fn keep_before_saving(project: &Path, new: &[u8], now: u64, settings: Settin
     if !settings.on || project.extension().is_none_or(|e| e != EXTENSION) || !project.exists() {
         return Ok(None);
     }
-    let bytes = std::fs::read(project).map_err(|e| e.to_string())?;
+    let bytes = crate::platform::read(project).map_err(|e| e.to_string())?;
     if bytes == new {
         return Ok(None);
     }
     let versions = list(project);
-    if versions.first().and_then(|v| std::fs::read(&v.file).ok()).is_some_and(|last| last == bytes) {
+    if versions.first().and_then(|v| crate::platform::read(&v.file).ok()).is_some_and(|last| last == bytes) {
         return Ok(None);
     }
     let folder = folder_for(project);
@@ -168,7 +168,7 @@ pub fn keep_before_saving(project: &Path, new: &[u8], now: u64, settings: Settin
     }
     let file = folder.join(name_at(&stem_of(project), time));
     let beside = file.with_extension("saving");
-    std::fs::write(&beside, &bytes).and_then(|()| std::fs::rename(&beside, &file)).map_err(|e| e.to_string())?;
+    crate::platform::write(&beside, &bytes).and_then(|()| std::fs::rename(&beside, &file)).map_err(|e| e.to_string())?;
     let versions = list(project);
     for i in to_remove(&versions, now, settings.most_mb * 1024 * 1024) {
         let _ = std::fs::remove_file(&versions[i].file);
@@ -177,7 +177,7 @@ pub fn keep_before_saving(project: &Path, new: &[u8], now: u64, settings: Settin
 }
 
 fn seconds_now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+    crate::platform::SystemTime::now().duration_since(crate::platform::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 /// "5 minutes ago" and the like.
@@ -203,7 +203,7 @@ impl App {
     /// Opens a version as the project not yet saved: saving puts it back, after keeping what's there.
     pub fn open_version(&mut self, version: &Version) -> Result<(), String> {
         let project = self.path.clone();
-        let text = std::fs::read_to_string(&version.file).map_err(|e| e.to_string())?;
+        let text = crate::platform::read_to_string(&version.file).map_err(|e| e.to_string())?;
         let doc: Doc = serde_json::from_str(&text).map_err(|e| e.to_string())?;
         self.checkpoint();
         self.doc = doc;
@@ -336,13 +336,13 @@ mod tests {
         let project = dir.join("my wheel.burin");
         let on = Settings::default();
         assert_eq!(keep_before_saving(&project, b"new", 1000, on).unwrap(), None, "nothing there yet");
-        std::fs::write(&project, "one").unwrap();
+        crate::platform::write(&project, "one").unwrap();
         let first = keep_before_saving(&project, b"new", 2000, on).unwrap().unwrap();
-        assert_eq!(std::fs::read_to_string(&first).unwrap(), "one");
+        assert_eq!(crate::platform::read_to_string(&first).unwrap(), "one");
         assert!(first.starts_with(dir.join("my wheel-backups")));
         assert_eq!(keep_before_saving(&project, b"new", 2001, on).unwrap(), None, "the same again isn't kept");
         assert_eq!(keep_before_saving(&project, b"one", 2002, on).unwrap(), None, "not changing, nothing kept");
-        std::fs::write(&project, "two").unwrap();
+        crate::platform::write(&project, "two").unwrap();
         keep_before_saving(&project, b"new", 2000, on).unwrap().unwrap();
         assert_eq!(list(&project).len(), 2, "same second, both kept");
         assert_eq!(keep_before_saving(&project, b"new", 3000, Settings { on: false, ..on }).unwrap(), None);

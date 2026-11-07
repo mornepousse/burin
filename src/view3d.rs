@@ -114,12 +114,15 @@ struct ImageKey {
     colours: Vec<[u8; 3]>,
     fine: bool,
     quality: Quality3d,
+    shadows: bool,
+    light_follows: bool,
+    plane: bool,
 }
 
 /// The last picture of the surface, and what was prepared to make it.
 /// What a surface was made from, whether it is only the small copy, and whether the true surface
 /// was left out for the lightest pictures.
-type BakedFor = (u64, [f64; 3], bool, u32, bool, bool);
+type BakedFor = (u64, [f64; 3], bool, u32, bool, bool, Option<[u32; 3]>);
 type WoodFor = (Option<usize>, [f64; 3]);
 
 pub struct SurfaceCache {
@@ -133,7 +136,7 @@ pub struct SurfaceCache {
 
 /// A picture being made away from the window, which keeps showing the last one until it is ready.
 pub struct SurfaceJob {
-    started: std::time::Instant,
+    started: crate::platform::Instant,
     key: ImageKey,
     stop: Arc<AtomicBool>,
     pictures: Receiver<Finished>,
@@ -190,6 +193,11 @@ struct Order {
     palette: Vec<[f32; 3]>,
     machined: Machined,
     quick_pixels: f32,
+    light: [f32; 3],
+    /// The light that casts shadows, when they are on.
+    shadow_light: Option<[f32; 3]>,
+    /// The modeling plane's height, when it's drawn.
+    plane: Option<f32>,
 }
 
 /// How far along a picture is.
@@ -217,8 +225,10 @@ impl Order {
             machined: self.machined,
             fill: self.fill,
             palette: self.palette.clone(),
+            light: self.light,
             quick: stage != Stage::Last,
             stop: Some(stop),
+            plane: self.plane,
         };
         let (width, height, samples) = picture_size(self.rect, self.key.pixels_per_point, self.proj.scale, baked.cell, stage != Stage::Moving, self.quick_pixels);
         let (most, edges) = self.key.quality.samples();
@@ -232,7 +242,7 @@ impl Order {
 
     /// Makes the picture, handing over each one as it is ready, unless it is no longer wanted.
     fn run(self, stop: &AtomicBool, hand_over: &mut dyn FnMut(Finished)) {
-        let started = std::time::Instant::now();
+        let started = crate::platform::Instant::now();
         let wood = self.wood.clone().or_else(|| {
             self.wood_for.0.map(|m| {
                 let (_, a, b) = MATERIALS[m.min(MATERIALS.len() - 1)];
@@ -242,11 +252,11 @@ impl Order {
         let (top, thick, w, h) = (self.top, self.thick, self.w, self.h);
         let baked = match &self.source {
             Source::Ready(b) => b.clone(),
-            Source::Small(g) => Arc::new(Baked::quick(g, top, thick, w, h)),
+            Source::Small(g) => Arc::new(Baked::quick_lit(g, top, thick, w, h, self.shadow_light)),
             Source::Whole(whole) => {
                 let baked = match whole.as_ref() {
-                    WholeSource::Carved(s) => Baked::new(&s.grid, Some(s), top, thick, w, h),
-                    WholeSource::Grid(g) => Baked::new(g, None, top, thick, w, h),
+                    WholeSource::Carved(s) => Baked::lit_by(&s.grid, Some(s), top, thick, w, h, self.shadow_light),
+                    WholeSource::Grid(g) => Baked::lit_by(g, None, top, thick, w, h, self.shadow_light),
                 };
                 Arc::new(baked)
             }
@@ -308,22 +318,40 @@ const GRAIN_PER_DEPTH: f32 = 1.2;
 const KEY_LIGHT: [f32; 3] = [-0.46, -0.38, 0.8];
 const FILL_LIGHT: [f32; 3] = [0.5, 0.25, 0.45];
 
+/// The original's Light Follows Viewer and Use Shadow Shading commands (`0x1408ac380`, `0x1408ad440`).
+pub const LIGHT_FOLLOWS_VIEWER_COMMAND: u32 = 32889;
+pub const SHADOW_SHADING_COMMAND: u32 = 33698;
+/// The original's Draw Modeling Plane command (`0x1402c6170`), and how see-through the plane is.
+pub const MODELING_PLANE_COMMAND: u32 = 33188;
+pub const MODELING_PLANE_OPACITY: f32 = 0.4;
+
+/// Where the main light comes from. Fixed on the job, as the original starts; when it follows
+/// the viewer, it turns with the view so it stays where it is at the starting view.
+pub fn key_light(cam: &Camera, follows_viewer: bool) -> [f32; 3] {
+    if !follows_viewer {
+        return KEY_LIGHT;
+    }
+    let a = Camera::iso().yaw - cam.yaw;
+    let (s, c) = a.sin_cos();
+    [KEY_LIGHT[0] * c - KEY_LIGHT[1] * s, KEY_LIGHT[0] * s + KEY_LIGHT[1] * c, KEY_LIGHT[2]]
+}
+
 /// Brightness from a surface direction, how open the spot is and how much it is in shadow.
-fn lit(n: [f32; 3], open: f32, shadow: f32) -> f32 {
+fn lit(n: [f32; 3], open: f32, shadow: f32, key: [f32; 3]) -> f32 {
     let dot = |l: [f32; 3]| (n[0] * l[0] + n[1] * l[1] + n[2] * l[2]).max(0.0);
     let raw = |d: f32, f: f32, o: f32, s: f32| o * (0.34 + 0.22 * f) + 0.62 * d * (1.0 - 0.8 * s) * o.sqrt();
     // A flat, open top is the wood's own colour.
-    let flat = raw(KEY_LIGHT[2], FILL_LIGHT[2], 1.0, 0.0);
-    raw(dot(KEY_LIGHT), dot(FILL_LIGHT), open, shadow) / flat
+    let flat = raw(key[2], FILL_LIGHT[2], 1.0, 0.0);
+    raw(dot(key), dot(FILL_LIGHT), open, shadow) / flat
 }
 
 /// Runs `f` over rows of `data` on all processor cores.
 fn par_rows<T: Send>(data: &mut [T], row: usize, f: impl Fn(usize, &mut [T]) + Sync) {
     // One core is left for the window, so it stays alive while a picture is being made.
-    let threads = std::thread::available_parallelism().map_or(3, |n| n.get().saturating_sub(1).max(1));
+    let threads = crate::platform::threads(true);
     let rows = (data.len() / row.max(1)).max(1);
     let per = rows.div_ceil(threads).max(1);
-    std::thread::scope(|s| {
+    crate::platform::scope(|s| {
         for (c, chunk) in data.chunks_mut(row * per).enumerate() {
             let f = &f;
             s.spawn(move || {
@@ -427,7 +455,13 @@ pub struct Baked {
 impl Baked {
     /// `top` is the height of the material's top in the grid; heights end up 0 there. `walls` marks
     /// the cells whose slope only stands for an upright wall.
+    #[cfg(test)]
     pub fn new(g: &Grid, carved: Option<&crate::relief::Sim>, top: f32, thick: f32, w: f32, h: f32) -> Baked {
+        Baked::lit_by(g, carved, top, thick, w, h, Some(KEY_LIGHT))
+    }
+
+    /// `shadow_light` is the light that casts shadows; none when shadows are off.
+    pub fn lit_by(g: &Grid, carved: Option<&crate::relief::Sim>, top: f32, thick: f32, w: f32, h: f32, shadow_light: Option<[f32; 3]>) -> Baked {
         let (nx, ny, cell) = (g.nx, g.ny, g.cell as f32);
         let floor = -thick;
         let z: Vec<f32> = g.data.iter().map(|v| (v - top).max(floor)).collect();
@@ -454,13 +488,17 @@ impl Baked {
             let small = shrunk(&z, nx, ny, shrink, sx, sy);
             let near = box_blur(&small, sx, sy, NEAR_RING);
             let far = box_blur(&small, sx, sy, FAR_RING);
-            let flat_xy = KEY_LIGHT[0].hypot(KEY_LIGHT[1]);
-            let (sun_x, sun_y, rise) = (KEY_LIGHT[0] / flat_xy, KEY_LIGHT[1] / flat_xy, KEY_LIGHT[2] / flat_xy);
+            let light = shadow_light.unwrap_or(KEY_LIGHT);
+            let flat_xy = light[0].hypot(light[1]);
+            let (sun_x, sun_y, rise) = (light[0] / flat_xy, light[1] / flat_xy, light[2] / flat_xy);
             const REACH: [f32; 16] = [1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 11.0, 15.0, 20.0, 27.0, 36.0, 48.0, 64.0, 85.0, 113.0, 150.0];
             let z_ref = &small;
             // Follow the light from each spot; anything higher than its beam casts a shadow.
             let mut shadows = vec![0f32; small.len()];
             par_rows(&mut shadows, sx, |y, row| {
+                if shadow_light.is_none() {
+                    return;
+                }
                 let at = |ix: i64, iy: i64| z_ref[iy.clamp(0, sy as i64 - 1) as usize * sx + ix.clamp(0, sx as i64 - 1) as usize];
                 for (x, out) in row.iter_mut().enumerate() {
                     let here = z_ref[y * sx + x];
@@ -489,14 +527,19 @@ impl Baked {
     }
 
     /// A much smaller copy, quick enough to make afresh at every frame while the tool is moving.
+    #[cfg(test)]
     pub fn quick(g: &Grid, top: f32, thick: f32, w: f32, h: f32) -> Baked {
+        Baked::quick_lit(g, top, thick, w, h, Some(KEY_LIGHT))
+    }
+
+    pub fn quick_lit(g: &Grid, top: f32, thick: f32, w: f32, h: f32, shadow_light: Option<[f32; 3]>) -> Baked {
         let shrink = (((g.nx * g.ny) as f32 / SHADE_CELLS as f32).sqrt().ceil() as usize).max(1);
         if shrink == 1 {
-            return Baked::new(g, None, top, thick, w, h);
+            return Baked::lit_by(g, None, top, thick, w, h, shadow_light);
         }
         let (sx, sy) = ((g.nx - 1) / shrink + 1, (g.ny - 1) / shrink + 1);
         let small = Grid { nx: sx, ny: sy, cell: g.cell * shrink as f64, data: shrunk(&g.data, g.nx, g.ny, shrink, sx, sy) };
-        Baked::new(&small, None, top, thick, w, h)
+        Baked::lit_by(&small, None, top, thick, w, h, shadow_light)
     }
 
     /// Whether a wall runs through this square of the grid.
@@ -532,11 +575,11 @@ impl Baked {
     /// The light at a point on the surface, from its true height rather than its cell's.
     #[cfg(test)]
     fn brightness(&self, x: f32, y: f32, z: f32) -> f32 {
-        self.brightness_of(x, y, z, true)
+        self.brightness_of(x, y, z, true, KEY_LIGHT)
     }
 
     /// `exact` is the true surface; without it, what the grid says, much quicker while things move.
-    fn brightness_of(&self, x: f32, y: f32, z: f32, exact: bool) -> f32 {
+    fn brightness_of(&self, x: f32, y: f32, z: f32, exact: bool, key: [f32; 3]) -> f32 {
         if self.shade.is_empty() {
             return 1.0;
         }
@@ -592,7 +635,7 @@ impl Baked {
         let hollow_near = (near - z).max(0.0) / (NEAR_RING as f32 * self.shade_cell);
         let hollow_far = (far - z).max(0.0) / (FAR_RING as f32 * self.shade_cell);
         let open = (1.0 / (1.0 + 0.9 * hollow_near + 1.4 * hollow_far)).max(0.35);
-        lit([-gx / len, -gy / len, 1.0 / len], open, shadow).min(1.3)
+        lit([-gx / len, -gy / len, 1.0 / len], open, shadow, key).min(1.3)
     }
 
     /// Nothing is left here: the tool went right through.
@@ -657,10 +700,14 @@ struct Scene<'a> {
     machined: Machined,
     fill: [f32; 3],
     palette: Vec<[f32; 3]>,
+    /// Where the main light comes from.
+    light: [f32; 3],
     /// The quick picture: the grid alone, not the true surface.
     quick: bool,
     /// Set when the picture is no longer wanted.
     stop: Option<&'a AtomicBool>,
+    /// The modeling plane's height, when it's drawn.
+    plane: Option<f32>,
 }
 
 impl Scene<'_> {
@@ -756,10 +803,16 @@ impl Scene<'_> {
             };
         }
         let light = match hit.side {
-            Some(n) => lit(n, 0.85, 0.0),
-            None => self.baked.brightness_of(x, y, z, !self.quick),
+            Some(n) => lit(n, 0.85, 0.0, self.light),
+            None => self.baked.brightness_of(x, y, z, !self.quick, self.light),
         };
-        base.map(|v| (v * light).min(255.0))
+        let shaded = base.map(|v| (v * light).min(255.0));
+        // The modeling plane, white and see-through (`0x140301fe6`: 0.4, colour `0xffffff`), shows where
+        // nothing of the model stands above it.
+        match self.plane {
+            Some(at) if hit.side.is_none() && (z - at).abs() <= self.baked.cell * 1e-3 + 1e-5 => shaded.map(|v| v * (1.0 - MODELING_PLANE_OPACITY) + 255.0 * MODELING_PLANE_OPACITY),
+            _ => shaded,
+        }
     }
 
     /// The colour of one pixel, averaged over `samples` x `samples` spots.
@@ -871,13 +924,20 @@ impl App {
     }
 
     /// What the surface should be made from now.
+    /// The light that casts shadows, when shadow shading is on. While it follows the viewer, the
+    /// shadows are worked out again for each view, so they come in a step behind the turning.
+    fn shadow_light(&self) -> Option<[f32; 3]> {
+        self.shadow_shading.then(|| key_light(&self.cam, self.light_follows_viewer))
+    }
+
     fn wanted_baked(&self, key: &ImageKey) -> (BakedFor, f32) {
         let carved = self.sim.is_some();
         let model = if carved { None } else { self.model.as_ref() };
         let top = model.map_or(0.0, |g| self.doc.machine.model_top(self.doc.job.thickness, g.max() as f64) as f32);
         // While the tool is moving there's a new surface at every frame: a smaller one will do.
         let small = self.anim.playing && carved;
-        ((self.surface_rev, key.size, carved, top.to_bits(), small, key.quality == Quality3d::Light), top)
+        let shadows = self.shadow_light().map(|l| l.map(f32::to_bits));
+        ((self.surface_rev, key.size, carved, top.to_bits(), small, key.quality == Quality3d::Light, shadows), top)
     }
 
     /// Everything a picture needs, with the surface and wood kept if they haven't changed.
@@ -914,6 +974,10 @@ impl App {
             palette: self.doc.toolpaths.iter().map(|t| t.color.map(|v| v as f32)).collect(),
             machined: self.machined,
             quick_pixels: self.quick_pixels,
+            light: key_light(&self.cam, self.light_follows_viewer),
+            shadow_light: self.shadow_light(),
+            // The plane lies at the model's zero; over a carving there's no model to show it against.
+            plane: (self.draw_modeling_plane && self.sim.is_none() && self.model.is_some()).then_some(-top),
             key,
         }
     }
@@ -963,7 +1027,7 @@ impl App {
     /// Moving the view: a picture right now from the surface already made, small enough to keep up.
     fn quick_picture(&mut self, ctx: &egui::Context, proj: &Projection, rect: Rect, key: ImageKey) {
         self.surface_job = None;
-        let started = std::time::Instant::now();
+        let started = crate::platform::Instant::now();
         let mut order = self.order(proj, rect, key);
         if let Some(c) = &self.mesh {
             // Even if it's still only the small copy: the sharp one comes when the view stops.
@@ -992,14 +1056,14 @@ impl App {
             }
         }
         let cutting = self.anim.playing && self.surface_in_background;
-        if cutting && self.next_cut_picture.is_some_and(|t| std::time::Instant::now() < t) {
+        if cutting && self.next_cut_picture.is_some_and(|t| crate::platform::Instant::now() < t) {
             return;
         }
         self.surface_job = None;
-        let before = std::time::Instant::now();
+        let before = crate::platform::Instant::now();
         let order = self.order(proj, rect, key.clone());
         // Copying a big carve is done on the window's time, so it may only take a share of it.
-        self.next_cut_picture = cutting.then(|| std::time::Instant::now() + before.elapsed() * 4);
+        self.next_cut_picture = cutting.then(|| crate::platform::Instant::now() + before.elapsed() * 4);
         let stop = Arc::new(AtomicBool::new(false));
         if !self.surface_in_background {
             let mut last = None;
@@ -1011,14 +1075,14 @@ impl App {
         }
         let (send, pictures) = channel();
         let (worker_stop, repaint) = (stop.clone(), ctx.clone());
-        std::thread::spawn(move || {
+        crate::platform::spawn(move || {
             order.run(&worker_stop, &mut |done| {
                 let _ = send.send(done);
                 repaint.request_repaint();
             });
             repaint.request_repaint();
         });
-        self.surface_job = Some(SurfaceJob { started: std::time::Instant::now(), key, stop, pictures });
+        self.surface_job = Some(SurfaceJob { started: crate::platform::Instant::now(), key, stop, pictures });
     }
 
     fn gradient_background(painter: &egui::Painter, rect: Rect) {
@@ -1052,6 +1116,9 @@ impl App {
             colours: self.doc.toolpaths.iter().map(|t| t.color).collect(),
             fine,
             quality: self.quality3d,
+            shadows: self.shadow_shading,
+            light_follows: self.light_follows_viewer,
+            plane: self.draw_modeling_plane,
         }
     }
 
@@ -1062,7 +1129,8 @@ impl App {
         if self.shaded_background {
             Self::gradient_background(&painter, rect);
         } else {
-            painter.rect_filled(rect, 0.0, crate::theme::BACKDROP_BOTTOM);
+            // Plain, the original paints both ends with the top colour (`0x1408ad390`).
+            painter.rect_filled(rect, 0.0, crate::theme::BACKDROP_TOP);
         }
 
         if response.dragged_by(egui::PointerButton::Primary) {
@@ -1300,13 +1368,30 @@ mod tests {
             machined: Machined::Material,
             fill: [255.0, 255.0, 255.0],
             palette: Vec::new(),
+            light: KEY_LIGHT,
             quick: false,
             stop: None,
+            plane: None,
         }
     }
 
     fn inside(x: f64, y: f64, lo: f64, hi: f64) -> bool {
         (lo..hi).contains(&x) && (lo..hi).contains(&y)
+    }
+
+    #[test]
+    fn the_modeling_plane_tints_only_where_the_model_is_empty() {
+        // A raised square in the middle of an empty model.
+        let baked = surface(40_000, |x, y| inside(x, y, 4.0, 6.0).then_some(0.2));
+        let mut s = scene(&baked);
+        let empty = Hit { p: [2.0, 2.0, 0.0], side: None };
+        let raised = Hit { p: [5.0, 5.0, 0.2], side: None };
+        let (plain_empty, plain_raised) = (s.colour(empty), s.colour(raised));
+        s.plane = Some(0.0);
+        let (tinted, still) = (s.colour(empty), s.colour(raised));
+        let whiter = plain_empty[0] + (255.0 - plain_empty[0]) * MODELING_PLANE_OPACITY;
+        assert!((tinted[0] - whiter).abs() < 0.5, "{plain_empty:?} -> {tinted:?}");
+        assert_eq!(still, plain_raised, "the model above it isn't covered");
     }
 
     #[test]
@@ -1401,6 +1486,36 @@ mod tests {
         let shaded = brightness_at(&baked, 2.1, 5.0);
         let sunny = brightness_at(&baked, 7.9, 5.0);
         assert!(shaded < sunny * 0.8, "shaded {shaded} sunny {sunny}");
+    }
+
+    #[test]
+    fn without_shadow_shading_a_wall_casts_no_shadow() {
+        let mut g = Grid::new(10.0, 10.0, 250_000, 0.0);
+        for y in 0..g.ny {
+            for x in 0..g.nx {
+                if inside(x as f64 * g.cell, y as f64 * g.cell, 2.0, 8.0) {
+                    g.data[y * g.nx + x] = -0.4;
+                }
+            }
+        }
+        let plain = Baked::lit_by(&g, None, 0.0, 0.5, 10.0, 10.0, None);
+        assert!(plain.shade.iter().all(|s| s[2] == 0.0), "no shadow at all");
+        let shaded = brightness_at(&plain, 2.1, 5.0);
+        let sunny = brightness_at(&plain, 7.9, 5.0);
+        // With shadows, this side is under 0.8 times the other; without, it isn't darker at all.
+        assert!(shaded >= sunny * 0.95, "shaded {shaded} sunny {sunny}");
+    }
+
+    #[test]
+    fn the_light_stays_on_the_job_unless_it_follows_the_viewer() {
+        let turned = Camera { yaw: Camera::iso().yaw + std::f32::consts::FRAC_PI_2, ..Camera::iso() };
+        assert_eq!(key_light(&turned, false), KEY_LIGHT);
+        let start = key_light(&Camera::iso(), true);
+        assert!(start.iter().zip(KEY_LIGHT).all(|(a, b)| (a - b).abs() < 1e-6), "the same at the starting view");
+        let follows = key_light(&turned, true);
+        // A quarter turn of the view takes the light a quarter turn the other way around the job.
+        assert!((follows[0] - KEY_LIGHT[1]).abs() < 1e-5 && (follows[1] + KEY_LIGHT[0]).abs() < 1e-5, "{follows:?}");
+        assert_eq!(follows[2], KEY_LIGHT[2]);
     }
 
     #[test]

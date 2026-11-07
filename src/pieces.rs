@@ -40,7 +40,7 @@ pub fn load_one_file() -> bool {
     if cfg!(test) {
         return true;
     }
-    settings_file("output-visible.txt").and_then(|f| std::fs::read_to_string(f).ok()).is_none_or(|s| s.trim() != "0")
+    settings_file("output-visible.txt").and_then(|f| crate::platform::read_to_string(f).ok()).is_none_or(|s| s.trim() != "0")
 }
 
 pub fn save_one_file(one_file: bool) {
@@ -51,7 +51,7 @@ pub fn save_one_file(one_file: bool) {
         if let Some(folder) = file.parent() {
             let _ = std::fs::create_dir_all(folder);
         }
-        let _ = std::fs::write(file, if one_file { "1" } else { "0" });
+        let _ = crate::platform::write(file, if one_file { "1" } else { "0" });
     }
 }
 
@@ -178,13 +178,13 @@ impl App {
         };
         let ext = self.post_extension(self.post_index);
         let name = format!("{}.{ext}", file_stem_of(&self.doc.piece_name(piece)));
-        let Some(path) = rfd::FileDialog::new().add_filter(tr("Machine file"), &[ext.as_str()]).set_file_name(name).save_file() else { return };
+        let Some(path) = crate::platform::FileDialog::new().add_filter(tr("Machine file"), &[ext.as_str()]).set_file_name(name).save_file() else { return };
         let path = with_extension(path, &ext);
         let stem = path.file_stem().map_or_else(|| "piece".to_string(), |s| s.to_string_lossy().to_string());
         let refs: Vec<&Toolpath> = made.iter().collect();
         let text = self.gcode_from(&refs, &stem).unwrap_or_default();
         let bytes = if self.is_planetcnc() { crate::planetcnc::file_bytes(&text) } else { text.into_bytes() };
-        let written = std::fs::write(&path, bytes);
+        let written = crate::platform::write(&path, bytes);
         report_written(self, &path, written);
     }
 

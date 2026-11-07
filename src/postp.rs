@@ -286,12 +286,12 @@ impl PostDef {
 
     /// Reads a post processor file, and any file it builds on from the same folder.
     pub fn load(path: &Path) -> Result<PostDef, String> {
-        let bytes = std::fs::read(path).map_err(|e| tf!("Could not read it: {e}"))?;
+        let bytes = crate::platform::read(path).map_err(|e| tf!("Could not read it: {e}"))?;
         let dir = path.parent().map(Path::to_path_buf);
         let loader = move |name: &str| -> Option<String> {
             let dir = dir.as_ref()?;
             let file = Path::new(name).file_name()?;
-            std::fs::read(dir.join(file)).ok().map(|b| decode(&b))
+            crate::platform::read(dir.join(file)).ok().map(|b| decode(&b))
         };
         let mut def = PostDef::parse(&decode(&bytes), &loader)?;
         def.source = Some(path.to_path_buf());
@@ -689,7 +689,7 @@ fn write_moves(w: &mut Writer, path: &PostPath, arcs: Option<f64>) {
 
 /// Today's date and time, in universal time.
 pub fn now_strings() -> (String, String) {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
+    let secs = crate::platform::SystemTime::now().duration_since(crate::platform::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
     let (days, rest) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
     // Days to a calendar date.
     let z = days + 719_468;

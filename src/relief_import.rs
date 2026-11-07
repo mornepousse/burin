@@ -226,19 +226,19 @@ impl App {
     }
 
     pub fn dialog_import_model(&mut self) {
-        let Some(file) = rfd::FileDialog::new().add_filter(crate::i18n::tr("3D model"), &["stl"]).pick_file() else { return };
+        let Some(file) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("3D model"), &["stl"]).pick_file() else { return };
         if let Err(why) = self.open_model_file(&file) {
             self.message = Some(why);
         }
     }
 
     pub fn open_model_file(&mut self, file: &Path) -> Result<(), String> {
-        let bytes = std::fs::read(file).map_err(|e| tf!("Could not read {}: {e}", file.display()))?;
+        let bytes = crate::platform::read(file).map_err(|e| tf!("Could not read {}: {e}", file.display()))?;
         self.open_model_bytes(short_name(file), &bytes)
     }
 
     pub fn dialog_relief_picture(&mut self) {
-        let Some(file) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png", "jpg", "jpeg", "bmp"]).pick_file() else { return };
+        let Some(file) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png", "jpg", "jpeg", "bmp"]).pick_file() else { return };
         match Image::load(&file) {
             Ok(img) => self.open_relief_picture(short_name(&file), &img),
             Err(why) => self.message = Some(why),
@@ -335,7 +335,7 @@ impl App {
     }
 }
 
-fn short_name(file: &Path) -> String {
+pub(crate) fn short_name(file: &Path) -> String {
     file.file_name().map_or_else(|| file.display().to_string(), |n| n.to_string_lossy().to_string())
 }
 

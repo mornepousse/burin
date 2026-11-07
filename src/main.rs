@@ -1,10 +1,22 @@
 // A released Windows program opens its own window only, with no console behind it.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// The web version leaves out crash reports, the ways of opening a window and the like: what only they
+// use would be flagged as unused there. The program for computers is still checked for it.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
 //! Burin: a desktop program for designing and carving with a CNC machine.
 
 #[macro_use]
 mod i18n;
+mod platform;
+mod formula;
+mod modeltools;
+mod fonts;
+mod variables;
+mod printing;
+mod viewprefs;
+#[cfg(target_arch = "wasm32")]
+mod web;
 mod app;
 mod arcs;
 mod bitmap;
@@ -23,6 +35,7 @@ mod merge;
 mod curvefit;
 mod rates;
 mod gcodein;
+mod help;
 mod checks;
 mod backups;
 mod crash;
@@ -54,8 +67,10 @@ use app::App;
 use std::path::PathBuf;
 
 /// Once the window has been drawn, trying another way of drawing it no longer helps.
+#[cfg(not(target_arch = "wasm32"))]
 static SHOWING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+#[cfg(not(target_arch = "wasm32"))]
 struct Program {
     app: App,
     screenshot: Option<PathBuf>,
@@ -67,6 +82,7 @@ struct Program {
     crash_later: Option<String>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl eframe::App for Program {
     /// Closing normally: nothing to get back next time.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -141,16 +157,19 @@ fn fit_scale(ctx: &egui::Context) {
 }
 
 pub(crate) fn write_png(path: &std::path::Path, image: &egui::ColorImage) -> Result<(), String> {
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty() && !platform::WEB) {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
-    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), image.size[0] as u32, image.size[1] as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
-    let bytes: Vec<u8> = image.pixels.iter().flat_map(|c| [c.r(), c.g(), c.b(), 255]).collect();
-    writer.write_image_data(&bytes).map_err(|e| e.to_string())
+    let mut file = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut file, image.size[0] as u32, image.size[1] as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+        let bytes: Vec<u8> = image.pixels.iter().flat_map(|c| [c.r(), c.g(), c.b(), 255]).collect();
+        writer.write_image_data(&bytes).map_err(|e| e.to_string())?;
+    }
+    platform::write(path, file).map_err(|e| e.to_string())
 }
 
 /// A square part held by tabs, cut with a 6 mm tool, with one tab in the middle of the job.
@@ -210,7 +229,7 @@ fn open_state(app: &mut App, state: &str) {
         app.right = RightMode::Preview;
         app.view3d = true;
         let all: Vec<usize> = (0..app.doc.toolpaths.len()).collect();
-        let started = std::time::Instant::now();
+        let started = crate::platform::Instant::now();
         app.preview(all);
         app.message = None;
         app.finish_preview();
@@ -244,6 +263,57 @@ fn open_state(app: &mut App, state: &str) {
             app.left = LeftForm::Draw(f);
             app.right_open = true;
             app.right = RightMode::List;
+        }
+        "smooth" => {
+            app.load_sample();
+            app.selected_comp = Some(0);
+            app.smooth_form = Some(modeltools::SmoothForm::default());
+            app.view3d = false;
+        }
+        "modeltrim" => {
+            app.load_sample();
+            let cut = app.doc.add_vector(vec![geom::Path::closed(geom::rect([6.2, 6.0], 2.4, 5.0, 0.0))], Prim::Free);
+            app.selected = vec![cut];
+            app.selected_comp = Some(1);
+            app.reset_component(true);
+            app.selected_comp = Some(1);
+            app.boundary_around_component();
+            app.view3d = false;
+        }
+        "textfit" => {
+            app.new_file();
+            let plate = app.doc.add_vector(vec![geom::Path::closed(geom::rect([5.0, 5.0], 8.0, 3.0, 0.4))], Prim::Rect { c: [5.0, 5.0], w: 8.0, h: 3.0, corner: 0.4 });
+            app.selected = vec![plate];
+            let mut f = DrawForm::new(DrawKind::Text, &app.doc.job);
+            f.text = "Atelier".into();
+            f.fill_percent = 85.0;
+            if let Some((at, height)) = fonts::fit_in_box(&f.text, &f.text_style, [1.0, 3.5], [9.0, 6.5], f.fill_percent) {
+                f.c = at;
+                f.text_height = height;
+            }
+            app.left = LeftForm::Draw(f);
+        }
+        "fonts" | "fonts-symbols" => {
+            app.new_file();
+            let started = crate::platform::Instant::now();
+            let installed = fonts::families();
+            eprintln!("{} font families found in {:?}", installed.len(), started.elapsed());
+            let system = ["Acens", "DejaVu Serif", "DejaVu Sans"].iter().find(|n| installed.iter().any(|f| f.name == **n)).map_or(String::new(), |n| n.to_string());
+            let lines = [
+                (8.0, fonts::TextStyle::default(), "Burin"),
+                (5.5, fonts::TextStyle { font: "Single Line Sans".into(), ..Default::default() }, "Single line"),
+                (3.0, fonts::TextStyle { font: "Single Line Script".into(), italic: false, ..Default::default() }, "Script"),
+                (0.8, fonts::TextStyle { font: system.clone(), bold: true, ..Default::default() }, "Bois & Fer"),
+            ];
+            for (y, style, text) in lines {
+                let prim = Prim::Text { at: [1.0, y], height: 1.2, text: text.into(), style };
+                app.doc.add_vector(prim.paths(), prim);
+            }
+            let mut f = DrawForm::new(DrawKind::Text, &app.doc.job);
+            f.text = "Bois & Fer".into();
+            app.open_font_list = Some(if state == "fonts-symbols" { "Awesome".into() } else { String::new() });
+            f.text_style = fonts::TextStyle { font: system, bold: true, ..Default::default() };
+            app.left = LeftForm::Draw(f);
         }
         "profile" => {
             app.new_file();
@@ -417,7 +487,7 @@ fn open_state(app: &mut App, state: &str) {
                 std::thread::sleep(std::time::Duration::from_secs(120));
                 drop(send);
             });
-            app.recalc = Some(recalc::Running { total: names.len(), results: Vec::new(), current: names[1].into(), messages, stop: Default::default(), started: std::time::Instant::now() - std::time::Duration::from_secs(3), finish: None });
+            app.recalc = Some(recalc::Running { total: names.len(), results: Vec::new(), current: names[1].into(), messages, stop: Default::default(), started: crate::platform::Instant::now() - std::time::Duration::from_secs(3), finish: None });
         }
         "sharp3d" | "sharp3dfar" | "toodeep" => {
             app.metric_by_default = true;
@@ -565,7 +635,7 @@ fn open_state(app: &mut App, state: &str) {
         "distort" | "distorted" => {
             app.new_file();
             app.left = LeftForm::None;
-            let text = Prim::Text { at: [2.2, 4.0], height: 1.6, text: "Burin".into() };
+            let text = Prim::Text { at: [2.2, 4.0], height: 1.6, text: "Burin".into(), style: Default::default() };
             let word = app.doc.add_vector(text.paths(), text);
             app.selected = vec![word];
             app.start_xform(app::Xform::Distort);
@@ -754,10 +824,10 @@ fn open_state(app: &mut App, state: &str) {
             let _ = std::fs::remove_dir_all(&dir);
             let _ = std::fs::create_dir_all(&dir);
             let file = dir.join("exemple.burin");
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            let now = crate::platform::SystemTime::now().duration_since(crate::platform::UNIX_EPOCH).map_or(0, |d| d.as_secs());
             for (i, ago) in [180u64, 2400, 9000, 90000, 400000].iter().enumerate() {
                 let text = serde_json::to_string(&app.doc).unwrap_or_default() + &" ".repeat(i);
-                let _ = std::fs::write(&file, text);
+                let _ = crate::platform::write(&file, text);
                 let _ = backups::keep_before_saving(&file, b"", now - ago, backups::Settings::default());
             }
             app.path = Some(file);
@@ -796,6 +866,94 @@ fn open_state(app: &mut App, state: &str) {
             app.load_sample();
             app.view3d = false;
             app.support_open = true;
+        }
+        "variables" => {
+            app.load_sample();
+            app.view3d = false;
+            app.doc.variables = vec![formula::Variable { name: "thick".into(), value: 0.75 }, formula::Variable { name: "tab_len".into(), value: 0.5 }];
+            app.open_variables();
+        }
+        "turnspin" => {
+            app.new_file();
+            let arc = app.doc.add_vector(vec![geom::Path { pts: vec![[2.0, 5.0], [3.0, 6.2], [5.0, 6.4], [7.0, 6.0], [8.0, 5.0]], closed: false }], Prim::Free);
+            app.selected = vec![arc];
+            app.open_turn_spin();
+            if let Some(form) = app.turn_form {
+                app.turn_spin(form);
+            }
+            app.view3d = true;
+        }
+        "distortcomp" => {
+            app.load_sample();
+            app.selected.clear();
+            app.selected_comp = Some(1);
+            app.start_xform(app::Xform::Distort);
+            app.selected_comp = Some(1);
+            app.apply_envelope(distort::EnvelopeKind::BoundingBox);
+            if let Some(c) = app.envelope.as_ref().map(|e| e.corners[2]) {
+                app.move_envelope_corner(2, [c[0] + 2.0, c[1] + 1.0]);
+            }
+            app.view3d = false;
+        }
+        "draftmodel" => {
+            app.load_sample();
+            app.view3d = false;
+            app.open_draft_model();
+        }
+        "slicemodel" => {
+            app.load_sample();
+            app.view3d = false;
+            app.doc.job.thickness = 0.12;
+            app.open_slice_model();
+        }
+        "offsetmodel" => {
+            app.load_sample();
+            app.view3d = false;
+            app.open_offset_model();
+        }
+        "splitcomp" => {
+            app.load_sample();
+            let line = app.doc.add_vector(vec![geom::Path { pts: vec![[5.0, 2.0], [5.0, 9.9]], closed: false }], Prim::Free);
+            app.selected = vec![line];
+            app.selected_comp = Some(1);
+            app.split_component();
+            app.model_dirty = true;
+            app.view3d = false;
+        }
+        "texturesum" => {
+            app.load_sample();
+            app.view3d = false;
+            app.doc.variables = vec![formula::Variable { name: "grain".into(), value: 0.25 }];
+            app.start_op(toolpath::OpKind::Texture);
+            let context = app.formula_context();
+            if let RightMode::Op { op, .. } = &mut app.right {
+                op.formulas.texture_length = "{grain}*2".into();
+                let _ = op.formulas.clone().apply(op, &context);
+            }
+        }
+        "printsetup" => {
+            app.load_sample();
+            app.view3d = false;
+            app.print_setup.paper = printing::Paper::A4;
+            app.print_setup_open = true;
+        }
+        "help" => {
+            app.load_sample();
+            app.view3d = false;
+            app.help_open = true;
+            app.help_page = 4;
+        }
+        "shadows" => {
+            app.load_sample();
+            app.right_open = true;
+            app.right = RightMode::Preview;
+            app.view3d = true;
+            app.preview(vec![0, 1, 2]);
+            app.finish_preview();
+            for t in &mut app.doc.toolpaths {
+                t.visible = false;
+            }
+            app.shadow_shading = true;
         }
         "missinglayers" => {
             app.load_sample();
@@ -865,6 +1023,7 @@ fn icon() -> egui::IconData {
     egui::IconData { width: picture.width(), height: picture.height(), rgba: picture.into_raw() }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     let mut screenshot = None;
     let mut state = None;
@@ -928,6 +1087,7 @@ fn main() {
     std::process::exit(1);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Option<String>, test_crash: Option<&str>) -> eframe::Result {
     let crash_now = test_crash == Some(engine.word());
     let crash_later = test_crash.filter(|t| matches!(*t, "panic" | "abort")).map(str::to_string);
@@ -975,3 +1135,7 @@ fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Opti
         }),
     )
 }
+
+/// The web version starts from the page's script instead (`web::start`).
+#[cfg(target_arch = "wasm32")]
+fn main() {}

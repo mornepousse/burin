@@ -352,7 +352,7 @@ pub fn load() -> Keys {
     if cfg!(test) {
         return Keys::default();
     }
-    let text = crate::app::settings_file("preferences.txt").and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default();
+    let text = crate::app::settings_file("preferences.txt").and_then(|f| crate::platform::read_to_string(f).ok()).unwrap_or_default();
     let prefs = from_text(&text);
     i18n::set_language(prefs.language.unwrap_or_else(i18n::of_this_computer));
     prefs.keys
@@ -366,7 +366,7 @@ pub fn save(keys: Keys) {
         if let Some(folder) = file.parent() {
             let _ = std::fs::create_dir_all(folder);
         }
-        let _ = std::fs::write(file, to_text(i18n::language(), keys));
+        let _ = crate::platform::write(file, to_text(i18n::language(), keys));
     }
 }
 

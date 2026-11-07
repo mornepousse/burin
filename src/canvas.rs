@@ -22,10 +22,12 @@ pub enum Drag {
     None,
     Box(Pos2),
     Move { last: P, start: P },
-    Scale { anchor: P, middle: P, start: P, orig: Vec<(u64, Vec<Path>)> },
+    /// `corner` by which handle it is, as the original tells corners by their type (6 to 9, `0x140a72f00`).
+    Scale { anchor: P, middle: P, start: P, corner: bool, orig: Vec<(u64, Vec<Path>)> },
     Rotate { centre: P, start: P, orig: Vec<(u64, Vec<Path>)> },
     RotateCentre,
-    Node { id: u64, path: usize, index: usize },
+    /// `start`: where the point was when the drag began, for values typed during it.
+    Node { id: u64, path: usize, index: usize, start: P },
     Draw { start: P },
     Measure { start: P },
     Zoom(Pos2),
@@ -48,6 +50,68 @@ pub(crate) fn keep_proportions(start: P, now: P, anchor: P) -> P {
         h = w / aspect;
     }
     [anchor[0] + w.copysign(dx), anchor[1] + h.copysign(dy)]
+}
+
+/// A dashed line, drawn only where it crosses `clip` (with a little room). A shape scaled up hugely, or with
+/// points that aren't numbers, would otherwise ask for billions of dashes and stop the program.
+pub(crate) fn dashed_within(points: &[Pos2], stroke: Stroke, dash: f32, gap: f32, clip: Rect) -> Vec<Shape> {
+    let room = clip.expand(dash + gap + 4.0);
+    let mut out = Vec::new();
+    let mut run: Vec<Pos2> = Vec::new();
+    let flush = |run: &mut Vec<Pos2>, out: &mut Vec<Shape>| {
+        if run.len() >= 2 {
+            out.extend(Shape::dashed_line(run, stroke, dash, gap));
+        }
+        run.clear();
+    };
+    for w in points.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if !(a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite()) {
+            flush(&mut run, &mut out);
+            continue;
+        }
+        match clip_segment(a, b, room) {
+            Some((p, q)) => {
+                if run.last().is_none_or(|l| (*l - p).length() > 0.01) {
+                    flush(&mut run, &mut out);
+                    run.push(p);
+                }
+                run.push(q);
+                if q != b {
+                    flush(&mut run, &mut out);
+                }
+            }
+            None => flush(&mut run, &mut out),
+        }
+    }
+    flush(&mut run, &mut out);
+    out
+}
+
+/// The part of a segment inside a rectangle (Liang-Barsky), if any. Worked out in double precision, as a
+/// segment can run a long way off screen.
+fn clip_segment(a: Pos2, b: Pos2, r: Rect) -> Option<(Pos2, Pos2)> {
+    let (ax, ay, dx, dy) = (a.x as f64, a.y as f64, b.x as f64 - a.x as f64, b.y as f64 - a.y as f64);
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    for (p, q) in [(-dx, ax - r.min.x as f64), (dx, r.max.x as f64 - ax), (-dy, ay - r.min.y as f64), (dy, r.max.y as f64 - ay)] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+            if t0 > t1 {
+                return None;
+            }
+        }
+    }
+    let at = |t: f64| pos2((ax + dx * t) as f32, (ay + dy * t) as f32);
+    Some((at(t0), if t1 >= 1.0 { b } else { at(t1) }))
 }
 
 /// How far a point has gone round the centre, in degrees. With `steps`, to the nearest 15.
@@ -224,6 +288,11 @@ impl App {
     /// The handles for resizing, each with the point that stays put: the corners, then the middles
     /// of the sides. Only once a click on the selection has asked for them.
     pub(crate) fn handle_rects(&self) -> Vec<(Pos2, P)> {
+        self.handle_points().into_iter().map(|(corner, anchor)| (self.to_screen(corner), anchor)).collect()
+    }
+
+    /// The same handles in the drawing's own units: each one's place and the point that stays put.
+    pub(crate) fn handle_points(&self) -> Vec<(P, P)> {
         if self.handles_on.as_deref() != Some(self.selected.as_slice()) {
             return Vec::new();
         }
@@ -239,9 +308,7 @@ impl App {
             ([mx, hi[1]], [mx, lo[1]]),
             ([lo[0], my], [hi[0], my]),
         ]
-        .into_iter()
-        .map(|(corner, anchor)| (self.to_screen(corner), anchor))
-        .collect()
+        .into()
     }
 
     /// The handles for turning, a little beyond the corners (`0x140a6f810`).
@@ -693,10 +760,15 @@ impl App {
             }
             if let Some((_, id, path, index)) = best {
                 self.checkpoint();
-                self.drag = Drag::Node { id, path, index };
+                let start = self.doc.vectors.iter().find(|v| v.id == id).map_or([0.0, 0.0], |v| v.paths[path].pts[index]);
+                self.drag = Drag::Node { id, path, index, start };
             }
         }
-        if let (Drag::Node { id, path, index }, Some(p)) = (&self.drag, pointer) {
+        // Values typed while dragging a point place it (the original's quick keys for editing points).
+        if self.typed_value(&response.ctx) {
+            return;
+        }
+        if let (Drag::Node { id, path, index, .. }, Some(p)) = (&self.drag, pointer) {
             let (id, path, index) = (*id, *path, *index);
             let world = self.snapped(self.to_world(p));
             if let Some(v) = self.doc.vectors.iter_mut().find(|v| v.id == id) {
@@ -762,12 +834,15 @@ impl App {
             return;
         }
         if let Some(p) = press {
-            let handle = self.handle_rects().into_iter().find(|(h, _)| (*h - p).length() < 7.0);
-            if let Some((corner, anchor)) = handle {
+            // The handle's own place, not its place on screen turned back: the screen rounds it, and a side
+            // handle a hair off its anchor would be taken for a corner and stretch the shape a million times.
+            let handle = self.handle_points().into_iter().enumerate().find(|(_, (corner, _))| (self.to_screen(*corner) - p).length() < 7.0);
+            if let Some((index, (start, anchor))) = handle {
                 self.checkpoint();
                 let orig = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id)).map(|v| (v.id, v.paths.clone())).collect();
                 let middle = self.selected_bbox().map_or(anchor, |(lo, hi)| [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0]);
-                self.drag = Drag::Scale { anchor, middle, start: self.to_world(corner), orig };
+                // The first four handles are the corners.
+                self.drag = Drag::Scale { anchor, middle, start, corner: index < 4, orig };
             } else if let (Some(centre), true) = (self.rotation_centre(), self.rotate_handles().iter().any(|h| (*h - p).length() < 7.0)) {
                 self.checkpoint();
                 let moving = self.moving_ids();
@@ -802,14 +877,15 @@ impl App {
                 self.translate_selected(now[0] - last[0], now[1] - last[1]);
                 self.drag = Drag::Move { last: now, start };
             }
-            Drag::Scale { anchor, middle, start, orig } => {
+            Drag::Scale { anchor, middle, start, corner, orig } => {
                 let alt = response.ctx.input(|i| i.modifiers.alt);
                 // With Shift it grows from its middle (`0x140a72f00`).
                 let anchor = if shift { middle } else { anchor };
                 let now = self.snapped(self.to_world(p));
-                let corner = (start[0] - anchor[0]).abs() > 1e-9 && (start[1] - anchor[1]).abs() > 1e-9;
                 let now = if corner && !alt { keep_proportions(start, now, anchor) } else { now };
-                let ratio = |n: f64, s: f64, a: f64| if (s - a).abs() < 1e-9 { 1.0 } else { (n - a) / (s - a) };
+                // Each way stretches by how far the handle has gone from what stays put; a handle level with it
+                // (exactly: both are the drawing's own numbers) leaves that way alone (`0x140a73262`).
+                let ratio = |n: f64, s: f64, a: f64| if s == a { 1.0 } else { (n - a) / (s - a) };
                 let (sx, sy) = (ratio(now[0], start[0], anchor[0]), ratio(now[1], start[1], anchor[1]));
                 for (id, paths) in &orig {
                     if let Some(v) = self.doc.vectors.iter_mut().find(|v| v.id == *id) {
@@ -904,7 +980,7 @@ impl App {
                         if p.closed && !pts.is_empty() {
                             pts.push(pts[0]);
                         }
-                        painter.extend(Shape::dashed_line(&pts, dash, 4.0, 3.0));
+                        painter.extend(dashed_within(&pts, dash, 4.0, 3.0, painter.clip_rect()));
                     } else if piece_mate {
                         if p.closed && !pts.is_empty() {
                             pts.push(pts[0]);
@@ -914,7 +990,7 @@ impl App {
                         if p.closed && !pts.is_empty() {
                             pts.push(pts[0]);
                         }
-                        painter.extend(Shape::dashed_line(&pts, Stroke::new(1.0, theme::CONSTRUCTION), 9.0, 4.0));
+                        painter.extend(dashed_within(&pts, Stroke::new(1.0, theme::CONSTRUCTION), 9.0, 4.0, painter.clip_rect()));
                     } else if p.closed {
                         painter.add(Shape::closed_line(pts, line));
                     } else {
@@ -935,7 +1011,7 @@ impl App {
                 let (a, b) = (self.to_screen(lo), self.to_screen(hi));
                 let frame = Rect::from_two_pos(a, b).expand(7.0);
                 let corners = [frame.left_top(), frame.right_top(), frame.right_bottom(), frame.left_bottom(), frame.left_top()];
-                painter.extend(Shape::dashed_line(&corners, Stroke::new(1.2, theme::PIECE), 7.0, 4.0));
+                painter.extend(dashed_within(&corners, Stroke::new(1.2, theme::PIECE), 7.0, 4.0, painter.clip_rect()));
                 let name = self.doc.piece_name(piece);
                 let label = if self.adjust_piece { tf!("{}: adjusting", name) } else { name };
                 painter.text(frame.left_top() + vec2(2.0, -3.0), Align2::LEFT_BOTTOM, label, FontId::proportional(12.0), theme::PIECE);
@@ -961,7 +1037,7 @@ impl App {
             let far = [f.at[0] + f.width, f.at[1] + f.width * f.h as f64 / f.w as f64];
             let (lo, hi) = (self.to_screen(f.at), self.to_screen(far));
             let outline = [lo, pos2(hi.x, lo.y), hi, pos2(lo.x, hi.y), lo];
-            painter.extend(Shape::dashed_line(&outline, Stroke::new(1.5, Color32::from_rgb(30, 80, 200)), 6.0, 4.0));
+            painter.extend(dashed_within(&outline, Stroke::new(1.5, Color32::from_rgb(30, 80, 200)), 6.0, 4.0, painter.clip_rect()));
         }
         // What Trace Bitmap would make.
         for p in self.trace_preview.iter() {
@@ -975,7 +1051,7 @@ impl App {
         if let Some(env) = self.envelope.as_ref().filter(|e| e.has_handles()) {
             let mut outline: Vec<Pos2> = env.corners.iter().map(|c| self.to_screen(*c)).collect();
             outline.push(outline[0]);
-            painter.extend(Shape::dashed_line(&outline, Stroke::new(1.0, Color32::from_rgb(30, 80, 200)), 5.0, 4.0));
+            painter.extend(dashed_within(&outline, Stroke::new(1.0, Color32::from_rgb(30, 80, 200)), 5.0, 4.0, painter.clip_rect()));
             for c in &env.corners {
                 let r = Rect::from_center_size(self.to_screen(*c), vec2(9.0, 9.0));
                 painter.rect_filled(r, 0.0, Color32::from_rgb(30, 80, 200));
@@ -1026,7 +1102,8 @@ impl App {
         // What is being drawn right now.
         let preview = Stroke::new(1.0, Color32::from_rgb(0, 110, 230));
         if let LeftForm::Draw(f) = &self.left {
-            if matches!(self.drag, Drag::Draw { .. }) {
+            // A text shows as it will be while its form is open: its font, size and place change it.
+            if matches!(self.drag, Drag::Draw { .. }) || (f.kind == DrawKind::Text && !f.text.trim().is_empty()) {
                 if let Some(prim) = f.prim() {
                     for p in prim.paths() {
                         let mut pts: Vec<Pos2> = p.pts.iter().map(|q| self.to_screen(*q)).collect();
@@ -1063,7 +1140,7 @@ impl App {
                         let green = Color32::from_rgb(20, 150, 70);
                         painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(20, 150, 70, 28));
                         let outline = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
-                        painter.extend(Shape::dashed_line(&outline, Stroke::new(1.0, green), 5.0, 4.0));
+                        painter.extend(dashed_within(&outline, Stroke::new(1.0, green), 5.0, 4.0, painter.clip_rect()));
                     } else {
                         painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(0, 110, 230, 28));
                         painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_rgb(0, 110, 230)), StrokeKind::Inside);
@@ -1415,7 +1492,7 @@ impl App {
     /// original allows (`0x140a751e0`): a distance along the drag or `x,y` for a move, an angle for a
     /// turn, a percentage for a resize. Escape forgets what was typed. True when Enter finished the drag.
     pub(crate) fn typed_value(&mut self, ctx: &egui::Context) -> bool {
-        if !matches!(self.drag, Drag::Move { .. } | Drag::Rotate { .. } | Drag::Scale { .. }) {
+        if !matches!(self.drag, Drag::Move { .. } | Drag::Rotate { .. } | Drag::Scale { .. } | Drag::Node { .. }) {
             self.typed.clear();
             return false;
         }
@@ -1455,6 +1532,24 @@ impl App {
             Drag::Rotate { centre, orig, .. } => {
                 self.turn_from(&orig, centre, values[0]);
                 self.status = tf!("Turned {:.1} degrees", values[0]);
+            }
+            Drag::Node { id, path, index, start } => {
+                // One value: that far from where it was, towards the mouse; two: by that much each way.
+                let now = self.doc.vectors.iter().find(|v| v.id == id).map_or(start, |v| v.paths[path].pts[index]);
+                let wanted = match values.as_slice() {
+                    [x, y] => [start[0] + x, start[1] + y],
+                    [d] => {
+                        let (dx, dy) = (now[0] - start[0], now[1] - start[1]);
+                        let len = dx.hypot(dy);
+                        if len > 1e-12 { [start[0] + dx / len * d, start[1] + dy / len * d] } else { [start[0] + d, start[1]] }
+                    }
+                    _ => now,
+                };
+                if let Some(v) = self.doc.vectors.iter_mut().find(|v| v.id == id) {
+                    v.paths[path].pts[index] = wanted;
+                    v.prim = Prim::Free;
+                }
+                self.status = tf!("Moved the point to {}, {}", crate::toolpath::trim(wanted[0]), crate::toolpath::trim(wanted[1]));
             }
             Drag::Scale { anchor, orig, .. } => {
                 let (sx, sy) = match values.as_slice() {

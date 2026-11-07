@@ -833,11 +833,11 @@ impl App {
     fn text_on_curve(&mut self, f: &XformForm) {
         let items = self.selection_in_click_order();
         let text = items.iter().find_map(|v| match &v.prim {
-            Prim::Text { text, height, .. } => Some((v.id, text.clone(), *height)),
+            Prim::Text { text, height, style, .. } => Some((v.id, text.clone(), *height, crate::fonts::TextStyle { align: crate::fonts::TextAlign::Left, ..style.clone() })),
             _ => None,
         });
         let curve = items.iter().rev().find(|v| !matches!(v.prim, Prim::Text { .. })).and_then(|v| v.paths.first().cloned());
-        let (Some((text_id, text, height)), Some(curve)) = (text, curve) else {
+        let (Some((text_id, text, height, style)), Some(curve)) = (text, curve) else {
             self.status = crate::i18n::tr("Select a line of text and the curve to wrap it onto.").into();
             return;
         };
@@ -849,8 +849,8 @@ impl App {
         let widths: Vec<f64> = text
             .chars()
             .map(|c| {
-                let probe = geom::text_paths(&format!("{c}|"), height, [0.0, 0.0]);
-                let bar = geom::text_paths("|", height, [0.0, 0.0]);
+                let probe = crate::fonts::text_paths(&format!("{c}|"), height, [0.0, 0.0], &style);
+                let bar = crate::fonts::text_paths("|", height, [0.0, 0.0], &style);
                 let w = geom::bbox(&probe).map_or(height * 0.3, |(_, hi)| hi[0]) - geom::bbox(&bar).map_or(0.0, |(_, hi)| hi[0]);
                 w.max(height * 0.25)
             })
@@ -869,7 +869,7 @@ impl App {
             let normal = [-dir[1], dir[0]];
             let origin = [at[0] + normal[0] * f.distance, at[1] + normal[1] * f.distance];
             let (k, si) = if f.align { (dir[0], dir[1]) } else { (1.0, 0.0) };
-            for mut g in geom::text_paths(&c.to_string(), height, [-w / 2.0, 0.0]) {
+            for mut g in crate::fonts::text_paths(&c.to_string(), height, [-w / 2.0, 0.0], &style) {
                 for p in &mut g.pts {
                     let (x, y) = (p[0], p[1]);
                     *p = [origin[0] + x * k - y * si, origin[1] + x * si + y * k];
@@ -1255,7 +1255,7 @@ mod tests {
     #[test]
     fn text_follows_the_curve() {
         let mut a = app();
-        let prim = Prim::Text { at: [0.0, 0.0], height: 0.5, text: "AB".into() };
+        let prim = Prim::Text { at: [0.0, 0.0], height: 0.5, text: "AB".into(), style: Default::default() };
         let t = a.doc.add_vector(prim.paths(), prim);
         let c = a.doc.add_vector(vec![Path::open(vec![[0.0, 3.0], [10.0, 3.0]])], Prim::Free);
         a.selected = vec![t, c];

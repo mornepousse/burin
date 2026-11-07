@@ -432,6 +432,10 @@ pub struct Op {
     /// The person's notes about this toolpath.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub notes: String,
+    /// Sums the depths were typed as, worked out again when the document's variables change, as the
+    /// original keeps `StartDepthFormula`, `CutDepthFormula`, `AllowanceFormula` and `FlatDepthFormula`.
+    #[serde(default, skip_serializing_if = "crate::toolpath::Formulas::is_empty")]
+    pub formulas: Formulas,
     /// Read from another program's machine file: its moves are all there is.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub imported: bool,
@@ -733,6 +737,8 @@ const MOST_RAMP_ANGLE: f64 = 89.0;
 const FALLBACK_RAMP_ANGLE: f64 = 45.0;
 /// A leg more of zig-zag only if what's left is over this share of one there and back.
 const ZIG_LEFT_OVER: f64 = 0.1;
+/// How much of a lead a zig-zag on it goes along before it comes back (`0x1421a0400`).
+const ZIG_ON_LEAD: f64 = 0.95;
 /// A peck more only if what's left is over this share of the peck depth.
 const PECK_LEFT_OVER: f64 = 0.01;
 /// Shapes shorter than this many millimetres aren't ramped, nor passes under 1% of it.
@@ -1386,14 +1392,23 @@ fn order_level(items: &[Placed], level: &[usize], choices: OrderChoices, from: P
         // The way back to the start counts as well.
         sum + (from[0] - at[0]).hypot(from[1] - at[1])
     };
+    let first_leg = |list: &[usize]| list.first().map_or(0.0, |i| (items[*i].start[0] - from[0]).hypot(items[*i].start[1] - from[1]));
     let mut best = tries.remove(0);
     for t in tries {
-        if cost(&t) < cost(&best) {
+        let (a, b) = (cost(&t), cost(&best));
+        // The original keeps the first on a tie (`0x140894a60`), but its sums come from points kept as
+        // 32-bit floats, so ways that go round the same loop either way tie only within rounding, and
+        // which one wins is then down to rounding. Saved jobs show it starting nearest the tool.
+        let tied = (a - b).abs() <= TIE_SHARE * b.max(1.0);
+        if (!tied && a < b) || (tied && first_leg(&t) < first_leg(&best) - TIE_SHARE * b.max(1.0)) {
             best = t;
         }
     }
     best
 }
+
+/// Travels this close, as a share, count as the same.
+const TIE_SHARE: f64 = 1e-7;
 
 /// The smallest closed shape around each one is what holds it.
 fn holders(all: &[(Vec<P>, bool)], items: &[Placed]) -> Vec<Option<usize>> {
@@ -1614,9 +1629,20 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                 let plunge_z = if zigzag { previous } else { ramp_from.unwrap_or(lead_z) };
                 if has_lead {
                     e.go_to(lead_in[0][0], lead_in[0][1], plunge_z);
+                    // A zig-zag on the lead: once along 95% of it and back, then the lead at full depth
+                    // (`0x14085e10d`); other ramps go down the whole lead.
+                    let zig_on_lead = ramp_on_lead && op.ramp_kind == RampKind::ZigZag;
+                    if zig_on_lead {
+                        let mut way = lead_in.clone();
+                        way.push(pts[0]);
+                        let length: f64 = way.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum();
+                        let turn = along(&way, length * ZIG_ON_LEAD);
+                        e.feed(turn[0], turn[1], (previous + *z) / 2.0);
+                        e.feed(lead_in[0][0], lead_in[0][1], *z);
+                    }
                     let count = lead_in.len();
                     for (k, q) in lead_in.iter().enumerate().skip(1) {
-                        let h = if ramp_on_lead { previous + (*z - previous) * k as f64 / count as f64 } else { plunge_z };
+                        let h = if zig_on_lead { *z } else if ramp_on_lead { previous + (*z - previous) * k as f64 / count as f64 } else { plunge_z };
                         e.feed(q[0], q[1], h);
                     }
                     e.feed(pts[0][0], pts[0][1], if ramp_on_lead { *z } else { plunge_z });
@@ -1735,9 +1761,15 @@ fn pocket_rows(lo: P, hi: P, angle: f64, step: f64) -> Vec<(P, P, f64)> {
     let (s, k) = angle.to_radians().sin_cos();
     let (dir, normal) = ([k, s], [-s, k]);
     let step = step.max(1e-5);
-    let start = [c[0] - reach * normal[0] - reach * dir[0], c[1] - reach * normal[1] - reach * dir[1]];
+    // Each row runs down the middle of a band one stepover wide, so the first is half a step in.
+    let first = -reach + step / 2.0;
+    let start = [c[0] + first * normal[0] - reach * dir[0], c[1] + first * normal[1] - reach * dir[1]];
     (0..=((reach * 2.0 / step) as usize)).map(|i| ([start[0] + normal[0] * step * i as f64, start[1] + normal[1] * step * i as f64], dir, reach * 2.0)).collect()
 }
+
+/// How much short of the distance from the walls raster rows may go, in cells of the pocket's distance
+/// grid: half a cell (0.025 mm for a 3.175 mm tool), which matches saved jobs' rows and lifts.
+const RASTER_TOLERANCE_CELLS: f64 = 0.5;
 
 /// How far past the corners of what's being cleared a pocket's rows reach.
 const POCKET_ROW_REACH: f64 = 1.05;
@@ -1837,11 +1869,10 @@ fn pocket(e: &mut Emit, op: &Op) {
             sets.sort_by(|a, b| far(a).total_cmp(&far(b)));
         }
     }
-    let whole = bbox(&op.paths);
     for set in sets {
         let mut one = op.clone();
         one.paths = set.iter().map(|i| op.paths[*i].clone()).collect();
-        pocket_set(e, &one, whole);
+        pocket_set(e, &one);
     }
 }
 
@@ -1853,7 +1884,7 @@ fn wanted_order(op: &Op, choices: OrderChoices) -> OrderChoices {
     choices
 }
 
-fn pocket_set(e: &mut Emit, op: &Op, whole: Option<(P, P)>) {
+fn pocket_set(e: &mut Emit, op: &Op) {
     let radius = op.tool.dia / 2.0 + op.allowance;
     let step = step_of(op);
     let Some(field) = Field::build_to(&op.paths, op.tool.dia, 900, op.tool.dia / 64.0) else { return };
@@ -1901,9 +1932,15 @@ fn pocket_set(e: &mut Emit, op: &Op, whole: Option<(P, P)>) {
             // An outline pass cleans up after the rows, so they can stop short of it.
             let extra = if op.profile_pass == ProfilePass::None { 0.0 } else { op.raster_allowance.abs() };
             let clear = radius + extra;
-            let (box_lo, box_hi) = whole.unwrap_or((lo, hi));
-            let rows = pocket_rows([box_lo[0] + clear, box_lo[1] + clear], [box_hi[0] - clear, box_hi[1] - clear], op.raster_angle, step);
-            cut_rows(e, rows, field.cell, *z, op.tool.dia * 1.5, &|x, y| field.sample(x, y) >= clear);
+            // The rows' box is this pocket's own outline offset by that much (`0x140820030` makes the
+            // offset outline, `0x1408cf270` takes its box), checked against saved jobs pocket by pocket.
+            let offset: Vec<Path> = field.contours(clear).into_iter().map(Path::closed).collect();
+            let (box_lo, box_hi) = bbox(&offset).unwrap_or(([lo[0] + clear, lo[1] + clear], [hi[0] - clear, hi[1] - clear]));
+            let rows = pocket_rows(box_lo, box_hi, op.raster_angle, step);
+            // Rows may come short of the full distance by a hair, as the original offsets by the distance
+            // less its tolerance (`0x140820030`): a row that just touches the edge is still cut, as in saved jobs.
+            let reach = clear - field.cell * RASTER_TOLERANCE_CELLS;
+            cut_rows(e, rows, field.cell, *z, op.tool.dia * 1.5, &|x, y| field.sample(x, y) >= reach);
             if op.profile_pass == ProfilePass::Last {
                 ring(e, radius, *z, *z);
             }
@@ -2551,6 +2588,58 @@ pub fn route_in_file(moves: &[Move], steps: Option<&[Step]>, home: [f64; 3], fir
 pub const DRAW_PLUNGES_COMMAND: u32 = 32907;
 pub const DRAW_RETRACTS_COMMAND: u32 = 32908;
 
+/// The sums a toolpath's depths were typed as; empty for a plain number.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Formulas {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub start_depth: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cut_depth: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub allowance: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub flat_depth: String,
+    /// A texture's Max. Cut Length, Max. Cut Depth and Stepover (`_tpdLengthFormula`, `_tpdDepthFormula`,
+    /// `_tpdStepoverFormula`, read from version 4 on by `0x1408658e0`). The original keeps each of those as a
+    /// value with its smallest and largest share (`_Value`, `_MinRatio`, `_MaxRatio`, `0x140633da0`), and its form
+    /// shows the value as the maximum, so the sums set Burin's maximums.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub texture_length: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub texture_depth: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub stepover: String,
+}
+
+impl Formulas {
+    fn texts(&self) -> [&String; 7] {
+        [&self.start_depth, &self.cut_depth, &self.allowance, &self.flat_depth, &self.texture_length, &self.texture_depth, &self.stepover]
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.texts().iter().all(|t| t.is_empty())
+    }
+
+    /// Works each one out again, setting the value it stands for. True if any value changed; the first
+    /// sum that can't be worked out is returned instead, and nothing is changed.
+    pub fn apply(&self, op: &mut Op, context: &crate::formula::Context) -> Result<bool, crate::formula::FormulaError> {
+        let old = [op.start_depth, op.cut_depth, op.allowance, op.flat_depth, op.tex_length[1], op.tex_cut[1], op.stepover];
+        let mut values = old;
+        for (text, value) in self.texts().into_iter().zip(values.iter_mut()) {
+            if !text.is_empty() {
+                *value = crate::formula::evaluate(text, context)?;
+            }
+        }
+        [op.start_depth, op.cut_depth, op.allowance, op.flat_depth, op.tex_length[1], op.tex_cut[1], op.stepover] = values;
+        Ok(values != old)
+    }
+
+    /// Whether any of them uses this variable.
+    pub fn uses(&self, name: &str) -> bool {
+        self.texts().iter().any(|t| crate::formula::uses(t, name))
+    }
+}
+
 /// What a move does, for drawing: the original draws each kind in its own colour (`0x14051fb40`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveKind {
@@ -2962,6 +3051,7 @@ pub fn blank_op(kind: OpKind, name: String, tool: Tool, depth: f64, paths: Vec<P
         merged: false,
         imported: false,
         notes: String::new(),
+        formulas: Formulas::default(),
         tool,
     }
 }
@@ -3637,6 +3727,24 @@ mod tests {
         let start = c.iter().position(|p| (p[1] - 7.125).abs() < 1e-3 && (p[0] - 5.0).abs() < 1e-3).unwrap();
         assert!((c[start][2] + 0.25).abs() < 1e-9, "at depth when it reaches the cut");
         assert!(c[1..start].windows(2).all(|w| w[1][2] <= w[0][2]), "going down all the way");
+    }
+
+    #[test]
+    fn a_zig_zag_on_the_lead_goes_most_of_the_way_along_it_and_back() {
+        let mut o = lead_op(Side::Outside);
+        o.ramp = true;
+        o.ramp_on_lead = true;
+        o.ramp_kind = RampKind::ZigZag;
+        o.lead_circular = false;
+        o.lead_distance = 0.8;
+        let c = cuts(&generate(&o, M, &J, None).unwrap());
+        let first = c[0];
+        assert!(first[2].abs() < 1e-9, "starts at the surface: {first:?}");
+        let turn = c[1];
+        let gone = (turn[0] - first[0]).hypot(turn[1] - first[1]);
+        assert!((gone - 0.8 * 0.95).abs() < 1e-6, "95% of the lead: {gone}");
+        assert!((turn[2] + 0.125).abs() < 1e-9, "half way down there: {turn:?}");
+        assert!((c[2][0] - first[0]).abs() < 1e-9 && (c[2][1] - first[1]).abs() < 1e-9 && (c[2][2] + 0.25).abs() < 1e-9, "back at the start, at depth: {:?}", c[2]);
     }
 
     fn squares(centres: &[[f64; 2]]) -> Vec<Path> {
@@ -4527,11 +4635,21 @@ mod tests {
     }
 
     #[test]
+    fn a_tie_between_ways_round_goes_to_the_one_starting_nearest_the_tool() {
+        // Four shapes one above the other, the tool above them: the same loop either way round.
+        let shapes: Vec<(Vec<P>, bool)> = (0..4).map(|k| (rect([700.0, 550.0 + 180.0 * k as f64], 400.0, 170.0, 0.0), true)).collect();
+        let choices = OrderChoices { selection: false, left_to_right: true, bottom_to_top: true, grid: true, shortest: false };
+        let order = sequence_order(&shapes, choices, [940.0, 1240.0, 50.0]);
+        assert_eq!(order, vec![3, 2, 1, 0], "from the top, nearest the tool");
+    }
+
+    #[test]
     fn pocket_rows_cover_the_box_from_below_its_corner() {
         let rows = pocket_rows([0.0, 0.0], [30.0, 40.0], 0.0, 2.0);
         // Half the diagonal is 25, and they reach 5% past that all round.
         let reach = 25.0 * 1.05;
-        assert!((rows[0].0[0] - (15.0 - reach)).abs() < 1e-9 && (rows[0].0[1] - (20.0 - reach)).abs() < 1e-9);
+        // Half a step in: the middle of the first band.
+        assert!((rows[0].0[0] - (15.0 - reach)).abs() < 1e-9 && (rows[0].0[1] - (20.0 - reach + 1.0)).abs() < 1e-9);
         assert_eq!(rows[0].1, [1.0, 0.0]);
         assert_eq!(rows.len(), 27);
         assert!((rows[1].0[1] - rows[0].0[1] - 2.0).abs() < 1e-9);
