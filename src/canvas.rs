@@ -952,7 +952,7 @@ impl App {
         for issue in &self.issues {
             let colour = match issue.kind {
                 crate::edit::IssueKind::ZeroLength => theme::RAPID,
-                crate::edit::IssueKind::Overlap => theme::ACCENT,
+                crate::edit::IssueKind::Overlap => theme::WARNING,
                 crate::edit::IssueKind::Intersection => Color32::from_rgb(30, 120, 220),
             };
             let at = self.to_screen(issue.at);

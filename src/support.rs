@@ -36,6 +36,34 @@ impl App {
         out
     }
 
+    /// Notes about the job, kept in its file.
+    pub(crate) fn notes_window(&mut self, ctx: &egui::Context) {
+        if !self.notes_open {
+            return;
+        }
+        let mut open = true;
+        let before = self.doc.notes.clone();
+        egui::Window::new(tr("Notes")).id(egui::Id::unique("notes")).open(&mut open).collapsible(false).default_width(440.0).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
+            ui.add(egui::TextEdit::multiline(&mut self.doc.notes).desired_width(f32::INFINITY).desired_rows(10));
+            ui.label(egui::RichText::new(tr("Saved with the job, and printed on its job sheet.")).size(12.0).color(crate::theme::MUTED));
+        });
+        if self.doc.notes != before {
+            self.dirty = true;
+        }
+        self.notes_open = open;
+    }
+
+    /// A project's file dropped on the window opens as if chosen from the menu.
+    pub(crate) fn files_dropped(&mut self, ctx: &egui::Context) {
+        let Some(path) = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf())) else { return };
+        if !path.extension().is_some_and(|e| ["burin", "crv3d", "crv"].iter().any(|k| e.eq_ignore_ascii_case(k))) {
+            self.message = Some(tf!("Burin can open .burin, .crv3d and .crv files, not {}.", path.file_name().map_or(String::new(), |n| n.to_string_lossy().to_string())));
+            return;
+        }
+        self.recent_wanted = Some(path);
+        self.leave_for(Leave::Recent);
+    }
+
     pub(crate) fn support_window(&mut self, ctx: &egui::Context) {
         if !self.support_open {
             return;

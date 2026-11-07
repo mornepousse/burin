@@ -20,6 +20,10 @@ mod icons;
 mod keys;
 mod menus;
 mod merge;
+mod crash;
+mod feedback;
+mod linuxmenu;
+mod recovery;
 mod jobsheet;
 mod support;
 mod templates;
@@ -55,9 +59,17 @@ struct Program {
     requested: bool,
     engine: startup::Engine,
     drawn: u32,
+    crash_later: Option<String>,
 }
 
 impl eframe::App for Program {
+    /// Closing normally: nothing to get back next time.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let (Some(data), None, false) = (&self.app.data_dir, &self.app.recovery, self.app.recovery_left) {
+            recovery::remove(data);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if !SHOWING.swap(true, std::sync::atomic::Ordering::Relaxed) {
             startup::log("The window is showing.");
@@ -69,6 +81,19 @@ impl eframe::App for Program {
         self.drawn = self.drawn.saturating_add(1);
         if self.drawn == 3 {
             startup::log(&format!("Drawing: {}", self.engine.word()));
+            match self.crash_later.as_deref() {
+                Some("panic") => panic!("This is a test of the crash report, asked for with --test-crash"),
+                Some("abort") => std::process::abort(),
+                _ => {}
+            }
+        }
+        // A picture of the window for a report, which may come to want it.
+        if let Some(slot) = self.app.want_picture.take() {
+            ctx.request_screenshot(move |image| {
+                if let Ok(mut held) = slot.lock() {
+                    *held = Some((*image).clone());
+                }
+            });
         }
         // Saving a picture of the 3D view from the preview panel.
         if let Some(path) = self.app.save_preview.take() {
@@ -85,7 +110,10 @@ impl eframe::App for Program {
                 self.requested = true;
                 let path = self.screenshot.clone().unwrap();
                 ctx.request_screenshot(move |image| match write_png(&path, &image) {
-                    Ok(()) => std::process::exit(0),
+                    Ok(()) => {
+                        startup::log(startup::CLOSED);
+                        std::process::exit(0)
+                    }
                     Err(e) => {
                         eprintln!("Could not save {}: {e}", path.display());
                         std::process::exit(1);
@@ -107,7 +135,7 @@ fn fit_scale(ctx: &egui::Context) {
     }
 }
 
-fn write_png(path: &std::path::Path, image: &egui::ColorImage) -> Result<(), String> {
+pub(crate) fn write_png(path: &std::path::Path, image: &egui::ColorImage) -> Result<(), String> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -698,6 +726,34 @@ fn open_state(app: &mut App, state: &str) {
             app.selected = vec![id];
             app.handles_on = Some(vec![id]);
         }
+        "feedback" => {
+            app.load_sample();
+            app.view3d = false;
+            app.issues_page = Some("https://example.org/issues/new".into());
+            let ctx = egui::Context::default();
+            app.open_feedback(&ctx, None);
+            app.want_picture = None;
+            if let Some(form) = &mut app.feedback {
+                form.title = "Le perçage saute un trou".into();
+                form.text = "Sur un cercle de 6 mm, le troisième trou est oublié.".into();
+            }
+        }
+        "crashes" => {
+            app.load_sample();
+            app.view3d = false;
+            let dir = std::env::temp_dir().join("burin-sample-crashes");
+            let _ = std::fs::remove_dir_all(&dir);
+            let sample = crash::Report { format: "burin-crash/1".into(), kind: "panic".into(), message: "index out of bounds: the len is 3 but the index is 7".into(), location: "src/toolpath.rs:812:14".into(), thread: "main".into(), version: env!("CARGO_PKG_VERSION").into(), system: "linux, 8 threads".into(), job: "3 shapes, 2 toolpaths, 1200 moves".into(), recent_actions: vec!["Recalculate All".into(), "Save Toolpaths...".into()], backtrace: vec!["burin::toolpath::generate (src/toolpath.rs:812:14)".into(), "burin::app::App::frame (src/app.rs:40:9)".into()], signature: "0".into(), ..Default::default() };
+            crash::save_in(&dir.join("crashes"), sample, 1794041400);
+            app.data_dir = Some(dir);
+            app.after_crash_checked = true;
+            app.crashes_open = true;
+        }
+        "lasttime" => {
+            app.load_sample();
+            app.view3d = false;
+            app.dirty = false;
+        }
         "support" => {
             app.load_sample();
             app.view3d = false;
@@ -782,14 +838,27 @@ fn main() {
             "--screenshot" => screenshot = args.next().map(PathBuf::from),
             "--open" => state = args.next(),
             "--renderer" => asked = args.next(),
-            // Dies while opening with this way of drawing, to try out what happens next.
+            // Dies while opening with this way of drawing, or `panic` or `abort` once running,
+            // to try out what happens next.
             "--test-crash" => test_crash = args.next(),
-            _ => {}
+            flag if flag.starts_with("--") => {}
+            // As given by the desktop when a project's file is opened.
+            file => {
+                if state.is_none() {
+                    state = Some(format!("project:{file}"));
+                }
+            }
         }
     }
-    let avoid = startup::stopped_before(&startup::previous_log(), env!("CARGO_PKG_VERSION"));
+    let first_copy = startup::claim_session();
+    let previous = startup::previous_log();
+    let avoid = if first_copy { startup::stopped_before(&previous, env!("CARGO_PKG_VERSION")) } else { Vec::new() };
+    if first_copy && (screenshot.is_none() || state.as_deref() == Some("lasttime")) {
+        crash::check_last_run(&previous);
+    }
     startup::begin_log();
     startup::log_panics();
+    crash::begin_session();
     let mut reasons = Vec::new();
     for engine in startup::attempts(asked.as_deref()) {
         if asked.is_none() && avoid.contains(&engine) {
@@ -799,7 +868,10 @@ fn main() {
         startup::log(&format!("Trying: {}", engine.word()));
         let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| open_window(engine, screenshot.clone(), state.clone(), test_crash.as_deref())));
         let reason = match opened {
-            Ok(Ok(())) => return,
+            Ok(Ok(())) => {
+                startup::log(startup::CLOSED);
+                return;
+            }
             Ok(Err(e)) => e.to_string(),
             Err(crash) => startup::panic_text(crash.as_ref()),
         };
@@ -810,12 +882,17 @@ fn main() {
             break;
         }
     }
+    if !SHOWING.load(std::sync::atomic::Ordering::Relaxed) {
+        crash::record_no_window(&reasons);
+    }
     startup::show_failure(&startup::failure_text(SHOWING.load(std::sync::atomic::Ordering::Relaxed), &reasons));
+    startup::log(startup::CLOSED);
     std::process::exit(1);
 }
 
 fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Option<String>, test_crash: Option<&str>) -> eframe::Result {
     let crash_now = test_crash == Some(engine.word());
+    let crash_later = test_crash.filter(|t| matches!(*t, "panic" | "abort")).map(str::to_string);
     let options = engine.options(eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_title("Burin").with_icon(icon()).with_inner_size([1910.0, 1040.0]).with_min_inner_size([900.0, 600.0]),
         ..Default::default()
@@ -835,16 +912,28 @@ fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Opti
                 unsafe { gl.get_parameter_string(eframe::glow::RENDERER) }
             });
             if let Some(card) = adapter.or(gl) {
-                startup::log(&format!("Graphics card: {card}"));
+                startup::set_graphics(&card);
             }
             let mut app = App::default();
             // The picture to save has to be the finished one.
             app.surface_in_background = screenshot.is_none();
             app.restore_posts();
-            if let Some(s) = &state {
-                open_state(&mut app, s);
+            // Pictures for a check shouldn't show this computer's reports, or touch its copy of unsaved work.
+            let quiet = screenshot.is_some() && !state.as_deref().is_some_and(|s| s == "lasttime");
+            app.data_dir = if quiet || startup::is_second_copy() { None } else { app::settings_file("x").and_then(|f| f.parent().map(PathBuf::from)) };
+            match state.as_deref().and_then(|s| s.strip_prefix("project:")) {
+                Some(file) => {
+                    if let Err(why) = app.open_path(file.into()) {
+                        app.message = Some(why);
+                    }
+                }
+                None => {
+                    if let Some(s) = &state {
+                        open_state(&mut app, s);
+                    }
+                }
             }
-            Ok(Box::new(Program { app, screenshot, frames: 0, requested: false, engine, drawn: 0 }))
+            Ok(Box::new(Program { app, screenshot, frames: 0, requested: false, engine, drawn: 0, crash_later }))
         }),
     )
 }

@@ -3724,7 +3724,7 @@ fn out_of_place(state: &str) -> Vec<String> {
 #[test]
 fn french_wordings_stay_inside_their_panels() {
     let mut too_wide = Vec::new();
-    for state in ["merge", "rotate", "support", "missinglayers", "pieces", "savepiece", "3d", "align", "array", "board", "boardalert", "boardmaterial", "carved", "chamfer", "circle", "clipart", "corners", "cut", "distort", "distorted", "drawing", "drill", "editcircle", "engrave", "finish", "flute", "grid", "grid3d", "grouped", "handles", "job", "layers", "leads", "lines", "material", "material-changed", "millimetres", "model", "modeling", "move", "order", "origin", "origin_set", "passes", "paths2d", "piece", "pocket", "posts", "preferences", "profile", "progress", "ramp", "relief", "relief3d", "rough", "rules", "save", "selector", "sharp3d", "sharp3dfar", "similar", "sketch", "startat", "sweep", "tabs", "tabs-before", "tee_after", "tee_before", "through", "toodeep", "toolrates", "tools", "trace", "traced", "trim_after", "trim_before", "unsaved", "vcarve", "zero"] {
+    for state in ["feedback", "crashes", "merge", "rotate", "support", "missinglayers", "pieces", "savepiece", "3d", "align", "array", "board", "boardalert", "boardmaterial", "carved", "chamfer", "circle", "clipart", "corners", "cut", "distort", "distorted", "drawing", "drill", "editcircle", "engrave", "finish", "flute", "grid", "grid3d", "grouped", "handles", "job", "layers", "leads", "lines", "material", "material-changed", "millimetres", "model", "modeling", "move", "order", "origin", "origin_set", "passes", "paths2d", "piece", "pocket", "posts", "preferences", "profile", "progress", "ramp", "relief", "relief3d", "rough", "rules", "save", "selector", "sharp3d", "sharp3dfar", "similar", "sketch", "startat", "sweep", "tabs", "tabs-before", "tee_after", "tee_before", "through", "toodeep", "toolrates", "tools", "trace", "traced", "trim_after", "trim_before", "unsaved", "vcarve", "zero"] {
         let english = out_of_place(state).len();
         let french = {
             let _french = InFrench::start();
@@ -4670,4 +4670,216 @@ fn support_details_say_what_helps_and_nothing_private() {
     h.run();
     click(&mut h, "Copy These Details");
     assert!(h.state().status.contains("Copied"));
+}
+
+#[cfg(test)]
+fn scratch_folder(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("burin-ui-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[cfg(test)]
+fn a_saved_crash(dir: &std::path::Path) {
+    let report = crate::crash::Report { format: "burin-crash/1".into(), kind: "panic".into(), message: "index out of bounds".into(), location: "src/a.rs:1:2".into(), version: "1".into(), system: "test".into(), signature: "abc".into(), recent_actions: vec!["Save".into()], ..Default::default() };
+    crate::crash::save_in(&dir.join("crashes"), report, 1794041400);
+}
+
+#[test]
+fn after_a_crash_it_says_so_and_a_report_can_be_read_and_sent_on() {
+    let dir = scratch_folder("after");
+    a_saved_crash(&dir);
+    let mut h = harness();
+    h.state_mut().data_dir = Some(dir.clone());
+    h.state_mut().after_crash_checked = false;
+    h.state_mut().issues_page = Some("https://example.org/issues/new".into());
+    h.run();
+    h.get_by_label("Burin didn't close normally last time. A report is on this computer, and nothing has been sent.");
+    click(&mut h, "See the Report...");
+    assert!(h.state().crashes_open);
+    assert_eq!(h.state().new_crashes, 0);
+    h.run();
+    assert!(crate::crash::list_in(&dir.join("crashes"))[0].seen, "told once");
+
+    click(&mut h, "Report This...");
+    assert!(!h.state().crashes_open);
+    {
+        let form = h.state().feedback.as_ref().unwrap();
+        assert_eq!(form.title_of_draft(), "[Crash] index out of bounds");
+    }
+    click(&mut h, "Open a Draft in the Browser");
+    let address = h.state().last_draft.clone().unwrap();
+    assert!(address.starts_with("https://example.org/issues/new?title=%5BCrash%5D%20index"), "{address}");
+    assert!(address.contains("src%2Fa.rs"), "the report is in it: {address}");
+    assert!(h.state().feedback.is_some(), "the form stays open");
+
+    // A second start has nothing new to say.
+    let mut again = harness();
+    again.state_mut().data_dir = Some(dir.clone());
+    again.state_mut().after_crash_checked = false;
+    again.run();
+    assert!(again.query_by_label("See the Report...").is_none());
+
+    // And it can be deleted.
+    let mut h = harness();
+    h.state_mut().data_dir = Some(dir.clone());
+    h.state_mut().after_crash_checked = false;
+    h.state_mut().crashes_open = true;
+    h.run();
+    click(&mut h, "Delete");
+    assert!(crate::crash::list_in(&dir.join("crashes")).is_empty());
+    h.get_by_label("No crash reports.");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn feedback_needs_a_title_and_shows_exactly_what_would_go() {
+    let mut h = job_with_square([3.0, 3.0]);
+    h.state_mut().issues_page = Some("https://example.org/issues/new".into());
+    h.state_mut().path = Some("/somewhere/private/wheel.burin".into());
+    let ctx = h.ctx.clone();
+    h.state_mut().open_feedback(&ctx, None);
+    h.run();
+    assert!(h.state().want_picture.is_some(), "a picture from before the form is asked for");
+    click(&mut h, "Open a Draft in the Browser");
+    assert!(h.state().last_draft.is_none(), "not with no title");
+
+    {
+        let form = h.state_mut().feedback.as_mut().unwrap();
+        form.title = "Holes".into();
+        form.text = "A hole is missing".into();
+    }
+    h.run();
+    click(&mut h, "An idea");
+    click(&mut h, "Open a Draft in the Browser");
+    let address = h.state().last_draft.clone().unwrap();
+    assert!(address.contains("title=%5BIdea%5D%20Holes"), "{address}");
+    assert!(address.contains("A%20hole%20is%20missing") && address.contains("Details"), "{address}");
+    assert!(!address.contains("private") && !address.contains("wheel"), "{address}");
+    click(&mut h, "Add the technical details below");
+    click(&mut h, "Open a Draft in the Browser");
+    assert!(!h.state().last_draft.clone().unwrap().contains("Details"));
+
+    // With nowhere to send it, the text can still be copied.
+    h.state_mut().issues_page = None;
+    h.run();
+    assert!(h.query_by_label("Open a Draft in the Browser").is_none());
+    h.get_by_label("This copy of Burin doesn't know where to send drafts. Copy the text instead.");
+    click(&mut h, "Copy the Text");
+    h.get_by_label("Copied.");
+}
+
+#[test]
+fn unsaved_work_is_copied_and_can_be_brought_back() {
+    let dir = scratch_folder("recovery");
+    let mut h = job_with_square([3.0, 3.0]);
+    h.state_mut().data_dir = Some(dir.clone());
+    h.state_mut().after_crash_checked = true;
+    h.state_mut().recovery_every = Some(0);
+    h.state_mut().path = Some("/nowhere/wheel.burin".into());
+    h.state_mut().dirty = true;
+    h.run();
+    let found = crate::recovery::find(&dir).expect("copied");
+    assert_eq!(found.project.as_deref(), Some(std::path::Path::new("/nowhere/wheel.burin")));
+    assert!(found.saved_at.starts_with("20"));
+
+    // A new start offers it, and takes it back unsaved under the same name.
+    let mut next = harness();
+    next.state_mut().data_dir = Some(dir.clone());
+    next.state_mut().after_crash_checked = false;
+    next.run();
+    next.get_by_label("Get It Back");
+    assert!(next.query_by_label("See the Report...").is_none());
+    click(&mut next, "Get It Back");
+    assert_eq!(next.state().doc.vectors.len(), 1);
+    assert_eq!(next.state().path.as_deref(), Some(std::path::Path::new("/nowhere/wheel.burin")));
+    assert!(next.state().dirty);
+
+    // Saving makes the copy pointless.
+    let saved = dir.join("wheel.burin");
+    next.state_mut().save_to(saved).unwrap();
+    next.run();
+    assert!(crate::recovery::find(&dir).is_none());
+
+    // Put off, it stays for next time and isn't written over.
+    crate::recovery::write(&dir, &next.state().doc, None).unwrap();
+    let before = std::fs::read(dir.join("recovery.burin")).unwrap();
+    let mut later = harness();
+    later.state_mut().data_dir = Some(dir.clone());
+    later.state_mut().after_crash_checked = false;
+    later.run();
+    later.get_by_label("Delete It");
+    later.state_mut().recovery_every = Some(0);
+    later.state_mut().recovery_left = true;
+    later.state_mut().recovery = None;
+    later.state_mut().load_sample();
+    later.state_mut().dirty = true;
+    later.run();
+    assert_eq!(std::fs::read(dir.join("recovery.burin")).unwrap(), before);
+
+    // Refused, it's gone.
+    let mut last = harness();
+    last.state_mut().data_dir = Some(dir.clone());
+    last.state_mut().after_crash_checked = false;
+    last.run();
+    click(&mut last, "Delete It");
+    assert!(crate::recovery::find(&dir).is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+struct DroppedForTest(std::path::PathBuf);
+
+#[cfg(test)]
+impl egui::DroppedFile for DroppedForTest {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}
+
+#[test]
+fn a_project_dropped_on_the_window_opens() {
+    let dir = scratch_folder("dropped");
+    let mut h = job_with_square([3.0, 3.0]);
+    let saved = dir.join("wheel.burin");
+    h.state_mut().save_to(saved.clone()).unwrap();
+
+    let mut other = harness();
+    other.input_mut().dropped_files.push(std::sync::Arc::new(DroppedForTest(saved.clone())));
+    other.run();
+    assert_eq!(other.state().doc.vectors.len(), 1);
+    assert_eq!(other.state().path.as_ref(), Some(&saved));
+
+    let mut wrong = harness();
+    wrong.input_mut().dropped_files.push(std::sync::Arc::new(DroppedForTest(dir.join("picture.png"))));
+    wrong.run();
+    assert!(wrong.state().message.as_ref().unwrap().contains("picture.png"));
+
+    // Work not saved is asked about first.
+    let mut busy = job_with_square([3.0, 3.0]);
+    busy.state_mut().dirty = true;
+    busy.input_mut().dropped_files.push(std::sync::Arc::new(DroppedForTest(saved.clone())));
+    busy.run();
+    assert!(busy.state().leave.is_some());
+    assert!(busy.state().path.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn notes_stay_with_the_job_and_go_on_its_sheet() {
+    let mut h = job_with_square([3.0, 3.0]);
+    h.state_mut().doc.notes = "Screw down <well> first".into();
+    let text = serde_json::to_string(&h.state().doc).unwrap();
+    assert!(serde_json::from_str::<crate::app::Doc>(&text).unwrap().notes.contains("well"));
+    assert!(h.state().job_sheet_html("x").contains("Screw down &lt;well&gt; first"));
+    h.state_mut().doc.notes.clear();
+    assert!(!h.state().job_sheet_html("x").contains("<h2>Notes</h2>"));
+    h.state_mut().notes_open = true;
+    h.run();
+    h.get_by_label("Saved with the job, and printed on its job sheet.");
 }

@@ -355,6 +355,9 @@ pub struct Doc {
     /// New shapes are drawn as construction geometry.
     #[serde(default)]
     pub new_construction: bool,
+    /// The person's notes about the job, which go on the job sheet.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub notes: String,
     /// What each piece is called, by the mark on its shapes.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub piece_names: std::collections::BTreeMap<u64, String>,
@@ -366,6 +369,7 @@ impl Default for Doc {
             job: Job::default(),
             vectors: Vec::new(),
             piece_names: Default::default(),
+            notes: String::new(),
             layers: vec![Layer::named(crate::i18n::tr("Layer 1"))],
             active_layer: 0,
             components: Vec::new(),
@@ -1110,6 +1114,25 @@ pub struct App {
     /// A template waiting for a decision on the layers it needs.
     pub template_waiting: Option<crate::templates::Waiting>,
     pub support_open: bool,
+    /// The form for telling the author something, and where drafts go.
+    pub feedback: Option<crate::feedback::FeedbackForm>,
+    pub issues_page: Option<String>,
+    /// The last draft's address, for checking what it would say.
+    pub last_draft: Option<String>,
+    pub want_picture: Option<std::sync::Arc<std::sync::Mutex<Option<egui::ColorImage>>>>,
+    pub crashes_open: bool,
+    pub crash_chosen: usize,
+    pub new_crashes: usize,
+    pub after_crash_checked: bool,
+    /// Where reports and the copy of unsaved work are kept. None in tests and pictures.
+    pub data_dir: Option<PathBuf>,
+    pub recovery: Option<crate::recovery::Found>,
+    pub recovery_at: Option<std::time::Instant>,
+    pub recovery_every: Option<u64>,
+    pub recovery_written: bool,
+    /// The person put off deciding about the last copy: it stays as it is for next time.
+    pub recovery_left: bool,
+    pub notes_open: bool,
     pub recent_wanted: Option<PathBuf>,
     /// The picture on the first screen, once it has been shown.
     pub start_logo: Option<egui::TextureHandle>,
@@ -1323,6 +1346,21 @@ impl Default for App {
             rotate_centre: None,
             template_waiting: None,
             support_open: false,
+            feedback: None,
+            issues_page: crate::feedback::ISSUES_PAGE.map(str::to_string),
+            last_draft: None,
+            want_picture: None,
+            crashes_open: false,
+            crash_chosen: 0,
+            new_crashes: 0,
+            after_crash_checked: false,
+            data_dir: None,
+            recovery: None,
+            recovery_at: None,
+            recovery_every: None,
+            recovery_written: false,
+            recovery_left: false,
+            notes_open: false,
             recent_wanted: None,
             start_logo: None,
             save_piece: None,

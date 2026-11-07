@@ -23,13 +23,36 @@ export RUSTUP_HOME=$TOOLS/rustup XDG_CACHE_HOME=$TOOLS/cache
 # No spaces here: the Windows tools can't take a folder name that has them.
 export CARGO_TARGET_DIR=$TOOLS/target
 # Paths on this computer stay out of the programs.
-export CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=$PWD=/build/burin"$'\x1f'"--remap-path-prefix=$HOME=/build"
+# The last that fits is the one used, so the more exact one comes last.
+export CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=$HOME=/build"$'\x1f'"--remap-path-prefix=$TOOLS/source=/build/burin"
 unset LD_LIBRARY_PATH
+# Where a report's draft opens: the project's page, if it's kept on GitHub. Nothing else from the address.
+ORIGIN=$(git remote get-url origin 2>/dev/null || true)
+OWNER_REPO=$(printf '%s' "$ORIGIN" | sed -nE 's#^(https://([^@/]*@)?github\.com/|git@github\.com:)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$#\3#p' | sed 's/\.git$//')
+if [ -n "$OWNER_REPO" ]; then
+    export BURIN_ISSUES_URL="https://github.com/$OWNER_REPO/issues/new"
+fi
 
 rustup toolchain list | grep -q "^$RUST" || rustup toolchain install "$RUST" --profile minimal --no-self-update
 rustup target list --installed --toolchain "$RUST" | grep -q x86_64-pc-windows-gnu || rustup target add --toolchain "$RUST" x86_64-pc-windows-gnu
-rustup run "$RUST" cargo zigbuild --release --locked --target "x86_64-unknown-linux-gnu.$GLIBC"
-rustup run "$RUST" cargo zigbuild --release --locked --target x86_64-pc-windows-gnu
+# Built from a copy in a neutral place: the folder a program is built in ends up inside it.
+SOURCE=$TOOLS/source
+rm -rf "$SOURCE"
+mkdir -p "$SOURCE"
+cp -a Cargo.toml Cargo.lock build.rs src release "$SOURCE/"
+(
+    cd "$SOURCE"
+    rustup run "$RUST" cargo zigbuild --release --locked --target "x86_64-unknown-linux-gnu.$GLIBC"
+    rustup run "$RUST" cargo zigbuild --release --locked --target x86_64-pc-windows-gnu
+)
+
+# Stops here rather than hand out a program that says where it was built, or whose home that was.
+for PROGRAM in "$CARGO_TARGET_DIR/x86_64-pc-windows-gnu/release/burin.exe" "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release/burin"; do
+    if strings -a "$PROGRAM" | grep -F -e "$HOME" -e "$PWD" | head -n 3 | grep . ; then
+        echo "Paths on this computer are still in $PROGRAM" >&2
+        exit 1
+    fi
+done
 
 rm -rf dist
 mkdir -p dist

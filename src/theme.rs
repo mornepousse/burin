@@ -1,5 +1,5 @@
 //! The look of the program: quiet graphite panels that stay out of the way of the work, soft
-//! rounded controls, amber only for what acts or is chosen, and a pale sheet to draw on.
+//! rounded controls, the green of the logo only for what acts or is chosen, and a pale sheet to draw on.
 
 use egui::{Color32, CornerRadius, FontId, Stroke};
 
@@ -18,16 +18,18 @@ pub const LINE: Color32 = Color32::from_rgb(50, 55, 63);
 pub const TEXT: Color32 = Color32::from_rgb(236, 238, 241);
 pub const MUTED: Color32 = Color32::from_rgb(165, 171, 181);
 pub const FAINT: Color32 = Color32::from_rgb(115, 122, 133);
-/// The one bright colour: what is active or chosen.
-pub const ACCENT: Color32 = Color32::from_rgb(245, 176, 65);
-pub const ACCENT_SOFT: Color32 = Color32::from_rgb(72, 58, 32);
+/// The one bright colour: what is active or chosen. The background of the logo, exactly.
+pub const ACCENT: Color32 = Color32::from_rgb(19, 166, 127);
+pub const ACCENT_SOFT: Color32 = Color32::from_rgb(16, 46, 40);
+/// For saying to be careful, and only that.
+pub const WARNING: Color32 = Color32::from_rgb(245, 176, 65);
 /// Around the sheet in the 2D view.
 pub const WORKSPACE: Color32 = Color32::from_rgb(13, 15, 18);
 /// The material in the 2D view: stays light, so shapes read as ink on a sheet.
 pub const SHEET: Color32 = Color32::from_rgb(249, 248, 245);
 pub const SHEET_INK: Color32 = Color32::from_rgb(24, 26, 30);
-/// Text on a brass button.
-pub const ON_ACCENT: Color32 = Color32::from_rgb(34, 26, 10);
+/// Text on a button in the bright colour.
+pub const ON_ACCENT: Color32 = Color32::from_rgb(4, 28, 22);
 /// What is selected on the sheet.
 pub const PICK: Color32 = Color32::from_rgb(222, 38, 120);
 /// Cutting and fast moves over the 3D view.
@@ -37,7 +39,7 @@ pub const BACKDROP_TOP: Color32 = Color32::from_rgb(38, 42, 49);
 pub const BACKDROP_BOTTOM: Color32 = Color32::from_rgb(13, 15, 18);
 /// Guide lines that are never cut.
 /// The rest of a piece, and the frame around it, when one of its shapes is selected.
-pub const PIECE: Color32 = Color32::from_rgb(0, 140, 130);
+pub const PIECE: Color32 = Color32::from_rgb(10, 125, 97);
 pub const CONSTRUCTION: Color32 = Color32::from_rgb(104, 118, 150);
 pub const GRID_FINE: Color32 = Color32::from_rgb(226, 224, 217);
 pub const GRID_BOLD: Color32 = Color32::from_rgb(194, 192, 184);
