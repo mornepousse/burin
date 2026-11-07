@@ -1709,6 +1709,11 @@ impl App {
             self.message = Some(problem);
             return;
         }
+        if !self.checks_accepted && crate::checks::check_all(self, only).iter().any(|f| f.level == crate::checks::Level::Danger) {
+            self.checks_for_save = Some(only);
+            self.checks_open = true;
+            return;
+        }
         let ext = self.post_extension(self.post_index);
         // Called after the first toolpath going in the file.
         let first = self.doc.toolpaths.iter().enumerate().find(|(i, t)| only.map_or(t.visible, |o| o == *i)).map_or("", |(_, t)| t.op.name.as_str());
@@ -2057,6 +2062,9 @@ impl App {
                 ui.label(crate::i18n::tr("Name:"));
                 ui.add(TextEdit::singleline(&mut op.name).desired_width(f32::INFINITY));
             });
+            egui::CollapsingHeader::new(crate::i18n::tr("Notes")).id_salt("toolpath-notes").default_open(!op.notes.is_empty()).show(ui, |ui| {
+                ui.add(TextEdit::multiline(&mut op.notes).desired_width(f32::INFINITY).desired_rows(2));
+            });
         });
     }
 
@@ -2186,6 +2194,8 @@ impl App {
                     ui.add_space(4.0);
                     bold(ui, crate::i18n::tr("Cutting Parameters"));
                     labelled(ui, crate::i18n::tr("Pass Depth"), 86.0, &mut t.pass_depth, 64.0, unit);
+                    labelled(ui, crate::i18n::tr("Flute Length"), 86.0, &mut t.flute_length, 64.0, unit).then_some(()).unwrap_or(());
+                    ui.label(egui::RichText::new(crate::i18n::tr("How deep it can cut. 0 if not known.")).size(11.5).color(crate::theme::MUTED));
                     ui.horizontal(|ui| {
                         let mut across = t.dia * t.stepover;
                         if labelled(ui, crate::i18n::tr("Stepover"), 86.0, &mut across, 64.0, unit) && t.dia > 0.0 {
@@ -2201,6 +2211,25 @@ impl App {
                     bold(ui, crate::i18n::tr("Feeds and Speeds"));
                     labelled(ui, crate::i18n::tr("Spindle Speed"), 86.0, &mut t.rpm, 64.0, "r.p.m");
                     rate_fields(ui, t, unit, 86.0, 64.0);
+                    // Starting points from the material and the tool's size.
+                    let memory = egui::Id::unique("rates-material");
+                    let mut chosen: usize = ui.data(|d| d.get_temp(memory)).unwrap_or(0);
+                    let mut flutes: u32 = ui.data(|d| d.get_temp(memory.with("flutes"))).unwrap_or(2);
+                    ui.horizontal(|ui| {
+                        egui::ComboBox::from_id_salt("rates-material").selected_text(crate::rates::MATERIALS[chosen].name()).width(130.0).show_ui(ui, |ui| {
+                            for (i, m) in crate::rates::MATERIALS.iter().enumerate() {
+                                ui.selectable_value(&mut chosen, i, m.name());
+                            }
+                        });
+                        ui.add(egui::DragValue::new(&mut flutes).range(1..=6).suffix(crate::i18n::tr(" flutes")));
+                        if ui.button(crate::i18n::tr("Suggest")).on_hover_text(crate::i18n::tr("Feed, plunge and pass depth from the usual chip load for this material and size. Starting points: your tool maker's figures come first.")).clicked() {
+                            *t = crate::rates::suggest(t, crate::rates::MATERIALS[chosen], flutes);
+                        }
+                    });
+                    ui.data_mut(|d| {
+                        d.insert_temp(memory, chosen);
+                        d.insert_temp(memory.with("flutes"), flutes);
+                    });
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         bold(ui, crate::i18n::tr("Tool Number"));

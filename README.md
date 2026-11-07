@@ -25,14 +25,15 @@ Linux · Windows · Français · English
 | | |
 |---|---|
 | **Dessiner** | Lignes, courbes, arcs, cercles, ellipses, rectangles, polygones, étoiles, spirales, texte, cotes, contraintes d'esquisse |
-| **Modifier** | Déplacer, tourner et redimensionner à la souris, décaler, souder, couper, aligner, copier en série |
+| **Modifier** | Déplacer, tourner et redimensionner à la souris (avec une valeur exacte tapée au clavier), décaler, souder, couper, aligner, copier en série, lisser les tracés |
 | **Organiser** | Calques, groupes et **pièces** : on sélectionne un seul trou sans rien dégrouper, mais la pièce se déplace d'un bloc |
 | **Modeler** | Composants 3D, reliefs importés, cliparts |
 | **Usiner** | Contour, poche, perçage, gravure, gravure en V, ébauche et finition 3D, prisme, texture, moulure, cannelure, chanfrein |
 | **Préparer** | Rampes, entrées et sorties, attaches, ordre de coupe, fusion de parcours, modèles de parcours réutilisables |
-| **Vérifier** | Aperçu 3D de la coupe, estimation du temps, fiche de travail à emporter à la machine |
+| **Vérifier** | Aperçu 3D de la coupe (rapides, plongées et remontées de couleurs différentes), estimation du temps, **vérification avant coupe** (vitesses à 0, outil trop court, rapides dans la matière, attaches trop fines…), fiche de travail |
+| **Reprendre** | Après un arrêt, un fichier qui repart d'un passage choisi d'un parcours |
 | **Écrire** | G-code générique, GRBL, Mach3, PlanetCNC, et vos post-processeurs `.pp` |
-| **Échanger** | Lit les projets `.crv3d`, importe SVG, DXF, STL et images, exporte SVG, EPS, PDF, STL |
+| **Échanger** | Lit les projets `.crv3d` et les fichiers G-code d'autres logiciels, importe SVG, DXF, STL et images, exporte SVG, EPS, PDF, STL, imprime via un PDF à taille réelle |
 
 Le détail de ce qui manque est à la fin de cette page.
 
@@ -99,11 +100,10 @@ figurent jamais.
 ## Ce qui manque encore
 
 - **Essais réels :** rien n'a été vérifié sur une machine.
-- **Menus :** une quarantaine d'entrées restent grisées, comme l'impression, certains outils de modélisation
-  3D ou les vues multi-faces.
+- **Menus :** une trentaine d'entrées restent grisées, surtout des outils de modélisation 3D et des vues
+  (multi-faces, enroulée, ombres).
 - **Calculs :** les parcours ne sont pas toujours identiques à ceux enregistrés dans les projets `.crv3d`, notamment l'ordre de coupe et les
   poches, qui lèvent l'outil plus souvent.
-- **À la souris :** taper une valeur pendant un déplacement ou une rotation n'existe pas encore.
 
 Les règles de calcul, avec ce qui a été vérifié et ce qui reste estimé, sont dans
 [`MECHANICS.md`](MECHANICS.md).

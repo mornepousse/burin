@@ -206,7 +206,7 @@ mod tests {
             Step::Arc { end: [10.0, 0.0, -2.0], centre: [0.0, 0.0], counter_clockwise: true },
         ];
         let moves = [start];
-        let path = PostPath { name: "Down", tool: &t, moves: &moves, dwell: 0.0, steps: Some(&steps) };
+        let path = PostPath { name: "Down", tool: &t, moves: &moves, dwell: 0.0, steps: Some(&steps), notes: "" };
         let text = gcode(&[path], &job(Some(0.012)));
         let arcs: Vec<&str> = text.lines().filter(|l| l.starts_with("G03")).collect();
         assert!(arcs[0].contains(" Z-2.000"), "{}", arcs[0]);
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn it_opens_and_closes_exactly_like_their_file() {
         let (moves, t) = profile();
-        let text = gcode(&[PostPath { name: "Contour externe", tool: &t, moves: &moves, dwell: 0.0, steps: None }], &job(Some(0.012)));
+        let text = gcode(&[PostPath { name: "Contour externe", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "" }], &job(Some(0.012)));
         let head = "(sample)\r\n(Created: 2026-11-05 10:00)\r\n(Material Size: X=300.000, Y=200.000, Z=13.000)\r\n(Tools:)\r\n(1 = End Mill (3 mm))\r\n\r\nG21 G17 G40 G49 G90 G91.1 G94\r\n\r\nT1 M6 (End Mill (3 mm))\r\nG43 H1\r\nS17000.00 M3\r\n(Contour externe)\r\n";
         assert!(text.starts_with(head), "{}", &text[..head.len().min(text.len())]);
         let tail = "\r\nM5\r\nG49\r\nG53 G00 Z#<_tc_safeheight>\r\nM2\r\n";
@@ -247,7 +247,7 @@ mod tests {
         const THEIRS: [&str; 17] = ["G00 X", "G00 Y", "G00 X Y", "G00 X Z", "G00 Z", "G00 X Y Z", "G01 Z F", "G01 X Y", "G01 X", "G01 Y", "G01 X Y F", "G01 X F", "G01 Y F", "G02 X Y I J", "G02 X Y I J F", "G03 X Y I J", "G03 X Y I J F"];
         let (moves, t) = profile();
         for arcs in [Some(0.012), None] {
-            let text = gcode(&[PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None }], &job(arcs));
+            let text = gcode(&[PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "" }], &job(arcs));
             for line in motion_lines(&text) {
                 assert!(THEIRS.contains(&shape(line).as_str()), "{line} has the shape {}", shape(line));
             }
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn it_starts_over_the_first_cut_with_no_trip_to_home() {
         let (moves, t) = profile();
-        let text = gcode(&[PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None }], &job(None));
+        let text = gcode(&[PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "" }], &job(None));
         let lines = motion_lines(&text);
         assert_eq!(shape(lines[0]), "G00 X Y Z", "{}", lines[0]);
         assert!(!lines[0].contains("X0.000 Y0.000"), "{}", lines[0]);
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn the_feed_is_only_written_when_it_changes() {
         let (moves, t) = profile();
-        let text = gcode(&[PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None }], &job(Some(0.012)));
+        let text = gcode(&[PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "" }], &job(Some(0.012)));
         let mut last = "";
         for line in motion_lines(&text) {
             if let Some(i) = line.find(" F") {
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn a_file_with_arcs_cuts_the_same_path_as_one_without() {
         let (moves, t) = profile();
-        let path = [PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None }];
+        let path = [PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "" }];
         let (with, plain) = (gcode(&path, &job(Some(0.012))), gcode(&path, &job(None)));
         assert!(with.lines().count() * 2 < plain.lines().count(), "{} vs {}", with.lines().count(), plain.lines().count());
         let segs: Vec<_> = moves.windows(2).filter(|w| !w[1].rapid).map(|w| (w[0].p, w[1].p)).collect();
@@ -344,7 +344,7 @@ mod tests {
         second.number = 4;
         second.rpm = 12000.0;
         let text = gcode(
-            &[PostPath { name: "a", tool: &t, moves: &moves, dwell: 0.0, steps: None }, PostPath { name: "b", tool: &t, moves: &moves, dwell: 0.0, steps: None }, PostPath { name: "c", tool: &second, moves: &moves, dwell: 0.0, steps: None }],
+            &[PostPath { name: "a", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "" }, PostPath { name: "b", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "" }, PostPath { name: "c", tool: &second, moves: &moves, dwell: 0.0, steps: None, notes: "" }],
             &job(None),
         );
         assert!(text.contains("(1 = End Mill (3 mm))\r\n(4 = V-Bit)\r\n"), "both in the list");
@@ -359,7 +359,7 @@ mod tests {
     fn tools_without_a_number_take_their_place_in_the_list() {
         let (moves, mut t) = profile();
         t.number = 0;
-        let text = gcode(&[PostPath { name: "a", tool: &t, moves: &moves, dwell: 0.0, steps: None }], &job(None));
+        let text = gcode(&[PostPath { name: "a", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "" }], &job(None));
         assert!(text.contains("T1 M6 "), "{text}");
     }
 
@@ -371,12 +371,12 @@ mod tests {
         tool_in.feed /= 25.4;
         tool_in.plunge /= 25.4;
         let inches = PlanetJob { scale: 25.4, ..job(Some(0.0005)) };
-        let a = replay(&gcode(&[PostPath { name: "p", tool: &tool_in, moves: &inch, dwell: 0.0, steps: None }], &inches));
-        let b = gcode(&[PostPath { name: "p", tool: &tool_in, moves: &inch, dwell: 0.0, steps: None }], &inches);
+        let a = replay(&gcode(&[PostPath { name: "p", tool: &tool_in, moves: &inch, dwell: 0.0, steps: None, notes: "" }], &inches));
+        let b = gcode(&[PostPath { name: "p", tool: &tool_in, moves: &inch, dwell: 0.0, steps: None, notes: "" }], &inches);
         assert!(b.contains("F800.0") && b.contains("F300.0"), "{}", &b[..400]);
         assert!(a.iter().map(|p| p[0]).fold(0.0, f64::max) > 200.0, "millimetres");
         let moved = PlanetJob { origin: [100.0, 100.0], ..job(None) };
-        let text = gcode(&[PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None }], &moved);
+        let text = gcode(&[PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "" }], &moved);
         let lowest = replay(&text).iter().map(|p| p[0]).fold(f64::MAX, f64::min);
         assert!(lowest < 0.0, "X now counts from the origin: {lowest}");
     }

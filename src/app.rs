@@ -1136,6 +1136,26 @@ pub struct App {
     /// Earlier versions kept beside each project, and the window that lists them.
     pub backup_settings: crate::backups::Settings,
     pub backups_open: bool,
+    /// The look over the toolpaths before cutting: open, asked for by Save (with which toolpath),
+    /// and passed for this one save.
+    pub checks_open: bool,
+    pub checks_for_save: Option<Option<usize>>,
+    pub checks_accepted: bool,
+    /// How toolpaths are drawn: each kind of move can be shown or not, and 2D previews filled.
+    pub draw_plunges: bool,
+    pub draw_retracts: bool,
+    pub solid_previews: bool,
+    pub shaded_background: bool,
+    pub draw_origin: bool,
+    pub curve_fit_open: bool,
+    pub curve_fit_tolerance: f64,
+    /// Writing the machine file from a toolpath's cut on, after a stop: toolpath, cut from 0.
+    pub resume: Option<(usize, usize)>,
+    pub resume_open: bool,
+    pub resume_choice: (usize, usize),
+    /// A value typed while dragging, made exact with Enter.
+    pub typed: String,
+    pub draw_block: bool,
     pub recent_wanted: Option<PathBuf>,
     /// The picture on the first screen, once it has been shown.
     pub start_logo: Option<egui::TextureHandle>,
@@ -1366,6 +1386,21 @@ impl Default for App {
             notes_open: false,
             backup_settings: crate::backups::load_settings(),
             backups_open: false,
+            checks_open: false,
+            checks_for_save: None,
+            checks_accepted: false,
+            draw_plunges: true,
+            draw_retracts: true,
+            solid_previews: false,
+            shaded_background: true,
+            draw_origin: false,
+            curve_fit_open: false,
+            curve_fit_tolerance: 0.01,
+            resume: None,
+            resume_open: false,
+            resume_choice: (0, 1),
+            typed: String::new(),
+            draw_block: false,
             recent_wanted: None,
             start_logo: None,
             save_piece: None,
@@ -2403,6 +2438,10 @@ impl App {
             self.status = crate::i18n::tr("Select a toolpath to edit.").into();
             return;
         };
+        if self.doc.toolpaths[i].op.imported {
+            self.message = Some(crate::i18n::tr("This toolpath was read from another program's file: it can't be edited or calculated again here.").into());
+            return;
+        }
         if self.doc.toolpaths[i].op.merged {
             self.message = Some(crate::i18n::tr("A merged toolpath can't be edited or calculated again. Change the toolpaths it was made from and merge them again.").into());
             return;
@@ -2535,7 +2574,7 @@ impl App {
             match &tp.kept_moves {
                 Some(kept) => {
                     tp.moves = kept.clone();
-                    if tp.op.merged {
+                    if tp.op.merged || tp.op.imported {
                         continue;
                     }
                     if tp.op.source.is_empty() {
@@ -2646,6 +2685,24 @@ impl App {
     /// The machine file's text. `file_name` is what a post processor file can print in it.
     pub fn gcode_text_named(&self, only: Option<usize>, file_name: &str) -> Option<String> {
         let chosen: Vec<&Toolpath> = self.doc.toolpaths.iter().enumerate().filter(|(i, t)| only.map_or(t.visible, |o| o == *i)).map(|(_, t)| t).collect();
+        // Starting again after a stop: the toolpaths before go, and that one starts from its cut.
+        if let Some((from, cut)) = self.resume {
+            let started = self.doc.toolpaths.get(from).map(|t| {
+                let mut t = t.clone();
+                t.moves = std::sync::Arc::new(toolpath::moves_from_cut(&t.moves, cut, self.doc.machine_on_job(), t.op.tool.metric));
+                t.kept_steps = None;
+                t
+            });
+            let mut list: Vec<&Toolpath> = Vec::new();
+            for (i, t) in self.doc.toolpaths.iter().enumerate().filter(|(i, t)| (only.map_or(t.visible, |o| o == *i) || *i == from) && *i >= from) {
+                if i == from {
+                    list.push(started.as_ref()?);
+                } else {
+                    list.push(t);
+                }
+            }
+            return self.gcode_from(&list, file_name);
+        }
         self.gcode_from(&chosen, file_name)
     }
 
@@ -2665,7 +2722,7 @@ impl App {
         let items: Vec<toolpath::PostPath> = chosen
             .iter()
             .zip(&routes)
-            .map(|(t, (moves, steps))| toolpath::PostPath { name: t.op.name.as_str(), tool: &t.op.tool, moves: moves.as_slice(), dwell: t.op.dwell, steps: steps.as_deref() })
+            .map(|(t, (moves, steps))| toolpath::PostPath { name: t.op.name.as_str(), tool: &t.op.tool, moves: moves.as_slice(), dwell: t.op.dwell, steps: steps.as_deref(), notes: t.op.notes.as_str() })
             .collect();
         let j = &self.doc.job;
         if let Some(def) = self.post_index.checked_sub(toolpath::POSTS.len()).and_then(|i| self.loaded_posts.get(i)) {
@@ -2697,7 +2754,7 @@ impl App {
             // This file never visits the home position, not even at its start and end.
             let items: Vec<toolpath::PostPath> = chosen
                 .iter()
-                .map(|t| toolpath::PostPath { name: t.op.name.as_str(), tool: &t.op.tool, moves: t.moves.as_slice(), dwell: t.op.dwell, steps: t.kept_steps.as_ref().map(|s| s.as_slice()) })
+                .map(|t| toolpath::PostPath { name: t.op.name.as_str(), tool: &t.op.tool, moves: t.moves.as_slice(), dwell: t.op.dwell, steps: t.kept_steps.as_ref().map(|s| s.as_slice()), notes: t.op.notes.as_str() })
                 .collect();
             let info = crate::planetcnc::PlanetJob {
                 name: file_name,

@@ -344,6 +344,27 @@ impl App {
         }
     }
 
+    /// Burin has no printing of its own: the drawing goes to a PDF at its real size, opened in the
+    /// system's viewer, which prints it and shows it first.
+    pub fn print_drawing(&mut self, ctx: &egui::Context) {
+        let paths = self.paths_to_export();
+        if paths.is_empty() {
+            self.status = tr("There are no shapes to export.").into();
+            return;
+        }
+        let (_, points) = self.file_units();
+        let file = std::env::temp_dir().join(format!("burin-print-{}.pdf", std::process::id()));
+        match std::fs::write(&file, pdf_bytes(&paths, self.doc.job.width, self.doc.job.height, points)) {
+            Ok(()) => {
+                let address = file.to_string_lossy().replace('\\', "/").replace(' ', "%20");
+                let slash = if address.starts_with('/') { "" } else { "/" };
+                ctx.open_url(egui::OpenUrl::new_tab(format!("file://{slash}{address}")));
+                self.status = tr("The drawing opens as a PDF, at its real size: print it from there.").into();
+            }
+            Err(e) => self.message = Some(tf!("Could not write {}: {e}", file.display())),
+        }
+    }
+
     fn export_drawing_as(&mut self, extension: &str) {
         let paths = self.paths_to_export();
         if paths.is_empty() {
@@ -424,8 +445,9 @@ impl App {
             self.increment_and_save();
         }
         ui.separator();
-        later(ui, "Print...");
-        later(ui, "Print Preview");
+        if entry(ui, "Print...", work, Some("Ctrl+P".into())) || entry(ui, "Print Preview", work, None) {
+            self.print_drawing(ui.ctx());
+        }
         later(ui, "Print Setup...");
         ui.separator();
         ui.add_enabled_ui(work, |ui| {
@@ -442,7 +464,9 @@ impl App {
                 if entry(ui, "3D Relief from Picture...", true, None) {
                     self.dialog_relief_picture();
                 }
-                later(ui, "Import Toolpaths from Other Programs...");
+                if entry(ui, "Import Toolpaths from Other Programs...", true, None) {
+                    self.import_toolpath_dialog();
+                }
             });
             ui.menu_button(tr("Export"), |ui| {
                 for (label, extension) in [("DXF", "dxf"), ("SVG", "svg"), ("EPS", "eps"), ("PDF", "pdf")] {
@@ -592,7 +616,9 @@ impl App {
         if entry(ui, "Join Vectors", true, Some(keys.text(Action::JoinForm))) {
             self.start_xform(Xform::Join);
         }
-        later(ui, "Curve Fit Vectors");
+        if entry(ui, "Curve Fit Vectors", true, None) {
+            self.curve_fit_open = true;
+        }
         if entry(ui, "Nest Selected Objects", true, None) {
             self.start_xform(Xform::Nest);
         }
@@ -710,11 +736,15 @@ impl App {
         }
         ui.menu_button(tr("Toolpath Drawing"), |ui| {
             ui.checkbox(&mut self.show_toolpaths, tr("Draw 2D Previews"));
-            later(ui, "Make 2D Previews Solid");
+            ui.checkbox(&mut self.solid_previews, tr("Make 2D Previews Solid"));
             ui.checkbox(&mut self.auto_open_3d, tr("Auto Open 3D View"));
             ui.checkbox(&mut self.draw_rapids, tr("Draw rapid moves"));
-            later(ui, "Draw plunge moves");
-            later(ui, "Draw retract moves");
+            ui.push_id(crate::toolpath::DRAW_PLUNGES_COMMAND, |ui| {
+                ui.checkbox(&mut self.draw_plunges, tr("Draw plunge moves"));
+            });
+            ui.push_id(crate::toolpath::DRAW_RETRACTS_COMMAND, |ui| {
+                ui.checkbox(&mut self.draw_retracts, tr("Draw retract moves"));
+            });
             later(ui, "Draw join moves");
         });
         ui.menu_button(tr("Preview Simulation Quality"), |ui| self.quality_list(ui));
@@ -737,6 +767,13 @@ impl App {
         if entry(ui, "Create Job Sheet", true, None) {
             let open_after = ui.input(|i| i.modifiers.ctrl);
             self.save_job_sheet_dialog(ui.ctx(), open_after);
+        }
+        if entry(ui, "Check Before Cutting...", true, None) {
+            self.checks_for_save = None;
+            self.checks_open = true;
+        }
+        if entry(ui, "Start Again From a Cut...", true, None) {
+            self.resume_open = true;
         }
         ui.separator();
         if entry(ui, "Install Post Processor...", true, None) {
@@ -784,14 +821,14 @@ impl App {
             }
         });
         ui.separator();
-        later(ui, "Draw Origin");
+        ui.checkbox(&mut self.draw_origin, tr("Draw Origin"));
         later(ui, "Draw Modeling Plane");
-        later(ui, "Draw Material Block");
+        ui.checkbox(&mut self.draw_block, tr("Draw Material Block"));
         ui.separator();
         later(ui, "Multi-Sided View");
         later(ui, "Auto-Wrapping View");
         later(ui, "Color Shaded View");
-        later(ui, "Use Shaded Background");
+        ui.checkbox(&mut self.shaded_background, tr("Use Shaded Background"));
         later(ui, "Light Follows Viewer");
         later(ui, "Use Shadow Shading");
         ui.menu_button(tr("3D Quality"), |ui| self.quality_list(ui));

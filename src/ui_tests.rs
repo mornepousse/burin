@@ -3724,7 +3724,7 @@ fn out_of_place(state: &str) -> Vec<String> {
 #[test]
 fn french_wordings_stay_inside_their_panels() {
     let mut too_wide = Vec::new();
-    for state in ["backups", "feedback", "crashes", "merge", "rotate", "support", "missinglayers", "pieces", "savepiece", "3d", "align", "array", "board", "boardalert", "boardmaterial", "carved", "chamfer", "circle", "clipart", "corners", "cut", "distort", "distorted", "drawing", "drill", "editcircle", "engrave", "finish", "flute", "grid", "grid3d", "grouped", "handles", "job", "layers", "leads", "lines", "material", "material-changed", "millimetres", "model", "modeling", "move", "order", "origin", "origin_set", "passes", "paths2d", "piece", "pocket", "posts", "preferences", "profile", "progress", "ramp", "relief", "relief3d", "rough", "rules", "save", "selector", "sharp3d", "sharp3dfar", "similar", "sketch", "startat", "sweep", "tabs", "tabs-before", "tee_after", "tee_before", "through", "toodeep", "toolrates", "tools", "trace", "traced", "trim_after", "trim_before", "unsaved", "vcarve", "zero"] {
+    for state in ["checks", "drawmoves", "backups", "feedback", "crashes", "merge", "rotate", "support", "missinglayers", "pieces", "savepiece", "3d", "align", "array", "board", "boardalert", "boardmaterial", "carved", "chamfer", "circle", "clipart", "corners", "cut", "distort", "distorted", "drawing", "drill", "editcircle", "engrave", "finish", "flute", "grid", "grid3d", "grouped", "handles", "job", "layers", "leads", "lines", "material", "material-changed", "millimetres", "model", "modeling", "move", "order", "origin", "origin_set", "passes", "paths2d", "piece", "pocket", "posts", "preferences", "profile", "progress", "ramp", "relief", "relief3d", "rough", "rules", "save", "selector", "sharp3d", "sharp3dfar", "similar", "sketch", "startat", "sweep", "tabs", "tabs-before", "tee_after", "tee_before", "through", "toodeep", "toolrates", "tools", "trace", "traced", "trim_after", "trim_before", "unsaved", "vcarve", "zero"] {
         let english = out_of_place(state).len();
         let french = {
             let _french = InFrench::start();
@@ -4957,4 +4957,131 @@ fn the_backups_window_says_what_to_do_without_a_file() {
     h.run();
     h.get_by_label("Save the project first: its backups are kept beside its file.");
     h.get_by_label("Keep the earlier version each time a project is saved");
+}
+
+#[test]
+fn saving_stops_on_a_danger_until_told_to_go_on() {
+    use crate::toolpath::Move;
+    let mut h = job_with_square([3.0, 3.0]);
+    let mut op = crate::toolpath::blank_op(crate::toolpath::OpKind::Profile, "Around".into(), crate::toolpath::default_tools().remove(0), 0.25, Vec::new());
+    op.tool.feed = 0.0;
+    let moves = vec![Move { p: [0.0, 0.0, 0.8], rapid: true }, Move { p: [1.0, 1.0, -0.1], rapid: false }, Move { p: [2.0, 1.0, -0.1], rapid: false }, Move { p: [0.0, 0.0, 0.8], rapid: true }];
+    h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(moves), kept_moves: None, kept_steps: None });
+    h.state_mut().save_gcode_dialog();
+    assert!(h.state().checks_open);
+    assert_eq!(h.state().checks_for_save, Some(None));
+    h.run();
+    h.get_by_label("Danger");
+    h.get_by_label("Save Anyway");
+    // Opened from the menu, it's only a look: nothing to save.
+    h.state_mut().checks_for_save = None;
+    h.run();
+    assert!(h.query_by_label("Save Anyway").is_none());
+}
+
+#[test]
+fn each_kind_of_move_is_told_apart_for_drawing() {
+    use crate::toolpath::{move_kind, Move, MoveKind};
+    let at = [1.0, 1.0, 5.0];
+    assert_eq!(move_kind(at, &Move { p: [1.0, 1.0, -2.0], rapid: false }), MoveKind::Plunge);
+    assert_eq!(move_kind([1.0, 1.0, -2.0], &Move { p: [1.0, 1.0, 5.0], rapid: true }), MoveKind::Retract);
+    assert_eq!(move_kind(at, &Move { p: [4.0, 1.0, 5.0], rapid: true }), MoveKind::Rapid);
+    assert_eq!(move_kind(at, &Move { p: [1.0, 1.0, 2.0], rapid: true }), MoveKind::Rapid, "fast and down is a fast move");
+    assert_eq!(move_kind(at, &Move { p: [4.0, 1.0, -2.0], rapid: false }), MoveKind::Cut, "a ramp cuts");
+}
+
+#[test]
+fn another_programs_machine_file_comes_in_as_a_toolpath_that_stays_as_it_is() {
+    let mut h = job_with_square([3.0, 3.0]);
+    h.state_mut().doc.set_units(crate::app::Units::Mm);
+    h.state_mut().import_toolpath("other.nc", "G20\nG0 X1 Y1 Z0.2\nG1 Z-0.1\nG1 X2\nG0 Z0.2\n").unwrap();
+    h.run();
+    let tp = h.state().doc.toolpaths.last().unwrap().clone();
+    assert_eq!(tp.op.name, "other.nc");
+    assert!(tp.op.imported);
+    let cut: Vec<[f64; 3]> = tp.moves.iter().filter(|m| !m.rapid).map(|m| m.p).collect();
+    let zero = h.state().doc.job.origin();
+    assert!((cut[1][0] - (50.8 + zero[0])).abs() < 1e-9, "inches turned to millimetres: {cut:?}");
+    assert!(h.state().status.contains("Check its tool"));
+    h.state_mut().selected_tp = Some(h.state().doc.toolpaths.len() - 1);
+    h.state_mut().edit_toolpath();
+    assert!(h.state().message.as_ref().unwrap().contains("another program"));
+    h.state_mut().message = None;
+    h.state_mut().recalculate_all();
+    h.run();
+    assert_eq!(*h.state().doc.toolpaths.last().unwrap().moves, *tp.moves, "recalculating leaves it alone");
+    assert!(h.state_mut().import_toolpath("x.nc", "G0 X1\nM30").is_err());
+}
+
+#[test]
+fn a_value_typed_while_dragging_makes_the_move_exact() {
+    use crate::canvas::Drag;
+    let mut h = job_with_square([3.0, 3.0]);
+    let id = h.state().doc.vectors[0].id;
+    let first = |h: &Harness<'static, App>| h.state().doc.vectors[0].paths[0].pts[0];
+    let before = first(&h);
+    h.state_mut().selected = vec![id];
+    // Dragged 1 to the right so far; typing 3,4 makes it exactly that.
+    h.state_mut().translate_selected(1.0, 0.0);
+    h.state_mut().drag = Drag::Move { last: [6.0, 5.0], start: [5.0, 5.0] };
+    h.run();
+    h.input_mut().events.push(egui::Event::Text("3,4".into()));
+    h.run();
+    assert_eq!(h.state().typed, "3,4");
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let now = first(&h);
+    assert!((now[0] - before[0] - 3.0).abs() < 1e-9 && (now[1] - before[1] - 4.0).abs() < 1e-9, "{before:?} {now:?}");
+    assert!(matches!(h.state().drag, Drag::None));
+
+    // One number: that distance along the way it was going.
+    let before = first(&h);
+    h.state_mut().translate_selected(0.0, 1.0);
+    h.state_mut().drag = Drag::Move { last: [5.0, 6.0], start: [5.0, 5.0] };
+    h.input_mut().events.push(egui::Event::Text("2.5".into()));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let now = first(&h);
+    assert!((now[0] - before[0]).abs() < 1e-9 && (now[1] - before[1] - 2.5).abs() < 1e-9);
+
+    // A turn: exactly the angle typed, from where it started. Keys like 9 don't turn it as well.
+    let orig = vec![(id, h.state().doc.vectors[0].paths.clone())];
+    let (lo, hi) = crate::geom::bbox(&orig[0].1).unwrap();
+    let centre = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+    h.state_mut().drag = Drag::Rotate { centre, start: [hi[0], centre[1]], orig: orig.clone() };
+    h.input_mut().events.push(egui::Event::Text("90".into()));
+    h.key_press(egui::Key::Num9);
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let p0 = orig[0].1[0].pts[0];
+    let p1 = h.state().doc.vectors[0].paths[0].pts[0];
+    let expect = [centre[0] - (p0[1] - centre[1]), centre[1] + (p0[0] - centre[0])];
+    assert!((p1[0] - expect[0]).abs() < 1e-9 && (p1[1] - expect[1]).abs() < 1e-9, "{p1:?} {expect:?}");
+    assert!(crate::canvas::typed_numbers("1,2,3").is_none() && crate::canvas::typed_numbers("-1.5").is_some());
+}
+
+#[test]
+fn a_file_can_start_again_from_a_cut() {
+    let mut h = harness();
+    h.state_mut().load_sample();
+    h.run();
+    let profile = h.state().doc.toolpaths.iter().position(|t| crate::toolpath::cuts_of(&t.moves, 0).len() >= 2).unwrap();
+    let cuts = crate::toolpath::cuts_of(&h.state().doc.toolpaths[profile].moves, 0);
+    assert!(cuts.len() >= 2, "{}", cuts.len());
+    let whole = h.state().gcode_text(None).unwrap();
+    h.state_mut().resume = Some((profile, 1));
+    let from = h.state().gcode_text(None).unwrap();
+    h.state_mut().resume = None;
+    assert!(from.lines().count() < whole.lines().count(), "a shorter file once started later");
+    // It still comes from the clearance height down to where the second cut begins.
+    let entry = cuts[1].moves[0].p;
+    let moves = crate::toolpath::moves_from_cut(&h.state().doc.toolpaths[profile].moves, 1, h.state().doc.machine_on_job(), h.state().doc.toolpaths[profile].op.tool.metric);
+    let safe = h.state().doc.machine_on_job().safe_z;
+    assert!(moves.iter().any(|m| m.rapid && m.p == [entry[0], entry[1], safe]));
+    assert_eq!(moves.iter().filter(|m| !m.rapid).count(), cuts[1..].iter().map(|c| c.moves.len() - 1).sum::<usize>());
+    h.state_mut().resume_open = true;
+    h.run();
+    h.get_by_label("Save From Here...");
 }

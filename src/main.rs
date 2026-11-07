@@ -20,6 +20,10 @@ mod icons;
 mod keys;
 mod menus;
 mod merge;
+mod curvefit;
+mod rates;
+mod gcodein;
+mod checks;
 mod backups;
 mod crash;
 mod feedback;
@@ -726,6 +730,22 @@ fn open_state(app: &mut App, state: &str) {
             let id = app.doc.vectors[0].id;
             app.selected = vec![id];
             app.handles_on = Some(vec![id]);
+        }
+        "checks" => {
+            app.load_sample();
+            app.view3d = false;
+            app.doc.toolpaths[2].op.tool.flute_length = 0.05;
+            app.doc.toolpaths[2].op.tool.feed = 0.0;
+            app.checks_open = true;
+            app.checks_for_save = Some(None);
+        }
+        "drawmoves" => {
+            app.load_sample();
+            app.view3d = true;
+            app.right = RightMode::Preview;
+            app.draw_block = true;
+            app.draw_origin = true;
+            app.solid_previews = true;
         }
         "backups" => {
             app.load_sample();
