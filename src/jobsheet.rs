@@ -92,13 +92,13 @@ impl App {
     /// Asks where to put the page. With Ctrl held on the menu, it opens straight away.
     pub fn save_job_sheet_dialog(&mut self, ctx: &egui::Context, open_after: bool) {
         let stem = self.path.as_ref().and_then(|p| p.file_stem()).map_or_else(|| tr("Job sheet").to_string(), |s| s.to_string_lossy().to_string());
-        let mut dialog = rfd::FileDialog::new().add_filter(tr("Job sheet"), &["html"]).set_file_name(format!("{}.html", crate::pieces::file_stem_of(&stem)));
+        let mut dialog = crate::platform::FileDialog::new().add_filter(tr("Job sheet"), &["html"]).set_file_name(format!("{}.html", crate::pieces::file_stem_of(&stem)));
         if let Some(folder) = self.path.as_ref().and_then(|p| p.parent()) {
             dialog = dialog.set_directory(folder);
         }
         let Some(path) = dialog.save_file() else { return };
         let path = crate::pieces::with_extension(path, "html");
-        match std::fs::write(&path, self.job_sheet_html(&stem)) {
+        match crate::platform::write(&path, self.job_sheet_html(&stem)) {
             Ok(()) => {
                 self.status = tf!("Job sheet saved to {}", path.display());
                 if open_after {

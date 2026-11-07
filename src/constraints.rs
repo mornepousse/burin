@@ -1196,7 +1196,7 @@ impl App {
             };
         }
         match self.drag {
-            Drag::Node { id, path, index } => Pins { node: Some((id, path, index)), ..Pins::default() },
+            Drag::Node { id, path, index, .. } => Pins { node: Some((id, path, index)), ..Pins::default() },
             _ => Pins { vectors: self.selected.clone(), ..Pins::default() },
         }
     }

@@ -24,16 +24,17 @@ Linux · Windows · Français · English
 
 | | |
 |---|---|
-| **Dessiner** | Lignes, courbes, arcs, cercles, ellipses, rectangles, polygones, étoiles, spirales, texte, cotes, contraintes d'esquisse |
+| **Dessiner** | Lignes, courbes, arcs, cercles, ellipses, rectangles, polygones, étoiles, spirales, texte (polices de l'ordinateur, gras, italique, alignement, et polices à trait unique pour la gravure), cotes, contraintes d'esquisse |
 | **Modifier** | Déplacer, tourner et redimensionner à la souris (avec une valeur exacte tapée au clavier), décaler, souder, couper, aligner, copier en série, lisser les tracés |
 | **Organiser** | Calques, groupes et **pièces** : on sélectionne un seul trou sans rien dégrouper, mais la pièce se déplace d'un bloc |
-| **Modeler** | Composants 3D, reliefs importés, cliparts |
+| **Modeler** | Composants 3D, reliefs importés, cliparts, copie du modèle visible, contour d'un composant, découpe à l'intérieur ou à l'extérieur de formes, échelle Z du modèle |
 | **Usiner** | Contour, poche, perçage, gravure, gravure en V, ébauche et finition 3D, prisme, texture, moulure, cannelure, chanfrein |
 | **Préparer** | Rampes, entrées et sorties, attaches, ordre de coupe, fusion de parcours, modèles de parcours réutilisables |
+| **Calculer** | Un calcul dans n'importe quel champ (`W/2`, `T-0.1`…), et des **variables du document** (`{epaisseur}`) : les profondeurs des parcours les suivent quand elles changent |
 | **Vérifier** | Aperçu 3D de la coupe (rapides, plongées et remontées de couleurs différentes), estimation du temps, **vérification avant coupe** (vitesses à 0, outil trop court, rapides dans la matière, attaches trop fines…), fiche de travail |
 | **Reprendre** | Après un arrêt, un fichier qui repart d'un passage choisi d'un parcours |
 | **Écrire** | G-code générique, GRBL, Mach3, PlanetCNC, et vos post-processeurs `.pp` |
-| **Échanger** | Lit les projets `.crv3d` et les fichiers G-code d'autres logiciels, importe SVG, DXF, STL et images, exporte SVG, EPS, PDF, STL, imprime via un PDF à taille réelle |
+| **Échanger** | Lit les projets `.crv3d` et les fichiers G-code d'autres logiciels, importe SVG, DXF, STL et images, exporte SVG, EPS, PDF, STL, imprime via un PDF (format du papier, taille réelle sur plusieurs pages ou réduit à une page) |
 
 Le détail de ce qui manque est à la fin de cette page.
 
@@ -79,6 +80,23 @@ cargo test
 
 `release/build.sh` fabrique l'AppImage et le `.exe` dans `dist/`. Il ne demande que Nix.
 
+### Dans un navigateur
+
+`release/web.sh` fabrique la version web dans `dist-web/` : une page et ses fichiers, à déposer tels quels
+sur n'importe quel hébergement de pages (GitHub Pages, par exemple). Rien n'est installé et rien ne part de
+l'ordinateur : tout se calcule dans la page.
+
+Ce qui change par rapport au programme :
+
+- **Ouvrir** passe par le sélecteur de fichiers du navigateur, ou en déposant le fichier sur la page.
+- **Enregistrer** télécharge le fichier : projet, fichier machine, fiche de travail, image.
+- Pas de copie automatique du travail non enregistré, ni de sauvegardes de projet, ni de rapports de
+  plantage : un navigateur ne laisse pas une page écrire sur le disque. Enregistrez souvent.
+- Les longs calculs (aperçu 3D d'un gros travail) bloquent la page le temps qu'ils durent.
+- Les réglages (langue, raccourcis, vue 3D) sont gardés par le navigateur pour ce site. Au premier
+  passage, la langue suit celle du navigateur.
+- **Imprimer** télécharge le PDF, à imprimer depuis le lecteur de PDF.
+
 ## Si quelque chose ne va pas
 
 Votre travail non enregistré est copié toutes les deux minutes et vous est proposé au lancement suivant
@@ -86,6 +104,7 @@ si Burin s'est mal fermé.
 
 | Dans le menu Aide | |
 |---|---|
+| **Sommaire de l'aide** | Neuf courtes pages sur chaque partie du programme, sans connexion |
 | **Envoyer un retour** | Un problème, une idée ou une question |
 | **Rapports de plantage** | Ce que Burin a noté quand il s'est arrêté |
 | **Détails pour l'assistance** | La version, le système, la carte graphique et le dernier démarrage, à copier |
@@ -101,7 +120,7 @@ figurent jamais.
 
 - **Essais réels :** rien n'a été vérifié sur une machine.
 - **Menus :** une trentaine d'entrées restent grisées, surtout des outils de modélisation 3D et des vues
-  (multi-faces, enroulée, ombres).
+  (multi-faces, enroulée, vue colorée).
 - **Calculs :** les parcours ne sont pas toujours identiques à ceux enregistrés dans les projets `.crv3d`, notamment l'ordre de coupe et les
   poches, qui lèvent l'outil plus souvent.
 

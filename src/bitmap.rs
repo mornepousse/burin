@@ -33,7 +33,8 @@ pub struct Image {
 
 impl Image {
     pub fn load(file: &FilePath) -> Result<Image, String> {
-        let decoded = image::open(file).map_err(|e| tf!("Could not read this picture: {e}"))?.to_rgba8();
+        let bytes = crate::platform::read(file).map_err(|e| tf!("Could not read this picture: {e}"))?;
+        let decoded = image::load_from_memory(&bytes).map_err(|e| tf!("Could not read this picture: {e}"))?.to_rgba8();
         let (w, h) = (decoded.width() as usize, decoded.height() as usize);
         if w == 0 || h == 0 {
             return Err(crate::i18n::tr("This picture is empty.").into());
@@ -421,7 +422,7 @@ impl App {
             }
             ui.horizontal(|ui| {
                 if ui.button(crate::i18n::tr("Import Bitmap ...")).clicked() {
-                    if let Some(path) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png", "jpg", "jpeg", "bmp"]).pick_file() {
+                    if let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png", "jpg", "jpeg", "bmp"]).pick_file() {
                         if let Err(e) = self.import_bitmap(&path) {
                             self.message = Some(e);
                         }
@@ -793,7 +794,7 @@ mod tests {
         assert!((a.doc.bitmaps[0].width - 10.0).abs() < 1e-9);
         assert!((a.doc.bitmaps[0].at[1] - 2.5).abs() < 1e-9, "centred: {:?}", a.doc.bitmaps[0].at);
         let bad = dir.join("broken.png");
-        std::fs::write(&bad, "not a picture").unwrap();
+        crate::platform::write(&bad, "not a picture").unwrap();
         assert!(a.import_bitmap(&bad).unwrap_err().contains("Could not read"));
         // The pixels come back from the file after a project is reopened.
         a.bitmap_pixels.clear();

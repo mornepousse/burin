@@ -8,7 +8,7 @@ use crate::relief::ToolKind;
 use crate::theme;
 use crate::toolpath::{self, Boundary, Op, OpKind, ProfilePass, Tool, POSTS};
 use crate::keys::Action;
-use crate::ui::{bold, card, primary, count_box, icon_button, icon_button_saying, icon_row, label_widget, labelled, labelled_from, number, number_from, title_card, wide, wood_block};
+use crate::ui::{bold, card, primary, count_box, icon_button, icon_button_saying, icon_row, label_widget, labelled, labelled_formula, labelled_from, number, number_from, title_card, wide, wood_block};
 use egui::{vec2, Rect, RichText, Sense, Stroke, StrokeKind, TextEdit, Ui};
 
 fn note(ui: &mut Ui, text: &str) {
@@ -466,7 +466,7 @@ impl App {
                     .collect();
                 files.sort();
                 for f in files {
-                    let paths = std::fs::read(&f).map(|b| geom::dxf_read(&String::from_utf8_lossy(&b))).unwrap_or_default();
+                    let paths = crate::platform::read(&f).map(|b| geom::dxf_read(&String::from_utf8_lossy(&b))).unwrap_or_default();
                     if !paths.is_empty() {
                         self.clip_files.push((f.file_stem().unwrap_or_default().to_string_lossy().to_string(), paths));
                     }
@@ -539,7 +539,7 @@ impl App {
                 save_clip_folders(&self.clip_folders);
             }
             if ui.button(crate::i18n::tr("Add Folder ...")).clicked() {
-                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                if let Some(dir) = crate::platform::FileDialog::new().pick_folder() {
                     self.clip_folders.push(dir);
                     self.clip_folder = self.clip_folders.len();
                     save_clip_folders(&self.clip_folders);
@@ -1630,12 +1630,12 @@ impl App {
                 }
                 ui.horizontal(|ui| {
                     if ui.button(crate::i18n::tr("Load .pp Files ...")).clicked() {
-                        if let Some(files) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Post processor"), &["pp", "PP"]).pick_files() {
+                        if let Some(files) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Post processor"), &["pp", "PP"]).pick_files() {
                             self.report_loaded_posts(files);
                         }
                     }
                     if ui.button(crate::i18n::tr("Load a Folder ...")).clicked() {
-                        if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                        if let Some(dir) = crate::platform::FileDialog::new().pick_folder() {
                             let files = App::post_files_in(&dir);
                             self.report_loaded_posts(files);
                         }
@@ -1718,12 +1718,12 @@ impl App {
         // Called after the first toolpath going in the file.
         let first = self.doc.toolpaths.iter().enumerate().find(|(i, t)| only.map_or(t.visible, |o| o == *i)).map_or("", |(_, t)| t.op.name.as_str());
         let name = format!("{}.{ext}", crate::pieces::file_stem_of(first));
-        if let Some(path) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Machine file"), &[ext.as_str()]).set_file_name(name).save_file() {
+        if let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Machine file"), &[ext.as_str()]).set_file_name(name).save_file() {
             let path = crate::pieces::with_extension(path, &ext);
             let stem = path.file_stem().map_or_else(|| "toolpaths".to_string(), |s| s.to_string_lossy().to_string());
             let text = self.gcode_text_named(only, &stem).unwrap_or_default();
             let bytes = if self.is_planetcnc() { crate::planetcnc::file_bytes(&text) } else { text.into_bytes() };
-            let written = std::fs::write(&path, bytes);
+            let written = crate::platform::write(&path, bytes);
             crate::pieces::report_written(self, &path, written);
         }
     }
@@ -1823,8 +1823,8 @@ impl App {
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     bold(ui, crate::i18n::tr("Cutting Depths"));
-                    labelled(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, 50.0, unit);
-                    labelled(ui, crate::i18n::tr("Cut Depth (C)"), 106.0, &mut op.cut_depth, 50.0, unit);
+                    labelled_formula(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
+                    labelled_formula(ui, crate::i18n::tr("Cut Depth (C)"), 106.0, &mut op.cut_depth, &mut op.formulas.cut_depth, 50.0, unit);
                     if op.kind != OpKind::Drill {
                         ui.checkbox(&mut self.show_advanced, crate::i18n::tr("Show advanced toolpath options"));
                     }
@@ -1834,11 +1834,12 @@ impl App {
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     bold(ui, crate::i18n::tr("Cutting Depths"));
-                    labelled(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, 50.0, unit);
+                    labelled_formula(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
                     let mut flat = op.flat_depth > 0.0;
                     ui.horizontal(|ui| {
                         if ui.checkbox(&mut flat, crate::i18n::tr("Flat Depth (F)")).changed() {
                             op.flat_depth = if flat { self.doc.job.thickness * 0.2 } else { 0.0 };
+                            op.formulas.flat_depth.clear();
                             if !flat {
                                 op.clearance_tool = None;
                             }
@@ -1846,7 +1847,7 @@ impl App {
                         ui.add_space(4.0);
                         ui.add_enabled_ui(flat, |ui| {
                             if flat {
-                                number(ui, &mut op.flat_depth, 50.0);
+                                crate::ui::number_formula(ui, &mut op.flat_depth, &mut op.formulas.flat_depth, 50.0);
                             } else {
                                 ui.label(RichText::new(crate::i18n::tr("None")).color(theme::FAINT));
                             }
@@ -1859,8 +1860,8 @@ impl App {
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     bold(ui, crate::i18n::tr("Cutting Depths"));
-                    labelled(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, 50.0, unit);
-                    labelled(ui, crate::i18n::tr("Prism Depth"), 106.0, &mut op.cut_depth, 50.0, unit);
+                    labelled_formula(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
+                    labelled_formula(ui, crate::i18n::tr("Prism Depth"), 106.0, &mut op.cut_depth, &mut op.formulas.cut_depth, 50.0, unit);
                     ui.vertical_centered(|ui| {
                         if wide(ui, crate::i18n::tr("Set Depth for Full Prism"), 170.0).clicked() {
                             let half = (op.tool.angle.to_radians() / 2.0).tan().max(1e-3);
@@ -1876,22 +1877,22 @@ impl App {
             }
             OpKind::Texture => {
                 card(ui, |ui| {
-                    labelled(ui, crate::i18n::tr("Start Depth"), 76.0, &mut op.start_depth, 56.0, unit);
+                    labelled_formula(ui, crate::i18n::tr("Start Depth"), 76.0, &mut op.start_depth, &mut op.formulas.start_depth, 56.0, unit);
                 });
             }
             OpKind::Flute => {
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     bold(ui, crate::i18n::tr("Cutting Depths"));
-                    labelled(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, 50.0, unit);
-                    labelled(ui, crate::i18n::tr("Flute Depth (F)"), 106.0, &mut op.cut_depth, 50.0, unit);
+                    labelled_formula(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
+                    labelled_formula(ui, crate::i18n::tr("Flute Depth (F)"), 106.0, &mut op.cut_depth, &mut op.formulas.cut_depth, 50.0, unit);
                 });
             }
             OpKind::Chamfer => {
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     bold(ui, crate::i18n::tr("Chamfer"));
-                    labelled(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, 50.0, unit);
+                    labelled_formula(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
                     labelled(ui, crate::i18n::tr("Chamfer Width (W)"), 106.0, &mut op.chamfer_width, 50.0, unit);
                     note(ui, &tf!("Cut depth: {} {unit}", toolpath::trim(toolpath::chamfer_depth(op))));
                     note(ui, crate::i18n::tr("The tip of the V-bit follows the line."));
@@ -1938,7 +1939,7 @@ impl App {
             }
             if op.kind == OpKind::Engrave {
                 ui.separator();
-                labelled(ui, crate::i18n::tr("Depth / Pressure"), 94.0, &mut op.cut_depth, 50.0, unit);
+                labelled_formula(ui, crate::i18n::tr("Depth / Pressure"), 94.0, &mut op.cut_depth, &mut op.formulas.cut_depth, 50.0, unit);
             }
         });
     }
@@ -1998,7 +1999,7 @@ impl App {
                 });
             });
             ui.separator();
-            labelled(ui, crate::i18n::tr("Pocket Allowance"), 96.0, &mut op.allowance, 50.0, unit);
+            labelled_formula(ui, crate::i18n::tr("Pocket Allowance"), 96.0, &mut op.allowance, &mut op.formulas.allowance, 50.0, unit);
         });
         card(ui, |ui| {
             ui.checkbox(&mut op.ramp, crate::i18n::tr("Ramp Plunge Moves"));
@@ -2137,17 +2138,17 @@ impl App {
                     });
                     ui.horizontal(|ui| {
                         if wide(ui, crate::i18n::tr("Import ..."), 106.0).clicked() {
-                            if let Some(path) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Tool list"), &["json"]).pick_file() {
-                                match std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Vec<Tool>>(&t).ok()) {
+                            if let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Tool list"), &["json"]).pick_file() {
+                                match crate::platform::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Vec<Tool>>(&t).ok()) {
                                     Some(more) => tools.extend(more),
                                     None => self.message = Some(tf!("{} is not a tool list.", path.display())),
                                 }
                             }
                         }
                         if wide(ui, crate::i18n::tr("Export ..."), 106.0).clicked() {
-                            if let Some(path) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Tool list"), &["json"]).set_file_name("tools.json").save_file() {
+                            if let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Tool list"), &["json"]).set_file_name("tools.json").save_file() {
                                 if let Ok(text) = serde_json::to_string_pretty(&tools) {
-                                    if let Err(e) = std::fs::write(&path, text) {
+                                    if let Err(e) = crate::platform::write(&path, text) {
                                         self.message = Some(tf!("Could not write {}: {e}", path.display()));
                                     }
                                 }
@@ -2361,16 +2362,16 @@ fn texture_cards(ui: &mut Ui, op: &mut Op, unit: &str) {
     card(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 3.0;
         bold(ui, crate::i18n::tr("Texture"));
-        labelled(ui, crate::i18n::tr("Max. Cut"), 76.0, &mut op.tex_cut[1], 56.0, unit);
+        labelled_formula(ui, crate::i18n::tr("Max. Cut"), 76.0, &mut op.tex_cut[1], &mut op.formulas.texture_depth, 56.0, unit);
         labelled(ui, crate::i18n::tr("Min. Cut"), 76.0, &mut op.tex_cut[0], 56.0, unit);
-        labelled(ui, crate::i18n::tr("Max. Length"), 76.0, &mut op.tex_length[1], 56.0, unit);
+        labelled_formula(ui, crate::i18n::tr("Max. Length"), 76.0, &mut op.tex_length[1], &mut op.formulas.texture_length, 56.0, unit);
         labelled(ui, crate::i18n::tr("Min. Length"), 76.0, &mut op.tex_length[0], 56.0, unit);
         ui.horizontal(|ui| {
             ui.label(crate::i18n::tr("Max Overlap"));
             ui.add(egui::Slider::new(&mut op.tex_variation, 0.0..=0.9).show_value(false));
             ui.label(format!("{:.0} %", op.tex_variation * 100.0));
         });
-        labelled(ui, crate::i18n::tr("Stepover"), 76.0, &mut op.stepover, 56.0, unit);
+        labelled_formula(ui, crate::i18n::tr("Stepover"), 76.0, &mut op.stepover, &mut op.formulas.stepover, 56.0, unit);
         labelled(ui, crate::i18n::tr("Angle"), 76.0, &mut op.raster_angle, 56.0, crate::i18n::tr("degrees"));
     });
     card(ui, |ui| {
@@ -2404,7 +2405,7 @@ fn model_cards(ui: &mut Ui, op: &mut Op, unit: &str) {
     if op.kind == OpKind::Rough3D {
         card(ui, |ui| {
             bold(ui, crate::i18n::tr("Machining Allowance"));
-            labelled(ui, "", 4.0, &mut op.allowance, 56.0, unit);
+            labelled_formula(ui, "", 4.0, &mut op.allowance, &mut op.formulas.allowance, 56.0, unit);
         });
         card(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;

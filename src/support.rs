@@ -53,9 +53,20 @@ impl App {
         self.notes_open = open;
     }
 
-    /// A project's file dropped on the window opens as if chosen from the menu.
+    /// A project's file dropped on the window opens as if chosen from the menu. In the web version a
+    /// dropped file has no place on disk: its bytes are kept, and any kind Burin reads is opened.
     pub(crate) fn files_dropped(&mut self, ctx: &egui::Context) {
-        let Some(path) = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf())) else { return };
+        for path in crate::platform::picked() {
+            self.open_picked(path);
+        }
+        let dropped = ctx.input(|i| i.raw.dropped_files.first().cloned());
+        let Some(file) = dropped else { return };
+        if crate::platform::WEB {
+            // Read by the browser in a moment; it comes back through `picked`.
+            crate::platform::keep_dropped(file);
+            return;
+        }
+        let path = file.path().to_path_buf();
         if !path.extension().is_some_and(|e| ["burin", "crv3d", "crv"].iter().any(|k| e.eq_ignore_ascii_case(k))) {
             self.message = Some(tf!("Burin can open .burin, .crv3d and .crv files, not {}.", path.file_name().map_or(String::new(), |n| n.to_string_lossy().to_string())));
             return;
@@ -80,5 +91,43 @@ impl App {
             }
         });
         self.support_open = open;
+    }
+
+    /// A file chosen in the web version's picker, or dropped on its page: opened by what kind it is,
+    /// as the menu that asked for it would have.
+    pub(crate) fn open_picked(&mut self, path: std::path::PathBuf) {
+        let ext = path.extension().map_or(String::new(), |e| e.to_string_lossy().to_ascii_lowercase());
+        let result = match ext.as_str() {
+            "burin" | "crv3d" | "crv" => {
+                self.recent_wanted = Some(path);
+                self.leave_for(Leave::Recent);
+                Ok(())
+            }
+            "svg" | "dxf" => self.import_drawing(&path),
+            "stl" => self.open_model_file(&path),
+            "png" | "jpg" | "jpeg" | "bmp" => match crate::bitmap::Image::load(&path) {
+                // Tracing has its bitmap in the drawing; otherwise a picture becomes a relief.
+                Ok(_) if matches!(self.left, LeftForm::Trace(_)) => self.import_bitmap(&path),
+                Ok(img) => {
+                    self.open_relief_picture(crate::relief_import::short_name(&path), &img);
+                    Ok(())
+                }
+                Err(why) => Err(why),
+            },
+            "pp" => {
+                self.report_loaded_posts(vec![path]);
+                Ok(())
+            }
+            "nc" | "gcode" | "ngc" | "tap" | "txt" | "cnc" => {
+                let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().to_string());
+                crate::platform::read(&path)
+                    .map_err(|e| tf!("Could not open {}: {e}", path.display()))
+                    .and_then(|bytes| self.import_toolpath(&name, &String::from_utf8_lossy(&bytes)))
+            }
+            _ => Err(tf!("Burin can open .burin, .crv3d and .crv files, not {}.", path.file_name().map_or(String::new(), |n| n.to_string_lossy().to_string()))),
+        };
+        if let Err(why) = result {
+            self.message = Some(why);
+        }
     }
 }

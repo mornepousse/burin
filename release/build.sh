@@ -39,7 +39,7 @@ rustup target list --installed --toolchain "$RUST" | grep -q x86_64-pc-windows-g
 SOURCE=$TOOLS/source
 rm -rf "$SOURCE"
 mkdir -p "$SOURCE"
-cp -a Cargo.toml Cargo.lock build.rs src release "$SOURCE/"
+cp -a Cargo.toml Cargo.lock build.rs src release assets "$SOURCE/"
 (
     cd "$SOURCE"
     rustup run "$RUST" cargo zigbuild --release --locked --target "x86_64-unknown-linux-gnu.$GLIBC"

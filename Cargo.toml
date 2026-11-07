@@ -1,6 +1,6 @@
 [package]
 name = "burin"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 
 [dependencies]
@@ -10,11 +10,23 @@ ab_glyph = "0.2"
 epaint_default_fonts = "0.37"
 png = "0.18"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
-rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland", "pollster"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 roxmltree = "0.20"
 i_overlay = "9.1.0"
+# The same clock on a computer and in a web browser, where the standard one doesn't work.
+web-time = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland", "pollster"] }
+
+# The web version: the same program, drawn in a browser page.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Must be the version of the wasm-bindgen program that finishes the build.
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "DomTokenList", "HtmlCanvasElement", "HtmlElement", "HtmlAnchorElement", "HtmlInputElement", "FileList", "File", "Blob", "BlobPropertyBag", "Url", "Navigator", "Storage", "Location"] }
 
 [dev-dependencies]
 egui_kittest = "0.37"

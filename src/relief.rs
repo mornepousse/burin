@@ -351,9 +351,9 @@ pub fn tool_surface(surface: &Grid, kind: ToolKind, dia: f64, angle: f64) -> Gri
     let kernel = tool_kernel(kind, dia, angle, surface.cell);
     let mut out = surface.clone();
     let (nx, ny) = (surface.nx, surface.ny);
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let threads = crate::platform::threads(false);
     let rows_per = ny.div_ceil(threads).max(1);
-    std::thread::scope(|s| {
+    crate::platform::scope(|s| {
         for (ci, chunk) in out.data.chunks_mut(nx * rows_per).enumerate() {
             let kernel = &kernel;
             s.spawn(move || {

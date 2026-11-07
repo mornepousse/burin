@@ -147,7 +147,13 @@ fn computer_is_french() -> bool {
     unsafe { GetUserDefaultUILanguage() & 0x3ff == 0x0c }
 }
 
-#[cfg(not(windows))]
+/// In a browser: the language the browser asks pages for.
+#[cfg(target_arch = "wasm32")]
+fn computer_is_french() -> bool {
+    web_sys::window().and_then(|w| w.navigator().language()).is_some_and(|l| l.starts_with("fr"))
+}
+
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 fn computer_is_french() -> bool {
     ["LC_ALL", "LC_MESSAGES", "LANG"]
         .iter()

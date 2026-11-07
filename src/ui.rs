@@ -56,21 +56,60 @@ pub fn number_from(ui: &mut Ui, value: &mut f64, zero: f64, width: f32) -> bool 
     changed
 }
 
+/// A number box. A sum typed in it is worked out as it's typed (`crate::formula`), with the answer
+/// shown beside it, as the original's boxes do.
 pub fn number(ui: &mut Ui, value: &mut f64, width: f32) -> bool {
+    let mut none = String::new();
+    number_box(ui, value, &mut none, false, width)
+}
+
+/// The same, keeping the sum it was typed as in `formula`, and showing it rather than its answer, so it
+/// can be worked out again when the document's variables change. A plain number clears it.
+pub fn number_formula(ui: &mut Ui, value: &mut f64, formula: &mut String, width: f32) -> bool {
+    number_box(ui, value, formula, true, width)
+}
+
+fn number_box(ui: &mut Ui, value: &mut f64, formula: &mut String, keep: bool, width: f32) -> bool {
     let id = ui.next_auto_id();
-    let mut text: String = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| toolpath::trim(*value));
+    let resting = if keep && !formula.is_empty() { formula.clone() } else { toolpath::trim(*value) };
+    let mut text: String = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or(resting);
     let resp = ui.add(TextEdit::singleline(&mut text).id(id).desired_width(width).margin(vec2(3.0, 1.0)));
+    let context = crate::formula::context();
+    let unit = if context.metric { "mm" } else { "in" };
     let mut changed = false;
     if resp.has_focus() {
-        if let Ok(v) = text.trim().parse::<f64>() {
+        let typed = text.trim();
+        if crate::formula::is_formula(typed) {
+            match crate::formula::evaluate(typed, &context) {
+                Ok(v) => {
+                    if v != *value {
+                        *value = v;
+                        changed = true;
+                    }
+                    if keep && formula.as_str() != typed {
+                        *formula = typed.to_string();
+                        changed = true;
+                    }
+                    resp.show_tooltip_text(crate::formula::shown(typed, v, unit, context.metric));
+                }
+                Err(e) => resp.show_tooltip_text(e.text()),
+            }
+        } else if let Ok(v) = typed.parse::<f64>() {
             if v.is_finite() && v != *value {
                 *value = v;
+                changed = true;
+            }
+            if keep && !formula.is_empty() {
+                formula.clear();
                 changed = true;
             }
         }
         ui.data_mut(|d| d.insert_temp(id, text));
     } else {
         ui.data_mut(|d| d.remove::<String>(id));
+        if keep && !formula.is_empty() {
+            resp.on_hover_text(crate::formula::shown(formula, *value, unit, context.metric));
+        }
     }
     changed
 }
@@ -100,6 +139,21 @@ pub(crate) fn labelled_from(ui: &mut Ui, label: &str, label_w: f32, value: &mut 
         *value = shown + zero;
     }
     changed
+}
+
+/// A labelled number box that keeps the sum it was typed as.
+pub(crate) fn labelled_formula(ui: &mut Ui, label: &str, label_w: f32, value: &mut f64, formula: &mut String, width: f32, unit: &str) -> bool {
+    ui.horizontal(|ui| {
+        let needs = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.5), TEXT).size().x + 2.0;
+        let (r, _) = ui.allocate_exact_size(vec2(label_w.max(needs), 18.0), Sense::hover());
+        ui.painter().text(r.right_center() - vec2(1.0, 0.0), Align2::RIGHT_CENTER, label, FontId::proportional(12.5), TEXT);
+        let changed = number_formula(ui, value, formula, width);
+        if !unit.is_empty() {
+            ui.add(egui::Label::new(unit).wrap_mode(egui::TextWrapMode::Extend));
+        }
+        changed
+    })
+    .inner
 }
 
 pub(crate) fn labelled(ui: &mut Ui, label: &str, label_w: f32, value: &mut f64, width: f32, unit: &str) -> bool {
@@ -252,7 +306,10 @@ impl App {
             ui.set_width(350.0);
             bold_sized(ui, crate::i18n::tr("Recalculate the toolpaths?"), 14.0, TEXT);
             ui.add_space(6.0);
-            ui.label(crate::i18n::tr("The material's settings have changed, so all the toolpaths have to be worked out again to be right."));
+            match &self.recalc_note {
+                Some(note) => ui.label(note.as_str()),
+                None => ui.label(crate::i18n::tr("The material's settings have changed, so all the toolpaths have to be worked out again to be right.")),
+            };
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 now = primary(ui, crate::i18n::tr("Recalculate Now"), 120.0).clicked();
@@ -262,9 +319,11 @@ impl App {
         });
         if now {
             self.ask_recalc = false;
+            self.recalc_note = None;
             self.recalculate_all();
         } else if later || shown.should_close() {
             self.ask_recalc = false;
+            self.recalc_note = None;
             self.all_behind = true;
         }
     }
@@ -311,7 +370,7 @@ impl App {
     }
 
     pub fn dialog_open(&mut self) {
-        if let Some(path) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Projects"), &["burin", "crv3d", "crv"]).add_filter(crate::i18n::tr("Burin project"), &["burin"]).add_filter(crate::i18n::tr(".crv3d project"), &["crv3d", "crv"]).pick_file() {
+        if let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Projects"), &["burin", "crv3d", "crv"]).add_filter(crate::i18n::tr("Burin project"), &["burin"]).add_filter(crate::i18n::tr(".crv3d project"), &["crv3d", "crv"]).pick_file() {
             if let Err(e) = self.open_path(path) {
                 self.message = Some(e);
             }
@@ -321,7 +380,7 @@ impl App {
     pub fn dialog_save(&mut self, save_as: bool) {
         let target = match (&self.path, save_as) {
             (Some(p), false) => Some(p.clone()),
-            _ => rfd::FileDialog::new().add_filter(crate::i18n::tr("Burin project"), &["burin"]).set_file_name("project.burin").save_file(),
+            _ => crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Burin project"), &["burin"]).set_file_name("project.burin").save_file(),
         };
         if let Some(path) = target {
             if let Err(e) = self.save_to(path) {
@@ -331,7 +390,7 @@ impl App {
     }
 
     pub fn dialog_import(&mut self) {
-        let Some(path) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Drawing"), &["svg", "dxf"]).pick_file() else { return };
+        let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Drawing"), &["svg", "dxf"]).pick_file() else { return };
         if let Err(why) = self.import_drawing(&path) {
             self.message = Some(why);
         }
@@ -340,7 +399,7 @@ impl App {
     /// Adds the shapes of a DXF or SVG file to the job, selected.
     pub fn import_drawing(&mut self, path: &std::path::Path) -> Result<(), String> {
         // Older drawing files are often in other character sets; only the numbers matter here.
-        let bytes = std::fs::read(path).map_err(|e| tf!("Could not read {}: {e}", path.display()))?;
+        let bytes = crate::platform::read(path).map_err(|e| tf!("Could not read {}: {e}", path.display()))?;
         let text = String::from_utf8_lossy(&bytes);
         let is_svg = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
         let mut masked = 0;
@@ -389,8 +448,8 @@ impl App {
             self.status = crate::i18n::tr("There are no shapes to export.").into();
             return;
         }
-        if let Some(path) = rfd::FileDialog::new().add_filter(crate::i18n::tr("Drawing"), &["dxf"]).set_file_name("shapes.dxf").save_file() {
-            match std::fs::write(&path, geom::dxf_write(&paths)) {
+        if let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Drawing"), &["dxf"]).set_file_name("shapes.dxf").save_file() {
+            match crate::platform::write(&path, geom::dxf_write(&paths)) {
                 Ok(()) => self.status = tf!("Exported {}", path.display()),
                 Err(e) => self.message = Some(tf!("Could not write {}: {e}", path.display())),
             }
@@ -402,6 +461,10 @@ impl App {
 
     pub fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        crate::formula::set_context(self.formula_context());
+        if let Some(filter) = self.open_font_list.take() {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::unique(crate::fonts::OPEN_FONT_LIST), filter));
+        }
         if ctx.input(|i| i.viewport().close_requested()) && self.has_unsaved_work() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.leave = Some(Leave::Close);
@@ -411,6 +474,15 @@ impl App {
         self.merge_window(&ctx);
         self.template_window(&ctx);
         self.support_window(&ctx);
+        self.help_window(&ctx);
+        self.scale_z_window(&ctx);
+        self.smooth_window(&ctx);
+        self.offset_model_window(&ctx);
+        self.slice_model_window(&ctx);
+        self.draft_model_window(&ctx);
+        self.turn_spin_window(&ctx);
+        self.variables_window(&ctx);
+        self.print_setup_window(&ctx);
         self.notes_window(&ctx);
         self.backups_window(&ctx);
         self.checks_window(&ctx);
@@ -430,7 +502,7 @@ impl App {
             let total: usize = self.anim.queue.iter().filter_map(|i| self.doc.toolpaths.get(*i)).map(|t| t.moves.len()).sum();
             let mut left = if self.anim.rush { usize::MAX } else { 1 + (self.speed.powi(4) * total as f32 / 45.0) as usize };
             // A little at a time, and never for long: the window must go on answering.
-            let started = std::time::Instant::now();
+            let started = crate::platform::Instant::now();
             let budget = if self.surface_in_background { std::time::Duration::from_millis(14) } else { std::time::Duration::MAX };
             while left > 0 {
                 let some = left.min(500);
@@ -1405,7 +1477,8 @@ impl App {
             [only] => self.doc.vectors.iter().find(|v| v.id == *only),
             _ => None,
         };
-        if !chosen.is_some_and(|v| form.load_shape(v)) {
+        // A text keeps the shapes chosen before it: it can be fitted into them.
+        if !chosen.is_some_and(|v| form.load_shape(v)) && kind != DrawKind::Text {
             self.selected.clear();
         }
         self.left = LeftForm::Draw(form);
@@ -1543,7 +1616,31 @@ impl App {
                     }
                     DrawKind::Text => {
                         ui.add(TextEdit::multiline(&mut f.text).desired_rows(2).desired_width(f32::INFINITY));
+                        crate::fonts::style_picker(ui, &mut f.text_style);
                         labelled(ui, crate::i18n::tr("Height:"), 54.0, &mut f.text_height, 54.0, unit);
+                        // Filling a shape: the selected shapes that aren't this text.
+                        let target = geom::bbox(self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id) && Some(v.id) != f.editing && !matches!(v.prim, Prim::Text { .. })).flat_map(|v| v.paths.iter()));
+                        ui.horizontal(|ui| {
+                            let fit = ui.add_enabled(target.is_some(), egui::Button::new(crate::i18n::tr("Fit to Selected Shape"))).on_disabled_hover_text(crate::i18n::tr("Select the shape to fill first."));
+                            number(ui, &mut f.fill_percent, 40.0);
+                            ui.label("%");
+                            if fit.clicked() {
+                                let layout = crate::fonts::BoxLayout { percent: f.fill_percent, margin: f.text_margin, spread_letters: f.spread_letters, centre_across: false };
+                                if let Some((at, height, spacing)) = target.and_then(|(lo, hi)| crate::fonts::lay_out_in_box(&f.text, &f.text_style, lo, hi, &layout)) {
+                                    f.c = at;
+                                    f.text_height = height;
+                                    f.text_style.spacing = spacing;
+                                }
+                            }
+                        });
+                        ui.label(crate::i18n::tr("Margin Size"));
+                        ui.horizontal(|ui| {
+                            use crate::fonts::Margin;
+                            for (m, name) in [(Margin::None, "None"), (Margin::Normal, "Normal"), (Margin::Wide, "Wide")] {
+                                ui.radio_value(&mut f.text_margin, m, crate::i18n::tr(name));
+                            }
+                        });
+                        ui.checkbox(&mut f.spread_letters, crate::i18n::tr("Spread the letters to the width"));
                     }
                     _ => {}
                 }
@@ -2078,7 +2175,7 @@ impl App {
                     do_save = ui.add_sized([w, 20.0], egui::Button::new(crate::i18n::tr("Save Preview Image"))).clicked();
                 });
                 if do_save {
-                    self.save_preview = rfd::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png"]).set_file_name("preview.png").save_file();
+                    self.save_preview = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png"]).set_file_name("preview.png").save_file();
                 }
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(32.0, 26.0), Sense::hover());

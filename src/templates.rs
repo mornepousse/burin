@@ -85,13 +85,13 @@ impl App {
         // Named after the toolpath, or after the job, beside the job's file.
         let named = if only_selected { self.selected_tp.and_then(|i| self.doc.toolpaths.get(i)).map(|t| t.op.name.clone()) } else { self.path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().to_string()) };
         let name = format!("{}.{EXTENSION}", crate::pieces::file_stem_of(named.as_deref().unwrap_or("")));
-        let mut dialog = rfd::FileDialog::new().add_filter(tr("Toolpath template"), &[EXTENSION]).set_file_name(name);
+        let mut dialog = crate::platform::FileDialog::new().add_filter(tr("Toolpath template"), &[EXTENSION]).set_file_name(name);
         if let Some(folder) = self.path.as_ref().and_then(|p| p.parent()) {
             dialog = dialog.set_directory(folder);
         }
         let Some(path) = dialog.save_file() else { return };
         let path = crate::pieces::with_extension(path, EXTENSION);
-        let written = serde_json::to_string_pretty(&template).map_err(|e| e.to_string()).and_then(|text| std::fs::write(&path, text).map_err(|e| e.to_string()));
+        let written = serde_json::to_string_pretty(&template).map_err(|e| e.to_string()).and_then(|text| crate::platform::write(&path, text).map_err(|e| e.to_string()));
         match written {
             Ok(()) => self.status = tf!("{} toolpaths saved as a template.", template.toolpaths.len()),
             Err(e) => self.message = Some(tf!("Could not write {}: {e}", path.display())),
@@ -99,8 +99,8 @@ impl App {
     }
 
     pub fn load_template_dialog(&mut self) {
-        let Some(path) = rfd::FileDialog::new().add_filter(tr("Toolpath template"), &[EXTENSION]).pick_file() else { return };
-        let read = std::fs::read_to_string(&path).map_err(|e| e.to_string());
+        let Some(path) = crate::platform::FileDialog::new().add_filter(tr("Toolpath template"), &[EXTENSION]).pick_file() else { return };
+        let read = crate::platform::read_to_string(&path).map_err(|e| e.to_string());
         if let Err(why) = read.and_then(|text| self.load_template(&text)) {
             self.message = Some(tf!("Could not read this template:\n\n{}", why));
         }

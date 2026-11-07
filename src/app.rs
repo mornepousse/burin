@@ -147,7 +147,14 @@ pub enum Prim {
     Star { c: P, outer: f64, inner: f64, points: usize },
     Spiral { c: P, r: f64, turns: f64 },
     Arc { c: P, r: f64, start: f64, sweep: f64 },
-    Text { at: P, height: f64, text: String },
+    Text {
+        at: P,
+        height: f64,
+        text: String,
+        /// The font, bold, italic and alignment; Burin's own font, left aligned, when left out.
+        #[serde(default, skip_serializing_if = "crate::fonts::TextStyle::is_default")]
+        style: crate::fonts::TextStyle,
+    },
 }
 
 impl Prim {
@@ -167,7 +174,7 @@ impl Prim {
             Prim::Star { c, outer, inner, points } => Prim::Star { c: place(c), outer: outer * sx, inner: inner * sx, points: *points },
             Prim::Spiral { c, r, turns } => Prim::Spiral { c: place(c), r: r * sx, turns: *turns },
             Prim::Arc { c, r, start, sweep } => Prim::Arc { c: place(c), r: r * sx, start: *start, sweep: *sweep },
-            Prim::Text { at, height, text } => Prim::Text { at: place(at), height: height * sy, text: text.clone() },
+            Prim::Text { at, height, text, style } => Prim::Text { at: place(at), height: height * sy, text: text.clone(), style: style.clone() },
         };
         let tolerance = (to_hi[0] - to_lo[0]).max(to_hi[1] - to_lo[1]).max(1e-6) * 1e-6;
         let made = fitted.paths();
@@ -190,7 +197,7 @@ impl Prim {
             Prim::Star { c, outer, inner, points } => vec![Path::closed(geom::star(*c, *outer, *inner, *points))],
             Prim::Spiral { c, r, turns } => vec![Path::open(geom::spiral(*c, *r, *turns))],
             Prim::Arc { c, r, start, sweep } => vec![Path::open(geom::arc(*c, *r, *start, *sweep))],
-            Prim::Text { at, height, text } => geom::text_paths(text, *height, *at),
+            Prim::Text { at, height, text, style } => crate::fonts::text_paths(text, *height, *at, style),
         }
     }
 
@@ -358,6 +365,9 @@ pub struct Doc {
     /// The person's notes about the job, which go on the job sheet.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub notes: String,
+    /// Named values that sums in number boxes can use as `{name}`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variables: Vec<crate::formula::Variable>,
     /// What each piece is called, by the mark on its shapes.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub piece_names: std::collections::BTreeMap<u64, String>,
@@ -370,6 +380,7 @@ impl Default for Doc {
             vectors: Vec::new(),
             piece_names: Default::default(),
             notes: String::new(),
+            variables: Vec::new(),
             layers: vec![Layer::named(crate::i18n::tr("Layer 1"))],
             active_layer: 0,
             components: Vec::new(),
@@ -615,6 +626,12 @@ pub struct DrawForm {
     pub turns: f64,
     pub text: String,
     pub text_height: f64,
+    pub text_style: crate::fonts::TextStyle,
+    /// How much of a shape the text fills when fitted to it, in percent.
+    pub fill_percent: f64,
+    /// Auto layout in the selected shape: the margin, and whether the letters spread to the width.
+    pub text_margin: crate::fonts::Margin,
+    pub spread_letters: bool,
     pub editing: Option<u64>,
     pub points: Vec<P>,
     /// The Next Point fields of the line tool, relative to the last point where it applies.
@@ -643,6 +660,10 @@ impl DrawForm {
             turns: 3.0,
             text: crate::i18n::tr("Text").into(),
             text_height: size * 0.1,
+            text_style: Default::default(),
+            fill_percent: crate::fonts::FILL_PERCENT,
+            text_margin: crate::fonts::Margin::None,
+            spread_letters: false,
             editing: None,
             points: Vec::new(),
             next: [0.0, 0.0],
@@ -661,7 +682,7 @@ impl DrawForm {
             DrawKind::Star => Prim::Star { c, outer: self.r, inner: self.inner, points: self.sides },
             DrawKind::Spiral => Prim::Spiral { c, r: self.r, turns: self.turns },
             DrawKind::Arc => Prim::Arc { c, r: self.r, start: self.start, sweep: self.sweep },
-            DrawKind::Text => Prim::Text { at: c, height: self.text_height, text: self.text.clone() },
+            DrawKind::Text => Prim::Text { at: c, height: self.text_height, text: self.text.clone(), style: self.text_style.clone() },
             DrawKind::Polyline | DrawKind::Curve => return None,
         })
     }
@@ -746,10 +767,11 @@ impl DrawForm {
                 self.start = *start;
                 self.sweep = *sweep;
             }
-            (DrawKind::Text, Prim::Text { at, height, text }) => {
+            (DrawKind::Text, Prim::Text { at, height, text, style }) => {
                 self.c = *at;
                 self.text_height = *height;
                 self.text = text.clone();
+                self.text_style = style.clone();
             }
             _ => return false,
         }
@@ -1114,6 +1136,30 @@ pub struct App {
     /// A template waiting for a decision on the layers it needs.
     pub template_waiting: Option<crate::templates::Waiting>,
     pub support_open: bool,
+    pub help_open: bool,
+    /// The Scale Model Z Height window, with the height asked for.
+    pub scale_z: Option<f64>,
+    pub smooth_form: Option<crate::modeltools::SmoothForm>,
+    pub offset_form: Option<crate::modeltools::OffsetForm>,
+    pub slice_form: Option<crate::modeltools::SliceForm>,
+    /// The Add Draft form's angle while it is open, and the last angle used.
+    pub draft_angle: Option<f64>,
+    pub last_draft_angle: Option<f64>,
+    pub turn_form: Option<crate::modeltools::TurnForm>,
+    /// Turn or Spin, and the height, as last used.
+    pub turn_mode: Option<bool>,
+    pub turn_height: Option<f64>,
+    /// The last offset used, which the form starts from next time.
+    pub offset_distance: Option<f64>,
+    /// For the screen of known states: the text form's font list opens at once.
+    pub open_font_list: Option<String>,
+    pub variables_form: Option<crate::variables::VariablesForm>,
+    /// Why the toolpaths should be recalculated, when it isn't the material.
+    pub recalc_note: Option<String>,
+    pub print_setup_open: bool,
+    /// Kept for the session, as the original's printer settings are.
+    pub print_setup: crate::printing::PrintSetup,
+    pub help_page: usize,
     /// The form for telling the author something, and where drafts go.
     pub feedback: Option<crate::feedback::FeedbackForm>,
     pub issues_page: Option<String>,
@@ -1127,7 +1173,7 @@ pub struct App {
     /// Where reports and the copy of unsaved work are kept. None in tests and pictures.
     pub data_dir: Option<PathBuf>,
     pub recovery: Option<crate::recovery::Found>,
-    pub recovery_at: Option<std::time::Instant>,
+    pub recovery_at: Option<crate::platform::Instant>,
     pub recovery_every: Option<u64>,
     pub recovery_written: bool,
     /// The person put off deciding about the last copy: it stays as it is for next time.
@@ -1144,6 +1190,12 @@ pub struct App {
     /// How toolpaths are drawn: each kind of move can be shown or not, and 2D previews filled.
     pub draw_plunges: bool,
     pub draw_retracts: bool,
+    /// The main light turns with the view. Off at the start, as in the original.
+    pub light_follows_viewer: bool,
+    /// Higher parts cast shadows in the 3D view. Off at the start, as in the original.
+    pub shadow_shading: bool,
+    /// Draw Modeling Plane, on at first and not kept (`0x142e62668`).
+    pub draw_modeling_plane: bool,
     pub solid_previews: bool,
     pub shaded_background: bool,
     pub draw_origin: bool,
@@ -1170,9 +1222,9 @@ pub struct App {
     /// How long the last sharp picture took, and the last preview from its start to that picture.
     pub picture_seconds: Option<f32>,
     pub preview_seconds: Option<f32>,
-    pub preview_started: Option<std::time::Instant>,
+    pub preview_started: Option<crate::platform::Instant>,
     /// While the tool cuts: not before this, so copying the carve can't take up the window's time.
-    pub next_cut_picture: Option<std::time::Instant>,
+    pub next_cut_picture: Option<crate::platform::Instant>,
     /// How big the quick picture is, to suit how fast this computer is.
     pub quick_pixels: f32,
     pub surface_rev: u64,
@@ -1231,7 +1283,7 @@ fn quality_file() -> Option<PathBuf> {
 }
 
 fn load_quality() -> Quality3d {
-    let saved = if cfg!(test) { None } else { quality_file().and_then(|f| std::fs::read_to_string(f).ok()) };
+    let saved = if cfg!(test) { None } else { quality_file().and_then(|f| crate::platform::read_to_string(f).ok()) };
     Quality3d::ALL.into_iter().find(|q| saved.as_deref().is_some_and(|s| s.trim() == q.name())).unwrap_or(Quality3d::Balanced)
 }
 
@@ -1369,6 +1421,23 @@ impl Default for App {
             rotate_centre: None,
             template_waiting: None,
             support_open: false,
+            help_open: false,
+            scale_z: None,
+            smooth_form: None,
+            offset_form: None,
+            slice_form: None,
+            draft_angle: None,
+            last_draft_angle: None,
+            turn_form: None,
+            turn_mode: None,
+            turn_height: None,
+            offset_distance: None,
+            open_font_list: None,
+            variables_form: None,
+            recalc_note: None,
+            print_setup_open: false,
+            print_setup: Default::default(),
+            help_page: 0,
             feedback: None,
             issues_page: crate::feedback::ISSUES_PAGE.map(str::to_string),
             last_draft: None,
@@ -1391,16 +1460,19 @@ impl Default for App {
             checks_accepted: false,
             draw_plunges: true,
             draw_retracts: true,
+            light_follows_viewer: false,
+            draw_modeling_plane: true,
+            shadow_shading: false,
             solid_previews: false,
-            shaded_background: true,
-            draw_origin: false,
+            shaded_background: crate::viewprefs::load().shaded_background,
+            draw_origin: crate::viewprefs::load().draw_origin,
             curve_fit_open: false,
             curve_fit_tolerance: 0.01,
             resume: None,
             resume_open: false,
             resume_choice: (0, 1),
             typed: String::new(),
-            draw_block: false,
+            draw_block: crate::viewprefs::load().draw_block,
             recent_wanted: None,
             start_logo: None,
             save_piece: None,
@@ -1433,6 +1505,10 @@ fn recent_file() -> Option<PathBuf> {
 
 /// A file in the folder where the program keeps its settings.
 pub fn settings_file(name: &str) -> Option<PathBuf> {
+    if crate::platform::WEB {
+        // Kept by the browser for this site (`platform::SETTINGS`).
+        return Some(PathBuf::from(crate::platform::SETTINGS).join(name));
+    }
     recent_file().map(|f| f.with_file_name(name))
 }
 
@@ -1445,7 +1521,7 @@ fn load_clip_folders() -> Vec<PathBuf> {
         return Vec::new();
     }
     clip_file()
-        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|f| crate::platform::read_to_string(f).ok())
         .map(|s| s.lines().map(PathBuf::from).filter(|p| p.is_dir()).collect())
         .unwrap_or_default()
 }
@@ -1459,7 +1535,7 @@ pub fn save_clip_folders(folders: &[PathBuf]) {
             let _ = std::fs::create_dir_all(dir);
         }
         let lines: Vec<String> = folders.iter().map(|p| p.display().to_string()).collect();
-        let _ = std::fs::write(file, lines.join("\n"));
+        let _ = crate::platform::write(file, lines.join("\n"));
     }
 }
 
@@ -1538,7 +1614,7 @@ impl App {
             }
             let mut lines = vec![self.post_name(self.post_index)];
             lines.extend(self.loaded_posts.iter().filter_map(|p| p.source.as_ref()).map(|p| p.display().to_string()));
-            let _ = std::fs::write(file, lines.join("\n"));
+            let _ = crate::platform::write(file, lines.join("\n"));
         }
     }
 
@@ -1547,7 +1623,7 @@ impl App {
         if cfg!(test) {
             return;
         }
-        let Some(text) = post_list_file().and_then(|f| std::fs::read_to_string(f).ok()) else { return };
+        let Some(text) = post_list_file().and_then(|f| crate::platform::read_to_string(f).ok()) else { return };
         let mut lines = text.lines();
         let chosen = lines.next().unwrap_or_default().to_string();
         for line in lines {
@@ -1571,7 +1647,7 @@ fn load_folded() -> Vec<String> {
     if cfg!(test) {
         return Vec::new();
     }
-    let text = folded_file().and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default();
+    let text = folded_file().and_then(|f| crate::platform::read_to_string(f).ok()).unwrap_or_default();
     text.lines().filter(|l| !l.is_empty()).map(str::to_string).collect()
 }
 
@@ -1584,7 +1660,7 @@ pub fn save_folded(folded: &[String]) {
         if let Some(dir) = file.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let _ = std::fs::write(file, folded.join("\n"));
+        let _ = crate::platform::write(file, folded.join("\n"));
     }
 }
 
@@ -1596,7 +1672,7 @@ fn load_recent() -> Vec<PathBuf> {
         return Vec::new();
     }
     recent_file()
-        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|f| crate::platform::read_to_string(f).ok())
         .map(|s| s.lines().map(PathBuf::from).filter(|p| p.exists()).take(RECENT_FILES).collect())
         .unwrap_or_default()
 }
@@ -1700,17 +1776,30 @@ impl App {
         self.bump_surface();
     }
 
+    /// The 3D view's choices that are kept between sessions.
+    pub fn view_prefs(&self) -> crate::viewprefs::ViewPrefs {
+        crate::viewprefs::ViewPrefs { draw_origin: self.draw_origin, draw_block: self.draw_block, shaded_background: self.shaded_background }
+    }
+
     pub fn bump_surface(&mut self) {
         self.surface_rev += 1;
     }
 
     pub fn save_to(&mut self, path: PathBuf) -> Result<(), String> {
         let text = serde_json::to_string(&self.doc).map_err(|e| e.to_string())?;
+        if crate::platform::WEB {
+            // A download: the browser keeps it, and there's nothing on disk to back up or replace.
+            crate::platform::write(&path, text).map_err(|e| tf!("Could not save {}: {e}", path.display()))?;
+            self.status = tf!("Saved {}", path.display());
+            self.path = Some(path);
+            self.dirty = false;
+            return Ok(());
+        }
         // The version being replaced is kept first. If that fails, the save still goes ahead.
         let no_backup = self.backup_before_saving(&path, text.as_bytes());
         // Written beside it first: a full disk or a crash must not cost the copy already there.
         let beside = path.with_extension("burin-saving");
-        let written = std::fs::write(&beside, text).and_then(|()| std::fs::rename(&beside, &path));
+        let written = crate::platform::write(&beside, text).and_then(|()| std::fs::rename(&beside, &path));
         if let Err(e) = written {
             let _ = std::fs::remove_file(&beside);
             return Err(tf!("Could not save {}: {e}", path.display()));
@@ -1727,7 +1816,7 @@ impl App {
 
     /// Starts a new job from a .crv3d project file: its material, layers, shapes and toolpaths.
     pub fn open_project(&mut self, path: &std::path::Path) -> Result<(), String> {
-        let bytes = std::fs::read(path).map_err(|e| tf!("Could not open {}: {e}", path.display()))?;
+        let bytes = crate::platform::read(path).map_err(|e| tf!("Could not open {}: {e}", path.display()))?;
         let p = crate::crv3d::read(&bytes)?;
         let mut doc = Doc::default();
         let (w, h) = (p.max[0] - p.min[0], p.max[1] - p.min[1]);
@@ -1854,7 +1943,7 @@ impl App {
         if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("crv3d") || e.eq_ignore_ascii_case("crv")) {
             return self.open_project(&path);
         }
-        let text = std::fs::read_to_string(&path).map_err(|e| tf!("Could not open {}: {e}", path.display()))?;
+        let text = crate::platform::read_to_string(&path).map_err(|e| tf!("Could not open {}: {e}", path.display()))?;
         let doc: Doc = serde_json::from_str(&text)
             .map_err(|_| tf!("{} is not a project made by this program.", path.display()))?;
         // Notes starting with a dot ask to be read each time the job is opened (`0x1402923d0`).
@@ -1881,7 +1970,7 @@ impl App {
                 let _ = std::fs::create_dir_all(dir);
             }
             let lines: Vec<String> = self.recent.iter().map(|p| p.display().to_string()).collect();
-            let _ = std::fs::write(file, lines.join("\n"));
+            let _ = crate::platform::write(file, lines.join("\n"));
         }
     }
 
@@ -1892,7 +1981,7 @@ impl App {
         self.screen = Screen::Work;
         let border = self.doc.add_vector(vec![Path::closed(geom::rect([5.0, 5.0], 9.0, 9.0, 0.6))], Prim::Rect { c: [5.0, 5.0], w: 9.0, h: 9.0, corner: 0.6 });
         let disc = self.doc.add_vector(vec![Path::closed(geom::circle([5.0, 6.0], 2.2))], Prim::Circle { c: [5.0, 6.0], r: 2.2 });
-        let text = Prim::Text { at: [2.2, 1.6], height: 1.1, text: "Burin".into() };
+        let text = Prim::Text { at: [2.2, 1.6], height: 1.1, text: "Burin".into(), style: Default::default() };
         let word = self.doc.add_vector(text.paths(), text);
         let flat = ShapeForm { profile: Profile::Flat, height: 0.1, base: 0.0, combine: Combine::Add, editing: None };
         self.selected = vec![border];
@@ -2788,7 +2877,7 @@ impl App {
         }
         // A toolpath made before the material got thinner would go through it now.
         self.warn_if_too_deep(&queue);
-        self.preview_started = Some(std::time::Instant::now());
+        self.preview_started = Some(crate::platform::Instant::now());
         self.preview_seconds = None;
         self.sim_undo = self.sim.clone();
         self.ensure_sim();
@@ -2835,7 +2924,7 @@ impl App {
             if let Some(dir) = file.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
-            let _ = std::fs::write(file, quality.name());
+            let _ = crate::platform::write(file, quality.name());
         }
     }
 
@@ -3578,9 +3667,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("burin-posts-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let good = dir.join("router.pp");
-        std::fs::write(&good, "POST_NAME = \"Router (mm) (*.tap)\"\nFILE_EXTENSION = \"tap\"\nUNITS = \"MM\"\nVAR X_POSITION = [X|C|X|1.1]\nVAR Y_POSITION = [Y|C|Y|1.1]\nVAR Z_POSITION = [Z|C|Z|1.1]\nbegin HEADER\n\"(file [TP_FILENAME])\"\nbegin RAPID_MOVE\n\"G0 [X][Y][Z]\"\nbegin FEED_MOVE\n\"G1 [X][Y][Z]\"\nbegin FOOTER\n\"END\"\n").unwrap();
-        std::fs::write(dir.join("notes.pp"), "this is not a post processor").unwrap();
-        std::fs::write(dir.join("readme.txt"), "ignored").unwrap();
+        crate::platform::write(&good, "POST_NAME = \"Router (mm) (*.tap)\"\nFILE_EXTENSION = \"tap\"\nUNITS = \"MM\"\nVAR X_POSITION = [X|C|X|1.1]\nVAR Y_POSITION = [Y|C|Y|1.1]\nVAR Z_POSITION = [Z|C|Z|1.1]\nbegin HEADER\n\"(file [TP_FILENAME])\"\nbegin RAPID_MOVE\n\"G0 [X][Y][Z]\"\nbegin FEED_MOVE\n\"G1 [X][Y][Z]\"\nbegin FOOTER\n\"END\"\n").unwrap();
+        crate::platform::write(dir.join("notes.pp"), "this is not a post processor").unwrap();
+        crate::platform::write(dir.join("readme.txt"), "ignored").unwrap();
         let mut a = working();
         add_circle(&mut a, [5.0, 5.0], 1.0);
         a.start_op(OpKind::Drill);

@@ -1,7 +1,17 @@
 //! Distort: bending shapes inside an envelope.
+//!
+//! A component can be distorted the same way (Model > Distort Selected Component, 33265, `0x1402c5060`, opens this
+//! form, dialog `0x26f`): with one component selected and, for an envelope on curves, the curves as the only
+//! vectors, its heights follow the envelope, in one step to undo ("Envelope Distort Component", `0x140305140`,
+//! `0x302`).
 
 use crate::app::*;
 use crate::geom::{self, Path, P};
+
+/// The original's Distort Selected Component command.
+pub const DISTORT_COMPONENT_COMMAND: u32 = 33265;
+/// How many divisions each way the lattice a component is bent through has (`0x1409d72a0`).
+pub const LATTICE: usize = 100;
 
 /// How the envelope around the shapes is defined.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -20,6 +30,8 @@ pub struct Envelope {
     /// Bottom left, bottom right, top right, top left.
     pub corners: [P; 4],
     curves: Option<(Vec<P>, Vec<P>)>,
+    /// A component being distorted, and its heights before.
+    component: Option<(usize, crate::relief::Grid)>,
 }
 
 fn route_of(path: &Path) -> Vec<P> {
@@ -62,6 +74,87 @@ impl Envelope {
     pub fn has_handles(&self) -> bool {
         self.curves.is_none()
     }
+
+    /// Where the bottom and top edges are at a fraction across.
+    fn edges(&self, u: f64) -> (P, P) {
+        match &self.curves {
+            Some((b, t)) => (at_fraction(b, u), at_fraction(t, u)),
+            None => {
+                let [a, b, c, d] = self.corners;
+                ([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u], [d[0] + (c[0] - d[0]) * u, d[1] + (c[1] - d[1]) * u])
+            }
+        }
+    }
+
+    /// A component's heights carried into the envelope: each cell spread to where the envelope puts it, finely
+    /// enough that a stretched envelope leaves no gaps.
+    fn warp(&self, src: &crate::relief::Grid) -> crate::relief::Grid {
+        let (nx, ny, cell) = (src.nx, src.ny, src.cell);
+        let (w, h) = ((self.hi[0] - self.lo[0]).max(1e-9), (self.hi[1] - self.lo[1]).max(1e-9));
+        let mut out = crate::relief::Grid { data: vec![0.0; nx * ny], ..src.clone() };
+        // How much the envelope stretches the box, for how many samples a cell takes.
+        let mut reach = [0.0f64; 2];
+        for (i, j) in [(0, 1), (3, 2)] {
+            reach[0] = reach[0].max((self.corners[j][0] - self.corners[i][0]).hypot(self.corners[j][1] - self.corners[i][1]) / w);
+        }
+        for (i, j) in [(0, 3), (1, 2)] {
+            reach[1] = reach[1].max((self.corners[j][0] - self.corners[i][0]).hypot(self.corners[j][1] - self.corners[i][1]) / h);
+        }
+        let stretch = match &self.curves {
+            Some((b, t)) => {
+                let length = |r: &[P]| r.windows(2).map(|q| (q[1][0] - q[0][0]).hypot(q[1][1] - q[0][1])).sum::<f64>();
+                let tall = b.iter().zip(t.iter()).map(|(p, q)| (q[1] - p[1]).abs()).fold(h, f64::max);
+                (length(b).max(length(t)) / w).max(tall / h)
+            }
+            None => reach[0].max(reach[1]),
+        };
+        let k = ((2.0 * stretch).ceil() as usize).clamp(2, 8);
+        let (ix0, ix1) = (((self.lo[0] / cell).floor().max(0.0)) as usize, (((self.hi[0] / cell).ceil() as usize) + 1).min(nx));
+        let (iy0, iy1) = (((self.lo[1] / cell).floor().max(0.0)) as usize, (((self.hi[1] / cell).ceil() as usize) + 1).min(ny));
+        // The original bends a component through a lattice of 100 by 100 over its box (`0x1409d72a0`,
+        // `0x1407bbf20`): the envelope is worked out at its points, and each place between them is blended.
+        let n = LATTICE;
+        let lattice: Vec<P> = (0..=n)
+            .flat_map(|j| (0..=n).map(move |i| (i, j)))
+            .map(|(i, j)| {
+                let (bottom, top) = self.edges(i as f64 / n as f64);
+                let v = j as f64 / n as f64;
+                [bottom[0] + (top[0] - bottom[0]) * v, bottom[1] + (top[1] - bottom[1]) * v]
+            })
+            .collect();
+        let place = |u: f64, v: f64| -> P {
+            let (fu, fv) = (u.clamp(0.0, 1.0) * n as f64, v.clamp(0.0, 1.0) * n as f64);
+            let (i, j) = ((fu as usize).min(n - 1), (fv as usize).min(n - 1));
+            let (s, t) = (fu - i as f64, fv - j as f64);
+            let at = |i: usize, j: usize| lattice[j * (n + 1) + i];
+            let (a, b, c, d) = (at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
+            let lower = [a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s];
+            let upper = [d[0] + (c[0] - d[0]) * s, d[1] + (c[1] - d[1]) * s];
+            [lower[0] + (upper[0] - lower[0]) * t, lower[1] + (upper[1] - lower[1]) * t]
+        };
+        for iy in iy0..iy1 {
+            for ix in ix0..ix1 {
+                let height = src.data[iy * nx + ix];
+                if height <= 0.0 {
+                    continue;
+                }
+                for sy in 0..k {
+                    let y = iy as f64 * cell - cell / 2.0 + (sy as f64 + 0.5) / k as f64 * cell;
+                    let v = (y - self.lo[1]) / h;
+                    for sx in 0..k {
+                        let x = ix as f64 * cell - cell / 2.0 + (sx as f64 + 0.5) / k as f64 * cell;
+                        let p = place((x - self.lo[0]) / w, v);
+                        let (qx, qy) = ((p[0] / cell).round(), (p[1] / cell).round());
+                        if qx >= 0.0 && qy >= 0.0 && (qx as usize) < nx && (qy as usize) < ny {
+                            let d = &mut out.data[qy as usize * nx + qx as usize];
+                            *d = d.max(height);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
 }
 
 /// Adds points along long straight stretches, so they can bend.
@@ -90,6 +183,20 @@ impl App {
             EnvelopeKind::OneCurve => 1,
             EnvelopeKind::TwoCurves => 2,
         };
+        // A selected component with only the curves chosen: the component is what bends.
+        let component = self.selected_comp.filter(|i| *i < self.doc.components.len());
+        if order.len() == curves_wanted && component.is_some() {
+            for id in &order {
+                let v = self.doc.vectors.iter().find(|v| v.id == *id).unwrap();
+                if v.paths.len() != 1 || v.paths[0].closed || v.paths[0].pts.len() < 2 {
+                    return Err(crate::i18n::tr("The last selected shapes must be open lines.").to_string());
+                }
+            }
+            if component.is_some_and(|i| !self.doc.components[i].visible) {
+                return Err(crate::i18n::tr("The selected component is not visible. To work with a selected component it must be visible.").to_string());
+            }
+            return Ok((Vec::new(), order));
+        }
         if order.len() <= curves_wanted {
             return Err(match curves_wanted {
                 0 => crate::i18n::tr("Select the object to distort.").to_string(),
@@ -121,7 +228,23 @@ impl App {
                 return false;
             }
         };
-        let Some((lo, hi)) = geom::bbox(self.doc.vectors.iter().filter(|v| objects.contains(&v.id)).flat_map(|v| v.paths.iter())) else { return false };
+        let component = if objects.is_empty() { self.selected_comp.map(|i| (i, self.component_grid(i))) } else { None };
+        let bounds = match &component {
+            Some((_, g)) => {
+                let mut b: Option<(P, P)> = None;
+                for iy in 0..g.ny {
+                    for ix in 0..g.nx {
+                        if g.data[iy * g.nx + ix] > 0.0 {
+                            let p = [ix as f64 * g.cell, iy as f64 * g.cell];
+                            b = Some(b.map_or((p, p), |(l, h)| ([l[0].min(p[0]), l[1].min(p[1])], [h[0].max(p[0]), h[1].max(p[1])])));
+                        }
+                    }
+                }
+                b
+            }
+            None => geom::bbox(self.doc.vectors.iter().filter(|v| objects.contains(&v.id)).flat_map(|v| v.paths.iter())),
+        };
+        let Some((lo, hi)) = bounds else { return false };
         let route = |app: &App, id: u64| route_of(&app.doc.vectors.iter().find(|v| v.id == id).unwrap().paths[0]);
         let curve_routes = match curves.as_slice() {
             [c] => {
@@ -149,7 +272,7 @@ impl App {
         let step = (hi[0] - lo[0]).max(hi[1] - lo[1]).max(1e-6) / 48.0;
         let orig: Vec<(u64, Vec<Path>)> = self.doc.vectors.iter().filter(|v| objects.contains(&v.id)).map(|v| (v.id, v.paths.iter().map(|p| densify(p, step)).collect())).collect();
         let corners = [lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]];
-        let envelope = Envelope { orig, lo, hi, corners, curves: curve_routes };
+        let envelope = Envelope { orig, lo, hi, corners, curves: curve_routes, component };
         self.keep_rules(|a| {
             a.checkpoint();
             a.envelope = Some(envelope);
@@ -163,6 +286,13 @@ impl App {
     /// Reshapes the shapes from their originals and the envelope as it is now.
     fn redraw_envelope(&mut self) {
         let Some(env) = self.envelope.clone() else { return };
+        if let Some((i, before)) = &env.component {
+            let warped = env.warp(before);
+            if *i < self.doc.components.len() && crate::modeltools::surface_from(&warped).is_some() {
+                self.replace_heights(*i, &warped);
+                self.selected_comp = Some(*i);
+            }
+        }
         for (id, paths) in &env.orig {
             if let Some(v) = self.doc.vectors.iter_mut().find(|v| v.id == *id) {
                 v.paths = paths.iter().map(|p| Path { pts: p.pts.iter().map(|q| env.map(*q)).collect(), closed: p.closed }).collect();

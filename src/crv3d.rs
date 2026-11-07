@@ -1038,18 +1038,89 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
     }
     let mut toolpaths = file.stream("Toolpaths", "ToolpathData").map_or_else(Vec::new, |t| read_toolpaths(&t));
     // A toolpath can name a whole group: it means the shapes in it.
-    let layer_of = |mark: &[u8; 16]| found.iter().position(|(_, m, _)| m == mark).map(|p| map[p]).filter(|l| *l != usize::MAX);
-    let tree = group_tree(&objects, &layer_of);
     let groups = group_members(&objects);
     for t in &mut toolpaths {
         t.sources = t.sources.iter().flat_map(|s| groups.get(s).cloned().unwrap_or_else(|| vec![*s])).collect();
     }
+    // Some shapes (holes made by some of the original's tools) have no version string before them:
+    // their mark comes twice, with six bytes between, then the outline. Taken only when a toolpath or a
+    // group names them, so the toolpath previews kept in the same stream stay out.
+    let wanted: std::collections::BTreeSet<[u8; 16]> = toolpaths.iter().flat_map(|t| t.sources.iter().copied()).chain(groups.values().flatten().copied()).filter(|m| *m != [0; 16] && !marks.contains(m)).collect();
+    for mark in wanted {
+        let mut from = 0;
+        while let Some(p) = d[from..].windows(16).position(|w| w == mark).map(|p| p + from) {
+            from = p + 16;
+            if d.get(p + 22..p + 38) != Some(mark.as_slice()) || u16_at(&d, p + 38).is_none_or(|tag| tag & 0x8000 == 0) {
+                continue;
+            }
+            if let Some((path, _)) = outline_at(&d, p + 40) {
+                let layer = objects.iter().find(|o| o.mark == mark).and_then(|o| found.iter().position(|(_, m, _)| *m == o.layer)).unwrap_or_else(|| layer_for(p));
+                if map.get(layer).is_none_or(|l| *l == usize::MAX) {
+                    if let Some(slot) = map.get_mut(layer) {
+                        *slot = layers.len();
+                        layers.push(found.get(layer).map_or_else(|| LayerInfo { name: "Layer 1".into(), color: [0, 0, 0] }, |f| f.2.clone()));
+                    }
+                }
+                shapes.push((map.get(layer).copied().filter(|l| *l != usize::MAX).unwrap_or(0), path));
+                marks.push(mark);
+                break;
+            }
+        }
+    }
+    let layer_of = |mark: &[u8; 16]| found.iter().position(|(_, m, _)| m == mark).map(|p| map[p]).filter(|l| *l != usize::MAX);
+    let tree = group_tree(&objects, &layer_of);
     Ok(Project { min: [a, b, c], max: [e, f, g], datum, layers, shapes, marks, groups: tree, toolpaths })
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// Toolpaths naming shapes the reading didn't find: BURIN_JOB=<file> cargo test unfound_sources -- --nocapture
+    #[test]
+    fn unfound_sources() {
+        let Ok(file) = std::env::var("BURIN_JOB") else { return };
+        let bytes = std::fs::read(&file).unwrap();
+        let p = read(&bytes).unwrap();
+        let c = Compound::open(&bytes).unwrap();
+        let d = c.stream("VectorData", "2dDataV2").unwrap();
+        let layer_marks: Vec<[u8; 16]> = read_layers(&d).iter().map(|(_, m, _)| *m).collect();
+        let objects = find_objects(&d, &layer_marks);
+        if std::env::var("BURIN_NORMAL").is_ok() {
+            let marker = b"Vectric__Version";
+            if let Some(a) = d.windows(marker.len()).position(|w| w == marker) {
+                for row in (a..a + 200).step_by(32) {
+                    let bytes = &d[row..(row + 32).min(d.len())];
+                    let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                    let txt: String = bytes.iter().map(|b| if b.is_ascii_graphic() { *b as char } else { '.' }).collect();
+                    println!("  normal {row:6} {} {}", hex.join(""), txt);
+                }
+            }
+        }
+        for t in &p.toolpaths {
+            let missing: Vec<&[u8; 16]> = t.sources.iter().filter(|s| !p.marks.contains(s)).collect();
+            if missing.is_empty() { continue }
+            println!("{} ({}): {} sources, {} not found", t.name, t.kind, t.sources.len(), missing.len());
+            for m in missing.iter().take(4) {
+                let at = d.windows(16).position(|w| w == m.as_slice());
+                let obj = objects.iter().find(|o| &o.mark == *m);
+                let context = at.map(|a| {
+                    let from = a.saturating_sub(60);
+                    let text: String = d[from..(a + 80).min(d.len())].iter().map(|b| if b.is_ascii_graphic() { *b as char } else { '.' }).collect();
+                    text
+                });
+                println!("   mark at {:?}, object {:?}, around: {:?}", at, obj.map(|o| (o.at, o.children)), context);
+                if let (Some(a), true) = (at, std::env::var("BURIN_HEX").is_ok()) {
+                    for row in (a.saturating_sub(std::env::var("BURIN_BACK").ok().and_then(|v| v.parse().ok()).unwrap_or(320))..(a + std::env::var("BURIN_FWD").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(64)).min(d.len())).step_by(32) {
+                        let bytes = &d[row..(row + 32).min(d.len())];
+                        let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                        let txt: String = bytes.iter().map(|b| if b.is_ascii_graphic() { *b as char } else { '.' }).collect();
+                        println!("     {row:6} {} {}", hex.join(""), txt);
+                    }
+                }
+            }
+        }
+    }
 
     fn dir_entry(name: &str, kind: u8, left: u32, right: u32, child: u32, start: u32, size: u32) -> Vec<u8> {
         let mut e = vec![0u8; 128];

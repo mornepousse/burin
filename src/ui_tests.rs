@@ -1119,7 +1119,7 @@ fn job_with_shape(prim: Prim) -> (Harness<'static, App>, u64) {
 
 #[test]
 fn clicking_a_tool_with_its_kind_of_shape_selected_edits_it() {
-    let text = Prim::Text { at: [2.0, 2.0], height: 0.8, text: "Ab".into() };
+    let text = Prim::Text { at: [2.0, 2.0], height: 0.8, text: "Ab".into(), style: Default::default() };
     let cases = [
         ("Draw circle", Prim::Circle { c: [3.0, 4.0], r: 1.5 }, "Edit Circle"),
         ("Draw ellipse", Prim::Ellipse { c: [3.0, 4.0], rx: 2.0, ry: 1.0 }, "Edit Ellipse"),
@@ -3535,6 +3535,49 @@ fn clicking_what_is_selected_changes_between_moving_and_resizing() {
 }
 
 #[test]
+fn a_turned_square_can_be_resized_by_its_handles() {
+    // Resizing a turned square used to stretch it millions of times from a side handle and stop the program.
+    let mut h = job_with_square([5.0, 5.0]);
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().selected = vec![id];
+    h.state_mut().handles_on = Some(vec![id]);
+    h.run();
+    let turn = h.state().rotate_handles()[2];
+    let centre = h.state().to_screen(h.state().rotation_centre().unwrap());
+    drag(&mut h, turn, centre + (turn - centre).rot90() * 0.3 + (turn - centre) * 0.7);
+    let size = |h: &Harness<'static, App>| {
+        let (a, b) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+        (b[0] - a[0], b[1] - a[1])
+    };
+    for k in 0..8 {
+        h.state_mut().selected = vec![id];
+        h.state_mut().handles_on = Some(vec![id]);
+        h.run();
+        let (w, tall) = size(&h);
+        let (at, _) = h.state().handle_rects()[k];
+        let away = if k >= 4 { if k % 2 == 0 { egui::vec2(0.0, 30.0) } else { egui::vec2(30.0, 0.0) } } else { egui::vec2(25.0, 25.0) };
+        drag(&mut h, at, at + away);
+        let (nw, nh) = size(&h);
+        assert!(nw < 20.0 && nh < 20.0, "handle {k}: {nw} x {nh}");
+        if k == 4 || k == 6 {
+            assert!((nw - w).abs() < 1e-6 && (nh - tall).abs() > 1e-3, "a top or bottom handle only changes the height: {w} {tall} -> {nw} {nh}");
+        }
+        if k == 5 || k == 7 {
+            assert!((nh - tall).abs() < 1e-6 && (nw - w).abs() > 1e-3, "a side handle only changes the width: {w} {tall} -> {nw} {nh}");
+        }
+    }
+}
+
+/// Dashes are drawn only where the line crosses what shows, however far it reaches.
+#[test]
+fn a_huge_dashed_outline_draws_only_what_shows() {
+    let view = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
+    let far = [egui::pos2(-1e12, 300.0), egui::pos2(1e12, 300.0), egui::pos2(f32::NAN, 0.0), egui::pos2(10.0, 10.0)];
+    let shapes = crate::canvas::dashed_within(&far, egui::Stroke::new(1.0, egui::Color32::BLACK), 4.0, 3.0, view);
+    assert!(!shapes.is_empty() && shapes.len() < 200, "{} dashes", shapes.len());
+}
+
+#[test]
 fn with_handles_a_side_stretches_one_way_and_without_them_it_only_moves() {
     let mut h = job_with_square([5.0, 5.0]);
     let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
@@ -3724,7 +3767,7 @@ fn out_of_place(state: &str) -> Vec<String> {
 #[test]
 fn french_wordings_stay_inside_their_panels() {
     let mut too_wide = Vec::new();
-    for state in ["checks", "drawmoves", "backups", "feedback", "crashes", "merge", "rotate", "support", "missinglayers", "pieces", "savepiece", "3d", "align", "array", "board", "boardalert", "boardmaterial", "carved", "chamfer", "circle", "clipart", "corners", "cut", "distort", "distorted", "drawing", "drill", "editcircle", "engrave", "finish", "flute", "grid", "grid3d", "grouped", "handles", "job", "layers", "leads", "lines", "material", "material-changed", "millimetres", "model", "modeling", "move", "order", "origin", "origin_set", "passes", "paths2d", "piece", "pocket", "posts", "preferences", "profile", "progress", "ramp", "relief", "relief3d", "rough", "rules", "save", "selector", "sharp3d", "sharp3dfar", "similar", "sketch", "startat", "sweep", "tabs", "tabs-before", "tee_after", "tee_before", "through", "toodeep", "toolrates", "tools", "trace", "traced", "trim_after", "trim_before", "unsaved", "vcarve", "zero"] {
+    for state in ["smooth", "modeltrim", "textfit", "fonts", "variables", "printsetup", "help", "shadows", "checks", "drawmoves", "backups", "feedback", "crashes", "merge", "rotate", "support", "missinglayers", "pieces", "savepiece", "3d", "align", "array", "board", "boardalert", "boardmaterial", "carved", "chamfer", "circle", "clipart", "corners", "cut", "distort", "distorted", "drawing", "drill", "editcircle", "engrave", "finish", "flute", "grid", "grid3d", "grouped", "handles", "job", "layers", "leads", "lines", "material", "material-changed", "millimetres", "model", "modeling", "move", "order", "origin", "origin_set", "passes", "paths2d", "piece", "pocket", "posts", "preferences", "profile", "progress", "ramp", "relief", "relief3d", "rough", "rules", "save", "selector", "sharp3d", "sharp3dfar", "similar", "sketch", "startat", "sweep", "tabs", "tabs-before", "tee_after", "tee_before", "through", "toodeep", "toolrates", "tools", "trace", "traced", "trim_after", "trim_before", "unsaved", "vcarve", "zero"] {
         let english = out_of_place(state).len();
         let french = {
             let _french = InFrench::start();
@@ -5063,6 +5106,37 @@ fn a_value_typed_while_dragging_makes_the_move_exact() {
 }
 
 #[test]
+fn a_value_typed_while_dragging_a_point_places_it() {
+    use crate::canvas::Drag;
+    let mut h = job_with_square([3.0, 3.0]);
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().selected = vec![id];
+    h.state_mut().tool = crate::app::Tool2::Nodes;
+    h.run();
+    let point = |h: &Harness<'static, App>| h.state().doc.vectors[0].paths[0].pts[0];
+    let start = point(&h);
+    // Dragged a little up so far: 0.75 puts it exactly that far up from where it was.
+    h.state_mut().doc.vectors[0].paths[0].pts[0] = [start[0], start[1] + 0.2];
+    h.state_mut().drag = Drag::Node { id, path: 0, index: 0, start };
+    h.input_mut().events.push(egui::Event::Text("0.75".into()));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let now = point(&h);
+    assert!((now[0] - start[0]).abs() < 1e-9 && (now[1] - start[1] - 0.75).abs() < 1e-9, "{start:?} {now:?}");
+    assert!(matches!(h.state().drag, Drag::None));
+    // Two values: by that much each way from where it was.
+    let start = point(&h);
+    h.state_mut().drag = Drag::Node { id, path: 0, index: 0, start };
+    h.input_mut().events.push(egui::Event::Text("-1,0.5".into()));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let now = point(&h);
+    assert!((now[0] - start[0] + 1.0).abs() < 1e-9 && (now[1] - start[1] - 0.5).abs() < 1e-9, "{start:?} {now:?}");
+}
+
+#[test]
 fn a_file_can_start_again_from_a_cut() {
     let mut h = harness();
     h.state_mut().load_sample();
@@ -5084,4 +5158,666 @@ fn a_file_can_start_again_from_a_cut() {
     h.state_mut().resume_open = true;
     h.run();
     h.get_by_label("Save From Here...");
+}
+
+#[test]
+fn help_contents_opens_its_pages_and_the_light_settings_can_be_switched() {
+    let mut h = job_with_square([1.0, 1.0]);
+    h.get_all_by_role_and_label(egui::accesskit::Role::Button, "Help").next().unwrap().click();
+    h.run();
+    h.get_by_label("Help Contents").click();
+    h.run();
+    assert!(h.state().help_open);
+    h.get_by_label("Saving for the Machine").click();
+    h.run();
+    assert_eq!(h.state().help_page, 5);
+    assert!(h.query_by_label_contains("Start Again From a Cut writes a file").is_some(), "the page's text shows");
+
+    assert!(!h.state().shadow_shading && !h.state().light_follows_viewer, "both off at the start, as in the original");
+    h.get_all_by_role_and_label(egui::accesskit::Role::Button, "View").next().unwrap().click();
+    h.run();
+    h.get_by_label("Use Shadow Shading").click();
+    h.run();
+    if h.query_by_label("Light Follows Viewer").is_none() {
+        h.get_all_by_role_and_label(egui::accesskit::Role::Button, "View").next().unwrap().click();
+        h.run();
+    }
+    h.get_by_label("Light Follows Viewer").click();
+    h.run();
+    assert!(h.state().shadow_shading && h.state().light_follows_viewer);
+}
+
+#[test]
+fn a_file_picked_in_the_web_version_opens_by_its_kind() {
+    let dir = std::env::temp_dir().join(format!("burin-picked-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = job_with_square([3.0, 3.0]);
+    let before = h.state().doc.toolpaths.len();
+    let machine = dir.join("other.nc");
+    std::fs::write(&machine, "G21\nG0 X1 Y1 Z2\nG1 Z-1\nG1 X5\nG0 Z2\n").unwrap();
+    h.state_mut().open_picked(machine);
+    h.run();
+    assert_eq!(h.state().doc.toolpaths.len(), before + 1, "a machine file becomes a toolpath");
+    assert!(h.state().doc.toolpaths.last().unwrap().op.imported);
+
+    let shapes = h.state().doc.vectors.len();
+    let drawing = dir.join("shape.svg");
+    std::fs::write(&drawing, r#"<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10"><rect x="1" y="1" width="4" height="4"/></svg>"#).unwrap();
+    h.state_mut().open_picked(drawing);
+    h.run();
+    assert!(h.state().doc.vectors.len() > shapes, "a drawing adds its shapes");
+
+    h.state_mut().open_picked(dir.join("notes.odt"));
+    assert!(h.state().message.as_ref().is_some_and(|m| m.contains("notes.odt")), "anything else is explained");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!crate::platform::WEB);
+    assert!(crate::platform::threads(true) >= 1);
+}
+
+#[test]
+fn print_setup_lays_the_drawing_on_the_paper_chosen() {
+    let mut h = job_with_square([1.0, 1.0]);
+    h.get_all_by_role_and_label(egui::accesskit::Role::Button, "File").next().unwrap().click();
+    h.run();
+    h.get_by_label("Print Setup...").click();
+    h.run();
+    assert!(h.state().print_setup_open);
+    assert!(h.query_by_label_contains("One page the size of the job").is_some());
+    h.state_mut().print_setup.paper = crate::printing::Paper::A4;
+    h.run();
+    // The job is 10 x 10 inches: 254 mm, over 190 x 277 mm of A4 inside the margins.
+    assert!(h.query_by_label_contains("2 pages, 2 across and 1 up").is_some());
+    h.get_by_label("Shrink to one page").click();
+    h.run();
+    assert!(h.state().print_setup.fit);
+    assert!(h.query_by_label_contains("One page, at 74.8% of the real size.").is_some());
+}
+
+#[test]
+fn a_depth_typed_as_a_sum_follows_the_document_variables() {
+    let mut h = job_with_square([4.0, 4.0]);
+    h.state_mut().doc.variables = vec![crate::formula::Variable { name: "depth".into(), value: 0.4 }];
+    h.state_mut().start_op(crate::toolpath::OpKind::Profile);
+    if let RightMode::Op { op, .. } = &mut h.state_mut().right {
+        op.cut_depth = 0.371;
+    }
+    h.run();
+    h.get_all_by_value("0.371").next().unwrap().focus();
+    h.run();
+    for _ in 0..6 {
+        h.key_press(egui::Key::Backspace);
+    }
+    h.run();
+    h.get_all_by_value("").find(|n| n.is_focused()).unwrap().type_text("{depth}/2");
+    h.run();
+    h.run();
+    let RightMode::Op { op, .. } = &h.state().right else { panic!("the toolpath form is open") };
+    assert!((op.cut_depth - 0.2).abs() < 1e-9, "worked out: {}", op.cut_depth);
+    assert_eq!(op.formulas.cut_depth, "{depth}/2", "the sum is kept");
+    h.state_mut().calculate_op();
+    h.run();
+    let behind = h.state_mut().set_variables(vec![crate::formula::Variable { name: "depth".into(), value: 0.6 }]).unwrap();
+    assert_eq!(behind.len(), 1, "the toolpath using it needs recalculating");
+    assert!((h.state().doc.toolpaths[0].op.cut_depth - 0.3).abs() < 1e-9);
+    let broken = h.state_mut().set_variables(Vec::new());
+    assert!(broken.is_err(), "a sum would lose its variable");
+    assert_eq!(h.state().doc.variables.len(), 1, "nothing changed then");
+}
+
+#[test]
+fn a_textures_maximums_and_stepover_can_be_sums() {
+    let mut h = job_with_square([4.0, 4.0]);
+    h.state_mut().doc.variables = vec![crate::formula::Variable { name: "grain".into(), value: 0.3 }];
+    h.state_mut().start_op(crate::toolpath::OpKind::Texture);
+    if let RightMode::Op { op, .. } = &mut h.state_mut().right {
+        op.tex_length[1] = 0.417;
+    }
+    h.run();
+    h.get_all_by_value("0.417").next().unwrap().focus();
+    h.run();
+    for _ in 0..6 {
+        h.key_press(egui::Key::Backspace);
+    }
+    h.run();
+    h.get_all_by_value("").find(|n| n.is_focused()).unwrap().type_text("{grain}*2");
+    h.run();
+    h.run();
+    let RightMode::Op { op, .. } = &h.state().right else { panic!("the toolpath form is open") };
+    assert!((op.tex_length[1] - 0.6).abs() < 1e-9, "worked out: {}", op.tex_length[1]);
+    assert_eq!(op.formulas.texture_length, "{grain}*2");
+    let mut op = op.clone();
+    op.formulas.texture_depth = "{grain}/3".into();
+    op.formulas.stepover = "{grain}/2".into();
+    let context = h.state().formula_context();
+    assert!(op.formulas.apply(&mut op.clone(), &context).unwrap());
+    op.formulas.clone().apply(&mut op, &context).unwrap();
+    assert!((op.tex_cut[1] - 0.1).abs() < 1e-9 && (op.stepover - 0.15).abs() < 1e-9);
+    assert!(op.formulas.uses("grain"));
+}
+
+#[test]
+fn single_line_text_is_engraved_along_its_lines() {
+    let mut h = job_with_square([8.0, 8.0]);
+    let style = crate::fonts::TextStyle { font: "Single Line Sans".into(), ..Default::default() };
+    let prim = Prim::Text { at: [1.0, 1.0], height: 1.0, text: "HI".into(), style };
+    let id = h.state_mut().doc.add_vector(prim.paths(), prim);
+    assert!(h.state().doc.vectors.iter().find(|v| v.id == id).unwrap().paths.iter().all(|p| !p.closed));
+    h.state_mut().selected = vec![id];
+    h.state_mut().start_op(crate::toolpath::OpKind::Engrave);
+    h.state_mut().calculate_op();
+    h.run();
+    let tp = h.state().doc.toolpaths.last().expect("a toolpath");
+    let cuts = tp.moves.iter().filter(|m| !m.rapid).count();
+    assert!(cuts > 6, "the tool follows the strokes: {cuts} cuts");
+    // Saved and read back, the text keeps its font.
+    let text = serde_json::to_string(&h.state().doc).unwrap();
+    assert!(text.contains("Single Line Sans"));
+    let back: crate::app::Doc = serde_json::from_str(&text).unwrap();
+    assert!(back.vectors.iter().any(|v| matches!(&v.prim, Prim::Text { style, .. } if style.font == "Single Line Sans")));
+}
+
+#[test]
+fn a_text_is_fitted_into_the_selected_shape() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().start_draw(crate::app::DrawKind::Text);
+    h.run();
+    assert!(h.query_by_label("Fit to Selected Shape").is_some());
+    h.get_by_label("Fit to Selected Shape").click();
+    h.run();
+    let LeftForm::Draw(f) = &h.state().left else { panic!("the text form is open") };
+    let paths = crate::fonts::text_paths(&f.text, f.text_height, f.c, &f.text_style);
+    let (lo, hi) = crate::geom::bbox(paths.iter()).unwrap();
+    // The square is 2 wide round 5,5: the text fills it across and sits in its middle.
+    assert!((hi[0] - lo[0] - 2.0).abs() < 1e-6, "{lo:?} {hi:?}");
+    assert!(((lo[1] + hi[1]) / 2.0 - 5.0).abs() < 1e-6);
+}
+
+#[test]
+fn the_model_tools_bake_outline_trim_and_scale_the_shapes() {
+    let mut h = harness();
+    h.state_mut().load_sample();
+    h.run();
+    let app = h.state_mut();
+    let comps = app.doc.components.len();
+    // A copy of what shows, the originals left as they are.
+    app.component_from_visible_model();
+    assert_eq!(app.doc.components.len(), comps + 1);
+    assert!(app.doc.components.last().unwrap().surface.is_some());
+    app.doc.components.last_mut().unwrap().visible = false;
+    // The outline of the round shape, as a vector.
+    app.selected_comp = Some(1);
+    let vectors = app.doc.vectors.len();
+    app.boundary_around_component();
+    assert_eq!(app.doc.vectors.len(), vectors + 1);
+    let outline = app.doc.vectors.last().unwrap().paths.clone();
+    let (lo, hi) = crate::geom::bbox(outline.iter()).unwrap();
+    assert!((hi[0] - lo[0] - 4.4).abs() < 0.3, "about the disc's 4.4 across: {lo:?} {hi:?}");
+    // Emptied outside a small square in its middle.
+    let square = app.doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 6.0], 1.0, 1.0, 0.0))], Prim::Free);
+    app.selected = vec![square];
+    app.selected_comp = Some(1);
+    app.reset_component(false);
+    let grid = crate::relief::component_height(&app.doc.components[1], 10.0, 10.0, 40_000);
+    assert!(grid.sample(5.0, 6.0) > 0.0, "kept inside");
+    assert_eq!(grid.sample(4.0, 6.0), 0.0, "gone outside");
+    // The whole model scaled to a new top.
+    app.model_dirty = true;
+    let top = app.model_top().unwrap();
+    assert!(app.scale_model_height(top * 2.0));
+    app.model_dirty = true;
+    assert!((app.model_top().unwrap() - top * 2.0).abs() < 1e-3);
+}
+
+#[test]
+fn a_component_is_smoothed_and_baked() {
+    let mut h = harness();
+    h.state_mut().load_sample();
+    h.run();
+    let app = h.state_mut();
+    // The flat plaque: its sharp edge softens.
+    app.selected_comp = Some(0);
+    let before = crate::relief::component_height(&app.doc.components[0], 10.0, 10.0, 40_000);
+    assert!(app.smooth_component(crate::modeltools::SmoothForm { blend: 1.0, keep_empty: true }));
+    let after = crate::relief::component_height(&app.doc.components[0], 10.0, 10.0, 40_000);
+    let near_edge = [0.62, 5.0];
+    assert!(after.sample(near_edge[0], near_edge[1]) < before.sample(near_edge[0], near_edge[1]), "the rim comes down");
+    assert!((after.sample(5.0, 5.0) - before.sample(5.0, 5.0)).abs() < 1e-3, "the middle stays");
+    // Baking keeps the round shape as it is, as heights of its own.
+    app.selected_comp = Some(1);
+    let round = crate::relief::component_height(&app.doc.components[1], 10.0, 10.0, 40_000);
+    app.bake_component();
+    assert!(app.doc.components[1].surface.is_some());
+    let baked = crate::relief::component_height(&app.doc.components[1], 10.0, 10.0, 40_000);
+    assert!((baked.sample(5.0, 6.0) - round.sample(5.0, 6.0)).abs() < 1e-3);
+    // With nothing selected, it says so.
+    app.selected_comp = None;
+    assert!(!app.smooth_component(Default::default()));
+    assert!(app.message.is_some());
+}
+
+#[test]
+fn a_component_bends_inside_an_envelope() {
+    let mut h = harness();
+    h.state_mut().load_sample();
+    h.run();
+    let app = h.state_mut();
+    app.selected.clear();
+    app.selected_comp = Some(1);
+    app.start_xform(crate::app::Xform::Distort);
+    app.selected_comp = Some(1);
+    assert!(app.envelope_check(crate::distort::EnvelopeKind::BoundingBox).is_ok());
+    let before = crate::relief::component_height(&app.doc.components[1], 10.0, 10.0, 40_000);
+    assert!(app.apply_envelope(crate::distort::EnvelopeKind::BoundingBox));
+    let same = crate::relief::component_height(&app.doc.components[1], 10.0, 10.0, 40_000);
+    assert!((same.sample(5.0, 6.0) - before.sample(5.0, 6.0)).abs() < 0.02, "a new envelope leaves it where it was");
+    // Pulling the top right corner out to the right: the disc reaches further that way.
+    let corner = app.envelope.as_ref().unwrap().corners[2];
+    let far = [corner[0] + 2.0, corner[1]];
+    assert_eq!(before.sample(far[0] - 0.6, corner[1] - 0.3), 0.0);
+    app.move_envelope_corner(2, far);
+    let bent = crate::relief::component_height(&app.doc.components[1], 10.0, 10.0, 40_000);
+    let (lo, hi) = crate::geom::bbox(&app.doc.components[1].paths).unwrap();
+    let (blo, bhi) = crate::geom::bbox(&crate::modeltools::outline_of(&before)).unwrap();
+    assert!(hi[0] > bhi[0] + 0.8, "wider at the top right: {hi:?} vs {bhi:?}");
+    assert!((lo[0] - blo[0]).abs() < 0.1, "the left stays");
+    assert!(bent.data.iter().cloned().fold(0.0f32, f32::max) > 0.0);
+    app.bake_envelope();
+    app.do_undo();
+    let back = crate::relief::component_height(&app.doc.components[1], 10.0, 10.0, 40_000);
+    assert!((back.sample(5.0, 6.0) - before.sample(5.0, 6.0)).abs() < 0.02, "undone in one step");
+}
+
+#[test]
+fn a_vector_is_spun_into_a_component() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let app = h.state_mut();
+    let arc = app.doc.add_vector(vec![crate::geom::Path { pts: vec![[2.0, 2.0], [3.0, 2.4], [4.0, 2.0]], closed: false }], Prim::Free);
+    app.selected = vec![arc];
+    app.open_turn_spin();
+    let form = crate::modeltools::TurnForm { turn: false, scale_to_height: true, height: 0.3, ..app.turn_form.unwrap() };
+    let comps = app.doc.components.len();
+    assert!(app.turn_spin(form));
+    assert_eq!(app.doc.components.len(), comps + 1);
+    let c = app.doc.components.last().unwrap();
+    assert!((c.height - 0.3).abs() < 1e-3, "scaled to the height asked: {}", c.height);
+    app.selected.clear();
+    assert!(!app.turn_spin(form));
+    assert!(app.message.is_some());
+}
+
+#[test]
+fn draft_is_added_as_a_new_component() {
+    let mut h = harness();
+    h.state_mut().load_sample();
+    h.run();
+    let app = h.state_mut();
+    app.open_draft_model();
+    assert_eq!(app.draft_angle, Some(crate::modeltools::DRAFT_ANGLE));
+    let comps = app.doc.components.len();
+    assert!(app.draft_model(20.0));
+    assert_eq!(app.doc.components.len(), comps + 1);
+    assert_eq!(app.doc.components.last().unwrap().name, "Model With 20.0° Draft");
+    assert_eq!(app.last_draft_angle, Some(20.0));
+    app.do_undo();
+    assert_eq!(app.doc.components.len(), comps);
+    app.doc.components.clear();
+    app.model_dirty = true;
+    app.draft_angle = None;
+    app.open_draft_model();
+    assert!(app.draft_angle.is_none() && app.message.is_some());
+}
+
+#[test]
+fn a_component_is_made_from_the_carve_preview() {
+    let mut h = harness();
+    h.state_mut().load_sample();
+    h.run();
+    let app = h.state_mut();
+    app.doc.components.clear();
+    app.model_dirty = true;
+    assert!(!app.component_from_preview(), "no preview yet");
+    assert!(app.message.take().is_some());
+    let j = app.doc.job.clone();
+    let mut sim = crate::relief::Sim::new(j.width, j.height, j.thickness, 40_000);
+    let g = &mut sim.grid;
+    for iy in 0..g.ny {
+        for ix in 0..g.nx {
+            let (x, y) = (ix as f64 * g.cell, iy as f64 * g.cell);
+            if (2.0..=4.0).contains(&x) && (2.0..=4.0).contains(&y) {
+                g.data[iy * g.nx + ix] = -0.3;
+            }
+        }
+    }
+    app.sim = Some(sim);
+    // The model's zero at the material's top: everything carved is below it.
+    app.doc.machine.gap_below = None;
+    app.doc.machine.gap_above = 0.0;
+    assert!(!app.component_from_preview());
+    assert!(app.message.take().is_some());
+    // Its zero 0.1 above the bottom: the pocket floor stands 0.1 above it, the uncut top is left out.
+    app.doc.machine.gap_below = Some(0.1);
+    assert!(app.component_from_preview());
+    let c = app.doc.components.last().unwrap();
+    assert_eq!(c.name, "Toolpath Preview");
+    let grid = crate::relief::component_height(c, j.width, j.height, 40_000);
+    assert!((grid.sample(3.0, 3.0) - 0.1).abs() < 1e-3, "{}", grid.sample(3.0, 3.0));
+    assert_eq!(grid.sample(7.0, 7.0), 0.0, "uncut, with no model: nothing");
+}
+
+#[test]
+fn the_model_is_sliced_into_hidden_components_and_boundaries() {
+    let mut h = harness();
+    h.state_mut().load_sample();
+    h.run();
+    let app = h.state_mut();
+    let top = app.model_top().unwrap();
+    // As thick as the model: nothing to slice.
+    app.doc.job.thickness = top + 0.1;
+    app.open_slice_model();
+    assert!(app.slice_form.is_none() && app.message.take().is_some());
+    app.doc.job.thickness = top / 2.5;
+    app.open_slice_model();
+    let form = app.slice_form.expect("the form opens");
+    assert!(form.count >= 3 && !form.by_count);
+    let (comps, layers) = (app.doc.components.len(), app.doc.layers.len());
+    assert!(app.slice_model(form));
+    let slices: Vec<_> = app.doc.components[comps..].iter().collect();
+    assert_eq!(slices.len(), form.count, "one per slice");
+    assert!(slices.iter().all(|c| !c.visible) && slices[0].name == "Slice 1");
+    assert!(slices.iter().all(|c| c.height <= top / 2.5 + 1e-3), "none thicker than the material");
+    assert!(app.doc.layers.len() > layers && app.doc.layers.iter().any(|l| l.name == "Slice 1"));
+    app.do_undo();
+    assert_eq!(app.doc.components.len(), comps);
+    // By number: three slices of a third each.
+    let three = crate::modeltools::SliceForm { by_count: true, count: 3, boundaries: false, ..form };
+    assert!(app.slice_model(three));
+    assert_eq!(app.doc.components.len(), comps + 3);
+}
+
+#[test]
+fn an_offset_model_is_added_as_a_new_component() {
+    let mut h = harness();
+    h.state_mut().load_sample();
+    h.run();
+    let app = h.state_mut();
+    let comps = app.doc.components.len();
+    app.open_offset_model();
+    assert_eq!(app.offset_form.map(|f| f.distance), Some(crate::modeltools::OFFSET_DISTANCE_INCH), "inches at first");
+    assert!(!app.offset_model(2.0), "more than 10% of 10 inches");
+    assert!(app.message.take().unwrap().contains("10%"));
+    let top = app.model_top().unwrap();
+    assert!(app.offset_model(0.125));
+    assert_eq!(app.doc.components.len(), comps + 1);
+    let c = app.doc.components.last().unwrap();
+    assert_eq!(c.name, "Model With 0.125 Offset");
+    assert!((c.height - (top + 0.125)).abs() < 0.01, "{} {}", c.height, top);
+    app.model_dirty = true;
+    assert!((app.model_top().unwrap() - (top + 0.125)).abs() < 0.01, "it shows above the rest");
+    app.do_undo();
+    assert_eq!(app.doc.components.len(), comps);
+    app.doc.components.clear();
+    app.model_dirty = true;
+    app.offset_form = None;
+    app.open_offset_model();
+    assert!(app.offset_form.is_none() && app.message.is_some(), "nothing to offset");
+}
+
+#[test]
+fn a_component_is_split_in_two_by_a_vector() {
+    let mut h = harness();
+    h.state_mut().load_sample();
+    h.run();
+    let app = h.state_mut();
+    let comps = app.doc.components.len();
+    let height = |app: &crate::app::App, i: usize, at: [f64; 2]| crate::relief::component_height(&app.doc.components[i], 10.0, 10.0, 40_000).sample(at[0], at[1]);
+    let (left, right) = ([4.0, 6.0], [6.0, 6.0]);
+    assert!(height(app, 1, left) > 0.0 && height(app, 1, right) > 0.0);
+    // Without exactly one vector, it says how to choose.
+    app.selected_comp = Some(1);
+    app.selected = Vec::new();
+    app.split_component();
+    assert!(app.message.take().is_some());
+    assert_eq!(app.doc.components.len(), comps);
+    // A line that misses it makes nothing.
+    let aside = app.doc.add_vector(vec![crate::geom::Path { pts: vec![[0.5, 0.5], [0.5, 9.5]], closed: false }], Prim::Free);
+    app.selected = vec![aside];
+    app.split_component();
+    assert!(app.message.take().is_some(), "not two areas");
+    // An open line straight across the disc: a left part and a right one.
+    let line = app.doc.add_vector(vec![crate::geom::Path { pts: vec![[5.0, 2.0], [5.0, 9.9]], closed: false }], Prim::Free);
+    app.selected = vec![line];
+    let before = height(app, 1, left);
+    app.split_component();
+    assert!(app.message.is_none(), "{:?}", app.message);
+    assert_eq!(app.doc.components.len(), comps + 1);
+    let (a, b) = (height(app, 1, left), height(app, 1, right));
+    let (c, d) = (height(app, 2, left), height(app, 2, right));
+    assert!((a > 0.0) != (b > 0.0) && (c > 0.0) != (d > 0.0) && (a > 0.0) != (c > 0.0), "{a} {b} {c} {d}");
+    assert!((a.max(c) - before).abs() < 1e-3, "the heights stay");
+    assert!(app.doc.components[2].name.ends_with("(2)"));
+    // A closed square: what's inside, then the rest.
+    let part = if a > 0.0 { 1 } else { 2 };
+    let square = app.doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([4.0, 6.0], 0.8, 0.8, 0.0))], Prim::Free);
+    app.selected = vec![square];
+    app.selected_comp = Some(part);
+    app.split_component();
+    assert_eq!(app.doc.components.len(), comps + 2);
+    assert!(height(app, part, [4.0, 6.0]) > 0.0 && height(app, part, [3.2, 6.0]) == 0.0, "inside first");
+    assert!(height(app, part + 1, [3.2, 6.0]) > 0.0 && height(app, part + 1, [4.0, 6.0]) == 0.0, "then outside");
+    // Undone in one step.
+    app.do_undo();
+    assert_eq!(app.doc.components.len(), comps + 1);
+}
+
+/// For looking into how far raster rows sit from the original's: BURIN_JOBS=<folder> cargo test raster_rows_against -- --nocapture
+#[test]
+fn raster_rows_against_saved_jobs() {
+    let Ok(dir) = std::env::var("BURIN_JOBS") else { return };
+    let mut files = Vec::new();
+    let mut todo = vec![std::path::PathBuf::from(dir)];
+    while let Some(d) = todo.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() { todo.push(p) } else if p.extension().is_some_and(|x| x == "crv3d") { files.push(p) }
+        }
+    }
+    for file in files {
+        let mut app = App::default();
+        if app.open_project(&file).is_err() { continue }
+        for t in &app.doc.toolpaths {
+            if t.op.kind != crate::toolpath::OpKind::Pocket || !t.op.raster { continue }
+            let Some(saved) = &t.kept_moves else { continue };
+            let step = if t.op.stepover > 0.0 { t.op.stepover } else { t.op.tool.dia * t.op.tool.stepover };
+            let (s, k) = t.op.raster_angle.to_radians().sin_cos();
+            let normal = [-s, k];
+            let dir = [k, s];
+            // Rows: cutting moves that run along the row direction.
+            let mut ns: Vec<f64> = saved.windows(2).filter(|w| !w[1].rapid && {
+                let d = [w[1].p[0] - w[0].p[0], w[1].p[1] - w[0].p[1]];
+                let len = d[0].hypot(d[1]);
+                len > step * 0.5 && ((d[0] * dir[0] + d[1] * dir[1]).abs() / len) > 0.9999
+            }).map(|w| w[1].p[0] * normal[0] + w[1].p[1] * normal[1]).collect();
+            ns.sort_by(f64::total_cmp);
+            ns.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
+            if ns.len() < 2 { continue }
+            let phase = |v: f64| v.rem_euclid(step);
+            let (lo, hi) = crate::geom::bbox(&t.op.paths).unwrap();
+            let radius = t.op.tool.dia / 2.0 + t.op.allowance;
+            let extra = if t.op.profile_pass == crate::toolpath::ProfilePass::None { 0.0 } else { t.op.raster_allowance.abs() };
+            let first_for = |lo: [f64; 2], hi: [f64; 2]| {
+                let c = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+                let reach = (hi[0] - c[0]).hypot(hi[1] - c[1]) * 1.05;
+                c[0] * normal[0] + c[1] * normal[1] - reach
+            };
+            let inset = |d: f64| first_for([lo[0] + d, lo[1] + d], [hi[0] - d, hi[1] - d]);
+            println!("{} | {} | angle {} step {:.4} dia {:.4} allow {:.4} rallow {:.4} pass {:?} rows {}", file.file_name().unwrap().to_string_lossy(), t.op.name, t.op.raster_angle, step, t.op.tool.dia, t.op.allowance, t.op.raster_allowance, t.op.profile_pass, ns.len());
+            println!("   saved first {:.4} phase {:.4} | box lo {:?} hi {:?}", ns[0], phase(ns[0]), lo, hi);
+            for (name, v) in [("raw", inset(0.0)), ("radius", inset(radius)), ("clear", inset(radius + extra)), ("dia", inset(t.op.tool.dia))] {
+                println!("   {name:7} first {:.4} phase {:.4}", v, phase(v));
+            }
+            let shown: Vec<String> = ns.iter().take(12).map(|v| format!("{v:.4}({:.4})", phase(*v))).collect();
+            println!("   rows {}", shown.join(" "));
+            // The phase most rows share, in tenths of a millimetre.
+            let mut counts = std::collections::BTreeMap::new();
+            for v in &ns {
+                *counts.entry((phase(*v) * 1000.0).round() as i64).or_insert(0) += 1;
+            }
+            let mut by: Vec<_> = counts.into_iter().collect();
+            by.sort_by_key(|(_, n)| -(*n as i64));
+            println!("   phases {:?}", &by[..by.len().min(4)]);
+            let mine = crate::toolpath::generate(&t.op, app.doc.machine_on_job(), &crate::toolpath::JobSize { width: app.doc.job.width, height: app.doc.job.height, thickness: app.doc.job.thickness }, None).unwrap_or_default();
+            let mut ms: Vec<f64> = mine.windows(2).filter(|w| !w[1].rapid && {
+                let d = [w[1].p[0] - w[0].p[0], w[1].p[1] - w[0].p[1]];
+                let len = d[0].hypot(d[1]);
+                len > step * 2.0 && ((d[0] * dir[0] + d[1] * dir[1]).abs() / len) > 0.9999
+            }).map(|w| w[1].p[0] * normal[0] + w[1].p[1] * normal[1]).collect();
+            ms.sort_by(f64::total_cmp);
+            ms.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
+            let shown: Vec<String> = ms.iter().take(12).map(|v| format!("{v:.4}({:.4})", phase(*v))).collect();
+            println!("   burin {}", shown.join(" "));
+            let hops = |m: &[crate::toolpath::Move]| m.windows(2).filter(|w| w[1].rapid && !w[0].rapid).count();
+            println!("   hops saved {} burin {}", hops(saved), hops(&mine));
+            let at = |m: &[crate::toolpath::Move]| m.windows(2).filter(|w| w[1].rapid && !w[0].rapid).map(|w| format!("{:.2},{:.2}", w[0].p[0], w[0].p[1])).take(14).collect::<Vec<_>>().join(" ");
+            println!("   saved at {}", at(saved));
+            println!("   burin at {}", at(&mine));
+        }
+    }
+}
+
+/// Per pocket: BURIN_JOBS=<folder> cargo test raster_rows_by_pocket -- --nocapture
+#[test]
+fn raster_rows_by_pocket() {
+    let Ok(dir) = std::env::var("BURIN_JOBS") else { return };
+    let mut files = Vec::new();
+    let mut todo = vec![std::path::PathBuf::from(dir)];
+    while let Some(d) = todo.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() { todo.push(p) } else if p.extension().is_some_and(|x| x == "crv3d") { files.push(p) }
+        }
+    }
+    for file in files {
+        let mut app = App::default();
+        if app.open_project(&file).is_err() { continue }
+        for t in &app.doc.toolpaths {
+            if t.op.kind != crate::toolpath::OpKind::Pocket || !t.op.raster || t.op.raster_angle != 0.0 { continue }
+            let Some(saved) = &t.kept_moves else { continue };
+            let step = if t.op.stepover > 0.0 { t.op.stepover } else { t.op.tool.dia * t.op.tool.stepover };
+            let radius = t.op.tool.dia / 2.0 + t.op.allowance;
+            let extra = if t.op.profile_pass == crate::toolpath::ProfilePass::None { 0.0 } else { t.op.raster_allowance.abs() };
+            println!("{} | {} | step {step} radius {radius} extra {extra}", file.file_name().unwrap().to_string_lossy(), t.op.name);
+            let whole = crate::geom::bbox(&t.op.paths).unwrap();
+            for (k, outer) in t.op.paths.iter().enumerate().filter(|(_, p)| p.closed) {
+                let (lo, hi) = crate::geom::bbox(std::slice::from_ref(outer)).unwrap();
+                // Rows whose middle is in this outline's box and inside it.
+                let mut ys: Vec<f64> = saved.windows(2).filter(|w| !w[1].rapid && (w[1].p[1] - w[0].p[1]).abs() < 1e-6 && (w[1].p[0] - w[0].p[0]).abs() > step * 0.5).filter_map(|w| {
+                    let m = [(w[0].p[0] + w[1].p[0]) / 2.0, w[0].p[1]];
+                    (m[0] > lo[0] && m[0] < hi[0] && m[1] > lo[1] && m[1] < hi[1] && crate::geom::inside_even_odd(std::slice::from_ref(outer), m)).then_some(m[1])
+                }).collect();
+                ys.sort_by(f64::total_cmp);
+                ys.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
+                if ys.len() < 3 { continue }
+                let ph = |v: f64| v.rem_euclid(step);
+                let mut counts = std::collections::BTreeMap::new();
+                for v in &ys { *counts.entry((ph(*v) * 1000.0).round() as i64).or_insert(0) += 1; }
+                let best = counts.iter().max_by_key(|(_, n)| **n).map(|(p, _)| *p as f64 / 1000.0).unwrap();
+                let pred = |lo: [f64; 2], hi: [f64; 2], d: f64, f: f64| {
+                    let (lo, hi) = ([lo[0] + d, lo[1] + d], [hi[0] - d, hi[1] - d]);
+                    let c = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+                    ph(c[1] - (hi[0] - c[0]).hypot(hi[1] - c[1]) * f)
+                };
+                let offset_box = |level: f64| {
+                    let field = crate::geom::Field::build_to(std::slice::from_ref(outer), t.op.tool.dia, 900, t.op.tool.dia / 64.0)?;
+                    let loops: Vec<crate::geom::Path> = field.contours(level).into_iter().map(crate::geom::Path::closed).collect();
+                    crate::geom::bbox(&loops)
+                };
+                for t in [0.0, 0.01, 0.0254, 0.05] {
+                    if let Some((a, b)) = offset_box(radius + extra - t) {
+                        println!("    off-clear-{t} pred+half {:.4} (saved {best:.4})", (pred(a, b, 0.0, 1.05) + step / 2.0).rem_euclid(step));
+                    }
+                }
+                println!("  path {k} box {:.3},{:.3} {:.3},{:.3} rows {} saved phase {best:.4} | own raw {:.4} rad {:.4} clear {:.4} | whole clear {:.4} | lo+rad {:.4} lo+clear {:.4} centre {:.4}",
+                    lo[0], lo[1], hi[0], hi[1], ys.len(), pred(lo, hi, 0.0, 1.05), pred(lo, hi, radius, 1.05), pred(lo, hi, radius + extra, 1.05), pred(whole.0, whole.1, radius + extra, 1.05), ph(lo[1] + radius), ph(lo[1] + radius + extra), ph((lo[1] + hi[1]) / 2.0));
+            }
+        }
+    }
+}
+
+/// Rapid travel of Shortest Path toolpaths against saved jobs: BURIN_JOBS=<folder> cargo test shortest_travel_against -- --nocapture
+#[test]
+fn shortest_travel_against_saved_jobs() {
+    let Ok(dir) = std::env::var("BURIN_JOBS") else { return };
+    let mut files = Vec::new();
+    let mut todo = vec![std::path::PathBuf::from(dir)];
+    while let Some(d) = todo.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() { todo.push(p) } else if p.extension().is_some_and(|x| x == "crv3d") { files.push(p) }
+        }
+    }
+    files.sort();
+    let travel = |m: &[crate::toolpath::Move]| m.windows(2).filter(|w| w[1].rapid).map(|w| (w[1].p[0] - w[0].p[0]).hypot(w[1].p[1] - w[0].p[1])).sum::<f64>();
+    let (mut total_saved, mut total_mine, mut n, mut shorter) = (0.0, 0.0, 0, 0);
+    let (mut plunge_total, mut plunge_same) = (0, 0);
+    let started = std::time::Instant::now();
+    let mut kinds = std::collections::BTreeMap::new();
+    for file in files {
+        let mut app = App::default();
+        if app.open_project(&file).is_err() { continue }
+        for t in &app.doc.toolpaths {
+            *kinds.entry(format!("{:?} {:?}", t.op.order_choices.map(|c| (c.selection, c.left_to_right, c.bottom_to_top, c.grid, c.shortest)), t.op.order)).or_insert(0) += 1;
+            let Some(c) = t.op.order_choices else { continue };
+            // Only those whose shapes were all found: the others keep their saved moves.
+            if c.selection || c.shortest || t.op.kind == crate::toolpath::OpKind::Pocket || t.op.source.is_empty() { continue }
+            let Some(saved) = &t.kept_moves else { continue };
+            let job = crate::toolpath::JobSize { width: app.doc.job.width, height: app.doc.job.height, thickness: app.doc.job.thickness };
+            let Ok(mine) = crate::toolpath::generate(&t.op, app.doc.machine_on_job(), &job, None) else { continue };
+            let (a, b) = (travel(saved), travel(&mine));
+            total_saved += a;
+            total_mine += b;
+            n += 1;
+            if b <= a + 1.0 { shorter += 1 }
+            // Plunges in turn: the first point of each cut after a rapid.
+            let plunges = |m: &[crate::toolpath::Move]| m.windows(2).filter(|w| w[0].rapid && !w[1].rapid).map(|w| [w[1].p[0], w[1].p[1]]).collect::<Vec<_>>();
+            let (ps, pm) = (plunges(saved), plunges(&mine));
+            let same = ps.iter().zip(&pm).filter(|(a, b)| (a[0] - b[0]).hypot(a[1] - b[1]) < 1.0).count();
+            plunge_total += ps.len();
+            plunge_same += same;
+            if ps.len() > 3 && same * 2 < ps.len() {
+                println!("{} | {} | {:?} | plunges {} same {} | saved {a:.0} burin {b:.0}", file.file_name().unwrap().to_string_lossy(), t.op.name, t.op.kind, ps.len(), same);
+                let show = |v: &[[f64; 2]]| v.iter().take(6).map(|p| format!("{:.0},{:.0}", p[0], p[1])).collect::<Vec<_>>().join(" ");
+                println!("   saved {}\n   burin {}", show(&ps), show(&pm));
+                println!("   first saved {:?} first burin {:?} home {:?} job {}x{} datum {:?}", saved.first().map(|m| m.p), mine.first().map(|m| m.p), app.doc.machine.home, app.doc.job.width, app.doc.job.height, app.doc.job.datum);
+            }
+
+        }
+    }
+    println!("plunges at the same place in turn: {plunge_same} of {plunge_total}");
+    println!("{n} toolpaths: saved {total_saved:.0} mm, burin {total_mine:.0} mm ({:+.1}%), {shorter} as short or shorter, in {:?}", (total_mine / total_saved - 1.0) * 100.0, started.elapsed());
+}
+
+/// One toolpath's moves, for looking closely: BURIN_JOB=<file> BURIN_TP=<name> cargo test one_toolpath_moves -- --nocapture
+#[test]
+fn one_toolpath_moves() {
+    let (Ok(file), Ok(name)) = (std::env::var("BURIN_JOB"), std::env::var("BURIN_TP")) else { return };
+    let mut app = App::default();
+    app.open_project(std::path::Path::new(&file)).unwrap();
+    let t = app.doc.toolpaths.iter().find(|t| t.op.name == name).unwrap();
+    let job = crate::toolpath::JobSize { width: app.doc.job.width, height: app.doc.job.height, thickness: app.doc.job.thickness };
+    let mine = crate::toolpath::generate(&t.op, app.doc.machine_on_job(), &job, None).unwrap();
+    println!("home on job {:?}", app.doc.machine_on_job().home);
+    for (k, path) in t.op.paths.iter().enumerate() {
+        let (lo, hi) = crate::geom::bbox(std::slice::from_ref(path)).unwrap();
+        println!("  shape {k}: start {:?} closed {} box {:?} {:?}", path.pts[0].map(|v| v.round()), path.closed, lo.map(|v| v.round()), hi.map(|v| v.round()));
+    }
+    println!("shapes {} closed {} side {:?} order {:?} start_at {:?} cut {} pass {}", t.op.paths.len(), t.op.paths.iter().filter(|p| p.closed).count(), t.op.side, t.op.order_choices, t.op.start_at, t.op.cut_depth, t.op.tool.pass_depth);
+    for (label, m) in [("saved", t.kept_moves.as_ref().unwrap().as_slice()), ("burin", mine.as_slice())] {
+        let rapids = m.iter().filter(|x| x.rapid).count();
+        let zs: Vec<f64> = m.iter().filter(|x| x.rapid).map(|x| x.p[2]).collect();
+        let lowest = zs.iter().copied().fold(f64::MAX, f64::min);
+        println!("{label}: {} moves, {rapids} rapid, lowest rapid z {lowest:.3}", m.len());
+        for w in m.windows(2).filter(|w| w[0].rapid != w[1].rapid).take(16) {
+            println!("   {:?} -> {:?} ({})", w[0].p.map(|v| (v * 100.0).round() / 100.0), w[1].p.map(|v| (v * 100.0).round() / 100.0), if w[1].rapid { "lift" } else { "down" });
+        }
+    }
 }

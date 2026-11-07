@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use crate::platform::{Instant, SystemTime, UNIX_EPOCH};
 
 const FORMAT: &str = "burin-crash/1";
 const MOST_KEPT: usize = 20;
@@ -200,7 +200,7 @@ pub fn list_in(dir: &Path) -> Vec<Report> {
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .filter_map(|e| {
-            let text = std::fs::read_to_string(e.path()).ok()?;
+            let text = crate::platform::read_to_string(e.path()).ok()?;
             let mut report: Report = serde_json::from_str(&text).ok()?;
             report.file = e.path();
             Some(report)
@@ -212,7 +212,7 @@ pub fn list_in(dir: &Path) -> Vec<Report> {
 
 fn write(report: &Report) {
     if let Ok(text) = serde_json::to_string_pretty(report) {
-        let _ = std::fs::write(&report.file, text);
+        let _ = crate::platform::write(&report.file, text);
     }
 }
 

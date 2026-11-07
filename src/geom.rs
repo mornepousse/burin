@@ -1,6 +1,5 @@
 //! 2D geometry: shapes as polylines, distance fields, booleans, text outlines, DXF.
 
-use ab_glyph::{Font, FontRef, OutlineCurve};
 use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
@@ -223,9 +222,9 @@ impl Field {
         let segs: Vec<(P, P)> = closed.iter().flat_map(|p| p.segments()).collect();
         let mut d = vec![0f32; nx * ny];
         // One core is left for the window, so it stays alive on a modest computer.
-        let threads = std::thread::available_parallelism().map_or(3, |n| n.get().saturating_sub(1).max(1));
+        let threads = crate::platform::threads(true);
         let rows_per = ny.div_ceil(threads).max(1);
-        std::thread::scope(|s| {
+        crate::platform::scope(|s| {
             for (ci, chunk) in d.chunks_mut(nx * rows_per).enumerate() {
                 let segs = &segs;
                 s.spawn(move || {
@@ -421,92 +420,9 @@ pub fn boolean(subject: &[Path], clip: &[Path], op: BoolOp) -> Vec<Path> {
     shapes.into_iter().flatten().map(Path::closed).collect()
 }
 
-/// Letter outlines of `text`; `height` is the capital height, `origin` the start of the baseline.
+/// Letter outlines of `text` in Burin's own font; `height` is the capital height, `origin` the start of the baseline.
 pub fn text_paths(text: &str, height: f64, origin: P) -> Vec<Path> {
-    let Ok(font) = FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT) else {
-        return Vec::new();
-    };
-    let cap = font
-        .outline(font.glyph_id('H'))
-        .map(|o| {
-            let ys = o.curves.iter().flat_map(|c| match c {
-                OutlineCurve::Line(a, b) => vec![a.y, b.y],
-                OutlineCurve::Quad(a, c, b) => vec![a.y, c.y, b.y],
-                OutlineCurve::Cubic(a, c, d, b) => vec![a.y, c.y, d.y, b.y],
-            });
-            let (lo, hi) = ys.fold((f32::MAX, f32::MIN), |(l, h), y| (l.min(y), h.max(y)));
-            (hi - lo) as f64
-        })
-        .unwrap_or(700.0)
-        .max(1.0);
-    let k = height / cap;
-    let mut paths = Vec::new();
-    let mut x = 0.0;
-    let mut y = 0.0;
-    for ch in text.chars() {
-        if ch == '\n' {
-            x = 0.0;
-            y -= height * 1.5;
-            continue;
-        }
-        let id = font.glyph_id(ch);
-        if let Some(outline) = font.outline(id) {
-            let map = |p: ab_glyph::Point| [origin[0] + x + p.x as f64 * k, origin[1] + y + p.y as f64 * k];
-            let mut pts: Vec<P> = Vec::new();
-            let mut last: Option<ab_glyph::Point> = None;
-            for curve in &outline.curves {
-                let first = match curve {
-                    OutlineCurve::Line(a, _) | OutlineCurve::Quad(a, _, _) | OutlineCurve::Cubic(a, _, _, _) => *a,
-                };
-                if last.is_none_or(|l| (l.x - first.x).abs() + (l.y - first.y).abs() > 0.01) {
-                    if pts.len() >= 3 {
-                        paths.push(Path::closed(std::mem::take(&mut pts)));
-                    }
-                    pts.clear();
-                    pts.push(map(first));
-                }
-                match curve {
-                    OutlineCurve::Line(_, b) => {
-                        pts.push(map(*b));
-                        last = Some(*b);
-                    }
-                    OutlineCurve::Quad(a, c, b) => {
-                        for s in 1..=8 {
-                            let t = s as f32 / 8.0;
-                            let u = 1.0 - t;
-                            pts.push(map(ab_glyph::point(
-                                u * u * a.x + 2.0 * u * t * c.x + t * t * b.x,
-                                u * u * a.y + 2.0 * u * t * c.y + t * t * b.y,
-                            )));
-                        }
-                        last = Some(*b);
-                    }
-                    OutlineCurve::Cubic(a, c, d, b) => {
-                        for s in 1..=10 {
-                            let t = s as f32 / 10.0;
-                            let u = 1.0 - t;
-                            pts.push(map(ab_glyph::point(
-                                u * u * u * a.x + 3.0 * u * u * t * c.x + 3.0 * u * t * t * d.x + t * t * t * b.x,
-                                u * u * u * a.y + 3.0 * u * u * t * c.y + 3.0 * u * t * t * d.y + t * t * t * b.y,
-                            )));
-                        }
-                        last = Some(*b);
-                    }
-                }
-            }
-            if pts.len() >= 3 {
-                paths.push(Path::closed(pts));
-            }
-        }
-        x += font.h_advance_unscaled(id) as f64 * k;
-    }
-    // Font outlines repeat their first point at the end.
-    for p in &mut paths {
-        if p.pts.len() > 3 && p.pts.first() == p.pts.last() {
-            p.pts.pop();
-        }
-    }
-    paths
+    crate::fonts::text_paths(text, height, origin, &crate::fonts::TextStyle::default())
 }
 
 /// Reads LINE, ARC, CIRCLE, LWPOLYLINE and POLYLINE entities. Touching lines stay separate paths.

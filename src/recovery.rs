@@ -4,7 +4,7 @@
 use crate::app::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use crate::platform::Instant;
 
 const EVERY_SECONDS: u64 = 120;
 const COPY: &str = "recovery.burin";
@@ -24,7 +24,7 @@ pub fn find(data: &Path) -> Option<Found> {
     let file = data.join(COPY);
     let modified = std::fs::metadata(&file).ok()?.modified().ok()?;
     let seconds = modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
-    let project = std::fs::read_to_string(data.join(WHERE_IT_WAS)).ok().filter(|p| !p.trim().is_empty()).map(|p| PathBuf::from(p.trim()));
+    let project = crate::platform::read_to_string(data.join(WHERE_IT_WAS)).ok().filter(|p| !p.trim().is_empty()).map(|p| PathBuf::from(p.trim()));
     Some(Found { file, project, saved_at: crate::crash::stamp(seconds) })
 }
 
@@ -38,9 +38,9 @@ pub fn write(data: &Path, doc: &Doc, project: Option<&Path>) -> Result<(), Strin
     std::fs::create_dir_all(data).map_err(|e| e.to_string())?;
     let text = serde_json::to_string(doc).map_err(|e| e.to_string())?;
     let beside = data.join("recovery.saving");
-    std::fs::write(&beside, text).map_err(|e| e.to_string())?;
+    crate::platform::write(&beside, text).map_err(|e| e.to_string())?;
     std::fs::rename(&beside, data.join(COPY)).map_err(|e| e.to_string())?;
-    std::fs::write(data.join(WHERE_IT_WAS), project.map_or(String::new(), |p| p.to_string_lossy().to_string())).map_err(|e| e.to_string())
+    crate::platform::write(data.join(WHERE_IT_WAS), project.map_or(String::new(), |p| p.to_string_lossy().to_string())).map_err(|e| e.to_string())
 }
 
 impl App {
@@ -68,7 +68,7 @@ impl App {
                 WRITING.store(false, Ordering::Relaxed);
             };
             if self.surface_in_background {
-                std::thread::spawn(run);
+                crate::platform::spawn(run);
             } else {
                 run();
             }
@@ -77,7 +77,7 @@ impl App {
 
     /// Back to where the work was: unsaved, and still under its own file's name.
     pub fn restore_recovery(&mut self, found: &Found) -> Result<(), String> {
-        let text = std::fs::read_to_string(&found.file).map_err(|e| e.to_string())?;
+        let text = crate::platform::read_to_string(&found.file).map_err(|e| e.to_string())?;
         let doc: Doc = serde_json::from_str(&text).map_err(|e| e.to_string())?;
         self.doc = doc;
         self.reset_state();

@@ -9,7 +9,8 @@ use egui::{vec2, Color32, Id, RichText};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use crate::platform::Instant;
+use std::time::Duration;
 
 /// One toolpath to work out: its place in the list, and its settings.
 pub type Task = (usize, Op);
@@ -66,7 +67,7 @@ impl App {
         let model = if needs_model { self.model.clone() } else { None };
         let stopped = stop.clone();
         let names = tasks.first().map_or(String::new(), |(_, op)| op.name.clone());
-        std::thread::spawn(move || {
+        crate::platform::spawn(move || {
             for (at, op) in tasks {
                 if stopped.load(Ordering::Relaxed) || send.send(Message::Starting(op.name.clone())).is_err() {
                     return;

@@ -285,7 +285,7 @@ impl App {
         let stroke = Stroke::new(1.6, colour);
         let at = self.to_screen(hit.at);
         for from in hit.along.iter().flatten() {
-            painter.extend(Shape::dashed_line(&[self.to_screen(*from), at], Stroke::new(1.0, colour), 4.0, 3.0));
+            painter.extend(crate::canvas::dashed_within(&[self.to_screen(*from), at], Stroke::new(1.0, colour), 4.0, 3.0, painter.clip_rect()));
         }
         let r = 5.0;
         match hit.kind {
@@ -331,7 +331,7 @@ impl App {
                 let y = self.to_screen([0.0, g.at]).y.round() + 0.5;
                 [pos2(rect.left(), y), pos2(rect.right(), y)]
             };
-            painter.extend(Shape::dashed_line(&ends, stroke, 8.0, 4.0));
+            painter.extend(crate::canvas::dashed_within(&ends, stroke, 8.0, 4.0, painter.clip_rect()));
         }
     }
 

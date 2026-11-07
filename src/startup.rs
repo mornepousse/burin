@@ -24,6 +24,7 @@ impl Engine {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn options(self, base: eframe::NativeOptions) -> eframe::NativeOptions {
         use eframe::egui_wgpu::{wgpu, WgpuSetupCreateNew};
         let mut options = base;
@@ -132,7 +133,7 @@ pub fn stopped_before(log: &str, version: &str) -> Vec<Engine> {
 
 /// What the last start left behind, for choosing how to start now. To be read before `begin_log`.
 pub fn previous_log() -> String {
-    log_file().and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default()
+    log_file().and_then(|f| crate::platform::read_to_string(f).ok()).unwrap_or_default()
 }
 
 /// A new log for this start, naming the program and the system.
@@ -141,7 +142,7 @@ pub fn begin_log() {
     if let Some(dir) = file.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(file, format!("Burin {} on {} {}\n", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH));
+    let _ = crate::platform::write(file, format!("Burin {} on {} {}\n", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH));
     log(&system_line());
     #[cfg(windows)]
     native_crash::catch();
@@ -270,7 +271,9 @@ pub fn failure_text(started: bool, reasons: &[String]) -> String {
 
 pub fn show_failure(text: &str) {
     eprintln!("{text}");
+    #[cfg(not(target_arch = "wasm32"))]
     let answer = rfd::MessageDialog::new().set_level(rfd::MessageLevel::Error).set_title("Burin").set_description(text).set_buttons(rfd::MessageButtons::Ok).show();
+    #[cfg(not(target_arch = "wasm32"))]
     log(&format!("Message box closed: {answer:?}"));
 }
 

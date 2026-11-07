@@ -16,3 +16,4 @@
 dist
 !/release/burin.svg
 /demo/
+dist-web
