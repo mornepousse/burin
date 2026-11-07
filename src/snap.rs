@@ -130,7 +130,7 @@ impl App {
     fn snap_skips(&self) -> Vec<u64> {
         match &self.drag {
             Drag::Move { .. } => self.moving_ids(),
-            Drag::Scale { .. } => self.selected.clone(),
+            Drag::Scale { .. } | Drag::Rotate { .. } | Drag::RotateCentre => self.selected.clone(),
             Drag::Node { id, .. } => vec![*id],
             Drag::Sketch { elem, .. } => vec![elem.vector_id()],
             _ => Vec::new(),
@@ -275,7 +275,7 @@ impl App {
     /// Shows what the pointer is catching on, while drawing or dragging.
     pub(crate) fn paint_snap(&self, painter: &Painter) {
         let drawing = matches!(self.left, LeftForm::Draw(_));
-        let dragging = matches!(self.drag, Drag::Move { .. } | Drag::Scale { .. } | Drag::Node { .. } | Drag::Draw { .. } | Drag::Measure { .. } | Drag::Envelope(_) | Drag::Sketch { .. });
+        let dragging = matches!(self.drag, Drag::Move { .. } | Drag::Scale { .. } | Drag::RotateCentre | Drag::Node { .. } | Drag::Draw { .. } | Drag::Measure { .. } | Drag::Envelope(_) | Drag::Sketch { .. });
         if !(drawing || dragging) {
             return;
         }

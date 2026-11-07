@@ -431,38 +431,7 @@ impl Doc {
         }
         let metric = units == Units::Mm;
         for tp in &mut self.toolpaths {
-            let o = &mut tp.op;
-            o.tool = o.tool.in_units(metric);
-            o.clearance_tool = o.clearance_tool.as_ref().map(|t| t.in_units(metric));
-            o.stepover *= k;
-            o.retract_gap *= k;
-            o.boundary_offset *= k;
-            o.gap *= k;
-            o.tex_cut = [o.tex_cut[0] * k, o.tex_cut[1] * k];
-            o.tex_length = [o.tex_length[0] * k, o.tex_length[1] * k];
-            scale_paths(&mut o.paths);
-            o.start_depth *= k;
-            o.cut_depth *= k;
-            o.allowance *= k;
-            o.raster_allowance *= k;
-            o.last_thickness *= k;
-            o.last_allowance *= k;
-            o.tab_length *= k;
-            o.tab_thickness *= k;
-            o.ramp_distance *= k;
-            o.lead_distance *= k;
-            o.flat_depth *= k;
-            o.chamfer_width *= k;
-            o.lead_radius *= k;
-            o.ramp_angle_limit *= k;
-            o.overcut *= k;
-            for p in &mut o.passes {
-                *p *= k;
-            }
-            if let Some(f) = &mut o.selector {
-                f.diameter *= k;
-                f.tolerance *= k;
-            }
+            op_in_units(&mut tp.op, k, metric);
             tp.moves = Arc::new(tp.moves.iter().map(|m| Move { p: [m.p[0] * k, m.p[1] * k, m.p[2] * k], rapid: m.rapid }).collect());
             if tp.kept_moves.is_some() {
                 tp.kept_moves = Some(tp.moves.clone());
@@ -1136,6 +1105,11 @@ pub struct App {
     /// The form for merging the visible toolpaths, and what it was last set to.
     pub merge_form: Option<crate::merge::MergeForm>,
     pub merge_choices: crate::merge::MergeChoices,
+    /// Where the selection turns about, once moved away from its middle.
+    pub rotate_centre: Option<(Vec<u64>, P)>,
+    /// A template waiting for a decision on the layers it needs.
+    pub template_waiting: Option<crate::templates::Waiting>,
+    pub support_open: bool,
     pub recent_wanted: Option<PathBuf>,
     /// The picture on the first screen, once it has been shown.
     pub start_logo: Option<egui::TextureHandle>,
@@ -1346,6 +1320,9 @@ impl Default for App {
             prefs_open: false,
             merge_form: None,
             merge_choices: Default::default(),
+            rotate_centre: None,
+            template_waiting: None,
+            support_open: false,
             recent_wanted: None,
             start_logo: None,
             save_piece: None,
@@ -2517,6 +2494,8 @@ impl App {
                         unchanged += 1;
                     }
                 }
+                // A template's toolpath with no shapes yet waits for them to be chosen.
+                None if tp.op.paths.is_empty() && !tp.op.kind.uses_model() => no_shapes += 1,
                 None => tasks.push((i, tp.op.clone())),
             }
         }
@@ -2835,6 +2814,44 @@ impl App {
     }
 }
 
+
+/// A toolpath's settings in the other unit: `k` is what lengths are multiplied by.
+pub(crate) fn op_in_units(o: &mut toolpath::Op, k: f64, metric: bool) {
+    o.tool = o.tool.in_units(metric);
+    o.clearance_tool = o.clearance_tool.as_ref().map(|t| t.in_units(metric));
+    o.stepover *= k;
+    o.retract_gap *= k;
+    o.boundary_offset *= k;
+    o.gap *= k;
+    o.tex_cut = [o.tex_cut[0] * k, o.tex_cut[1] * k];
+    o.tex_length = [o.tex_length[0] * k, o.tex_length[1] * k];
+    for p in o.paths.iter_mut().flat_map(|p| p.pts.iter_mut()) {
+        p[0] *= k;
+        p[1] *= k;
+    }
+    o.start_depth *= k;
+    o.cut_depth *= k;
+    o.allowance *= k;
+    o.raster_allowance *= k;
+    o.last_thickness *= k;
+    o.last_allowance *= k;
+    o.tab_length *= k;
+    o.tab_thickness *= k;
+    o.ramp_distance *= k;
+    o.lead_distance *= k;
+    o.flat_depth *= k;
+    o.chamfer_width *= k;
+    o.lead_radius *= k;
+    o.ramp_angle_limit *= k;
+    o.overcut *= k;
+    for p in &mut o.passes {
+        *p *= k;
+    }
+    if let Some(f) = &mut o.selector {
+        f.diameter *= k;
+        f.tolerance *= k;
+    }
+}
 
 pub const TOOLPATH_COLOURS: [[u8; 3]; 6] = [
     [226, 92, 72],

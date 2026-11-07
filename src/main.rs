@@ -20,6 +20,9 @@ mod icons;
 mod keys;
 mod menus;
 mod merge;
+mod jobsheet;
+mod support;
+mod templates;
 mod opdialogs;
 mod panels;
 mod pieces;
@@ -50,6 +53,8 @@ struct Program {
     frames: u32,
     /// True while the window is being driven only by `--screenshot`.
     requested: bool,
+    engine: startup::Engine,
+    drawn: u32,
 }
 
 impl eframe::App for Program {
@@ -60,6 +65,11 @@ impl eframe::App for Program {
         let ctx = ui.ctx().clone();
         fit_scale(&ctx);
         self.app.frame(ui);
+        // Drawn more than once: this way of drawing works on this computer.
+        self.drawn = self.drawn.saturating_add(1);
+        if self.drawn == 3 {
+            startup::log(&format!("Drawing: {}", self.engine.word()));
+        }
         // Saving a picture of the 3D view from the preview panel.
         if let Some(path) = self.app.save_preview.take() {
             let area = self.app.view_rect;
@@ -680,6 +690,29 @@ fn open_state(app: &mut App, state: &str) {
             app.view3d = false;
             app.prefs_open = true;
         }
+        "rotate" => {
+            app.load_sample();
+            app.view3d = false;
+            app.right = RightMode::List;
+            let id = app.doc.vectors[0].id;
+            app.selected = vec![id];
+            app.handles_on = Some(vec![id]);
+        }
+        "support" => {
+            app.load_sample();
+            app.view3d = false;
+            app.support_open = true;
+        }
+        "missinglayers" => {
+            app.load_sample();
+            app.view3d = false;
+            let mut op = app.doc.toolpaths[0].op.clone();
+            op.name = "Rough cut".into();
+            op.selector = None;
+            op.paths.clear();
+            op.source.clear();
+            app.template_waiting = Some(templates::Waiting { items: vec![templates::Item { op, layer: Some("Outlines".into()), selector_layers: Vec::new() }], missing: vec!["Outlines".into()] });
+        }
         "merge" => {
             app.load_sample();
             app.view3d = false;
@@ -742,21 +775,29 @@ fn main() {
     let mut screenshot = None;
     let mut state = None;
     let mut asked = None;
+    let mut test_crash = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--screenshot" => screenshot = args.next().map(PathBuf::from),
             "--open" => state = args.next(),
             "--renderer" => asked = args.next(),
+            // Dies while opening with this way of drawing, to try out what happens next.
+            "--test-crash" => test_crash = args.next(),
             _ => {}
         }
     }
+    let avoid = startup::stopped_before(&startup::previous_log(), env!("CARGO_PKG_VERSION"));
     startup::begin_log();
     startup::log_panics();
     let mut reasons = Vec::new();
     for engine in startup::attempts(asked.as_deref()) {
+        if asked.is_none() && avoid.contains(&engine) {
+            startup::log(&format!("Avoiding: {}", engine.word()));
+            continue;
+        }
         startup::log(&format!("Trying: {}", engine.word()));
-        let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| open_window(engine, screenshot.clone(), state.clone())));
+        let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| open_window(engine, screenshot.clone(), state.clone(), test_crash.as_deref())));
         let reason = match opened {
             Ok(Ok(())) => return,
             Ok(Err(e)) => e.to_string(),
@@ -773,7 +814,8 @@ fn main() {
     std::process::exit(1);
 }
 
-fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Option<String>) -> eframe::Result {
+fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Option<String>, test_crash: Option<&str>) -> eframe::Result {
+    let crash_now = test_crash == Some(engine.word());
     let options = engine.options(eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_title("Burin").with_icon(icon()).with_inner_size([1910.0, 1040.0]).with_min_inner_size([900.0, 600.0]),
         ..Default::default()
@@ -782,7 +824,19 @@ fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Opti
         "Burin",
         options,
         Box::new(move |cc| {
+            if crash_now {
+                // On purpose: nothing below this line can be reached.
+                unsafe { std::ptr::null_mut::<u8>().write_volatile(1) };
+            }
             ui::setup_style(&cc.egui_ctx);
+            let adapter = cc.wgpu_render_state.as_ref().map(|s| s.adapter.get_info()).map(|i| format!("{} ({:?}, {:?}, driver {})", i.name, i.backend, i.device_type, i.driver));
+            let gl = cc.gl.as_ref().map(|gl| {
+                use eframe::glow::HasContext;
+                unsafe { gl.get_parameter_string(eframe::glow::RENDERER) }
+            });
+            if let Some(card) = adapter.or(gl) {
+                startup::log(&format!("Graphics card: {card}"));
+            }
             let mut app = App::default();
             // The picture to save has to be the finished one.
             app.surface_in_background = screenshot.is_none();
@@ -790,7 +844,7 @@ fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Opti
             if let Some(s) = &state {
                 open_state(&mut app, s);
             }
-            Ok(Box::new(Program { app, screenshot, frames: 0, requested: false }))
+            Ok(Box::new(Program { app, screenshot, frames: 0, requested: false, engine, drawn: 0 }))
         }),
     )
 }

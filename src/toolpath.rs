@@ -29,16 +29,22 @@ pub struct Tool {
     pub number: u32,
 }
 
-impl Tool {
-    pub fn label(&self) -> String {
-        let unit = if self.metric { "mm" } else { crate::i18n::tr("inch") };
-        let kind = match self.kind {
+impl ToolKind {
+    pub fn name(self) -> &'static str {
+        match self {
             ToolKind::EndMill => crate::i18n::tr("End Mill"),
             ToolKind::BallNose => crate::i18n::tr("Ball Nose"),
             ToolKind::VBit => crate::i18n::tr("V-Bit"),
             ToolKind::Drill => crate::i18n::tr("Drill"),
             ToolKind::Engraving => crate::i18n::tr("Engraving"),
-        };
+        }
+    }
+}
+
+impl Tool {
+    pub fn label(&self) -> String {
+        let unit = if self.metric { "mm" } else { crate::i18n::tr("inch") };
+        let kind = self.kind.name();
         match self.kind {
             ToolKind::VBit | ToolKind::Engraving => format!("{kind} ({:.0} deg {} {unit})", self.angle, trim(self.dia)),
             _ => format!("{kind} ({} {unit})", trim(self.dia)),
