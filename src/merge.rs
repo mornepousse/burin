@@ -122,10 +122,10 @@ impl App {
                 ui.label(RichText::new(tr(says)).color(theme::MUTED));
             }
             if !c.by_part {
-                ui.label(RichText::new(tr("Warning: cuts can change order, within a toolpath and between toolpaths.")).color(theme::ACCENT));
+                ui.label(RichText::new(tr("Warning: cuts can change order, within a toolpath and between toolpaths.")).color(theme::WARNING));
             }
             if let Some(first) = &rates {
-                ui.label(RichText::new(tf!("These toolpaths have different feed rates or spindle speeds. The merged toolpath uses those of the first: {}", first)).color(theme::ACCENT));
+                ui.label(RichText::new(tf!("These toolpaths have different feed rates or spindle speeds. The merged toolpath uses those of the first: {}", first)).color(theme::WARNING));
             }
             if let Some(problem) = &form.problem {
                 ui.label(RichText::new(problem).color(theme::ERROR));

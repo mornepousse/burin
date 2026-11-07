@@ -17,6 +17,7 @@ fn entry(ui: &mut Ui, label: &'static str, enabled: bool, key: Option<String>) -
         None => response,
     };
     if response.clicked() {
+        crate::crash::note(label);
         ui.close();
         true
     } else {
@@ -607,7 +608,9 @@ impl App {
             self.start_xform(Xform::Move);
         }
         ui.separator();
-        later(ui, "Notes");
+        if entry(ui, "Notes", true, None) {
+            self.notes_open = true;
+        }
         later(ui, "Document Variables");
         ui.menu_button(tr("Snap Options"), |ui| {
             ui.checkbox(&mut self.snap, tr("Snap to Grid"));
@@ -800,12 +803,45 @@ impl App {
         if entry(ui, "Keyboard Shortcuts", true, None) {
             self.prefs_open = true;
         }
+        if entry(ui, "Send Feedback...", true, None) {
+            self.open_feedback(ui.ctx(), None);
+        }
+        if entry(ui, "Crash Reports...", true, None) {
+            self.crashes_open = true;
+        }
         if entry(ui, "Details for Support...", true, None) {
             self.support_open = true;
+        }
+        if cfg!(target_os = "linux") {
+            if let Some(data) = crate::linuxmenu::data_home() {
+                let there = crate::linuxmenu::installed_in(&data);
+                let label = if there { "Remove from Applications Menu" } else { "Add to Applications Menu" };
+                if entry(ui, label, true, None) {
+                    self.applications_menu(&data, there);
+                }
+            }
         }
         ui.separator();
         if entry(ui, "About", true, None) {
             self.about_open = true;
+        }
+    }
+
+    /// Puts Burin in the desktop's menu, or takes it out.
+    fn applications_menu(&mut self, data: &FilePath, there: bool) {
+        if there {
+            crate::linuxmenu::remove_from(data);
+            crate::linuxmenu::refresh(data);
+            self.status = tr("Burin is no longer in the applications menu.").into();
+            return;
+        }
+        let Some(program) = crate::linuxmenu::program_file() else { return };
+        match crate::linuxmenu::install_in(data, &program, include_bytes!("../release/burin.png")) {
+            Ok(()) => {
+                crate::linuxmenu::refresh(data);
+                self.status = tr("Burin is in the applications menu, and opens .burin files. If you move the program, add it again.").into();
+            }
+            Err(e) => self.message = Some(e.to_string()),
         }
     }
 

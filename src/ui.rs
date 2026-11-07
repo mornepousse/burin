@@ -124,6 +124,9 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool, active: bo
 /// The same, with more to say when the pointer rests on it than what it's called.
 pub fn icon_button_saying(ui: &mut Ui, icon: Icon, name: &str, tip: &str, enabled: bool, active: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), if enabled { Sense::click() } else { Sense::hover() });
+    if resp.clicked() {
+        crate::crash::note(name);
+    }
     if active {
         ui.painter().rect_filled(rect, 7.0, theme::ACCENT_SOFT);
     } else if enabled && resp.hovered() {
@@ -408,6 +411,13 @@ impl App {
         self.merge_window(&ctx);
         self.template_window(&ctx);
         self.support_window(&ctx);
+        self.notes_window(&ctx);
+        self.feedback_window(&ctx);
+        self.crash_window(&ctx);
+        self.after_crash_window(&ctx);
+        self.keep_recovery();
+        self.files_dropped(&ctx);
+        crate::crash::set_job(self.doc.vectors.len(), self.doc.toolpaths.len(), self.doc.toolpaths.iter().map(|t| t.moves.len() as u64).sum());
         self.recalc_question(&ctx);
         self.poll_recalc();
         self.keyboard(ui);

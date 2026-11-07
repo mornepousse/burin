@@ -1,32 +1,126 @@
+<div align="center">
+
+<img src="release/burin.png" width="150" alt="Le logo de Burin : un marteau frappe une fraise plantée dans un bloc de bois">
+
 # Burin
 
-Logiciel de bureau pour dessiner des pièces, préparer des parcours d'outil et écrire les fichiers
-de commande d'une machine CNC. Il lit aussi les projets `.crv3d` et les post-processeurs (`.pp`).
+**Dessinez, puis usinez.**
 
-Projet privé en cours de développement : rien n'a encore été validé sur une vraie machine. Vérifiez
-chaque fichier dans un simulateur ou au-dessus de la matière avant de couper.
+Un logiciel de bureau pour dessiner des pièces, préparer des parcours d'outil
+et écrire les fichiers de commande d'une machine CNC.
 
-## Lancer
+Linux · Windows · Français · English
 
-Il faut Rust (https://rustup.rs).
+</div>
+
+![Une pièce usinée dans l'aperçu 3D de Burin, dans une planche de hêtre](docs/apercu-3d.png)
+
+> [!WARNING]
+> **Burin n'a encore jamais piloté de vraie machine.** Une erreur dans un fichier de coupe peut casser
+> une fraise ou abîmer une pièce. Vérifiez chaque fichier dans un simulateur, puis faites-le tourner à
+> vide, fraise bien au-dessus de la matière, avant de couper.
+
+## Ce qu'il sait faire
+
+| | |
+|---|---|
+| **Dessiner** | Lignes, courbes, arcs, cercles, ellipses, rectangles, polygones, étoiles, spirales, texte, cotes, contraintes d'esquisse |
+| **Modifier** | Déplacer, tourner et redimensionner à la souris, décaler, souder, couper, aligner, copier en série |
+| **Organiser** | Calques, groupes et **pièces** : on sélectionne un seul trou sans rien dégrouper, mais la pièce se déplace d'un bloc |
+| **Modeler** | Composants 3D, reliefs importés, cliparts |
+| **Usiner** | Contour, poche, perçage, gravure, gravure en V, ébauche et finition 3D, prisme, texture, moulure, cannelure, chanfrein |
+| **Préparer** | Rampes, entrées et sorties, attaches, ordre de coupe, fusion de parcours, modèles de parcours réutilisables |
+| **Vérifier** | Aperçu 3D de la coupe, estimation du temps, fiche de travail à emporter à la machine |
+| **Écrire** | G-code générique, GRBL, Mach3, PlanetCNC, et vos post-processeurs `.pp` |
+| **Échanger** | Lit les projets `.crv3d`, importe SVG, DXF, STL et images, exporte SVG, EPS, PDF, STL |
+
+Le détail de ce qui manque est à la fin de cette page.
+
+## En images
+
+<table>
+<tr>
+<td width="50%"><img src="docs/poignees.png" alt="Une forme sélectionnée, avec ses poignées de taille et de rotation"><br><b>Poignées</b> : un clic sur la sélection les affiche. <kbd>Alt</kbd> tourne par pas de 15°, <kbd>Maj</kbd> agrandit depuis le centre.</td>
+<td width="50%"><img src="docs/pieces.png" alt="Une pièce et sa liste dans l'onglet Couches"><br><b>Pièces</b> : nommées, listées, et enregistrables seules dans leur propre fichier machine.</td>
+</tr>
+<tr>
+<td><img src="docs/preferences.png" alt="La fenêtre des préférences, avec la langue et les raccourcis"><br><b>Préférences</b> : anglais ou français, et toutes les touches modifiables.</td>
+<td><img src="docs/fiche-de-travail.png" alt="Une fiche de travail avec le dessin et le réglage de la matière"><br><b>Fiche de travail</b> : le dessin, le réglage de la matière et chaque parcours, sur une seule page.</td>
+</tr>
+</table>
+
+## Installer
+
+### Linux
+
+```sh
+chmod +x Burin-*-x86_64.AppImage
+./Burin-*-x86_64.AppImage
+```
+
+Ensuite, `Aide > Ajouter au menu des applications` place Burin dans le menu de votre bureau et lui
+fait ouvrir les fichiers `.burin`. Un projet peut aussi être donné en argument, ou glissé sur la fenêtre.
+
+### Windows
+
+Lancez `Burin-*-windows-x86_64.exe`, sans installation. Il n'est pas signé : Windows peut demander une
+confirmation (`Informations complémentaires > Exécuter quand même`). Il n'a été essayé que sous Wine et
+sur un PC Windows 11.
+
+### Depuis le code
+
+Il faut [Rust](https://rustup.rs).
 
 ```sh
 cargo run --release
 cargo test
 ```
 
-## Contenu
+`release/build.sh` fabrique l'AppImage et le `.exe` dans `dist/`. Il ne demande que Nix.
 
-- `src/` : le programme.
-- `MECHANICS.md` et `mechanics.json` : les règles de calcul reprises du logiciel d'origine, avec ce qui
-  a été vérifié et ce qui reste estimé.
+## Si quelque chose ne va pas
+
+Votre travail non enregistré est copié toutes les deux minutes et vous est proposé au lancement suivant
+si Burin s'est mal fermé.
+
+| Dans le menu Aide | |
+|---|---|
+| **Envoyer un retour** | Un problème, une idée ou une question |
+| **Rapports de plantage** | Ce que Burin a noté quand il s'est arrêté |
+| **Détails pour l'assistance** | La version, le système, la carte graphique et le dernier démarrage, à copier |
+
+**Burin n'envoie rien tout seul.** Les rapports restent sur votre ordinateur. Si vous choisissez d'en
+signaler un, un brouillon s'ouvre dans votre navigateur : vous voyez tout ce qu'il contient, et il ne part
+que si vous le validez. Votre travail, ses noms de fichiers et le nom de votre dossier personnel n'y
+figurent jamais.
+
+<img src="docs/retour.png" alt="La fenêtre pour envoyer un retour" width="640">
+
+## Ce qui manque encore
+
+- **Essais réels :** rien n'a été vérifié sur une machine.
+- **Menus :** une quarantaine d'entrées restent grisées, comme l'impression, certains outils de modélisation
+  3D ou les vues multi-faces.
+- **Calculs :** les parcours ne sont pas toujours identiques à ceux enregistrés dans les projets `.crv3d`, notamment l'ordre de coupe et les
+  poches, qui lèvent l'outil plus souvent.
+- **À la souris :** taper une valeur pendant un déplacement ou une rotation n'existe pas encore.
+
+Les règles de calcul, avec ce qui a été vérifié et ce qui reste estimé, sont dans
+[`MECHANICS.md`](MECHANICS.md).
+
+## Le dépôt
+
+| | |
+|---|---|
+| `src/` | Le programme, en Rust avec [egui](https://github.com/emilk/egui) |
+| `release/` | Le logo et ce qui fabrique les versions à distribuer |
+| `docs/` | Les images de cette page |
+| `MECHANICS.md`, `mechanics.json` | Les règles de calcul et leurs valeurs |
 
 Aucun fichier de travail réel n'est inclus : `.gitignore` écarte les projets et les fichiers machine.
 
+
 ## Licence
 
-Aucune pour l'instant : tous droits réservés.
-
-## Faire une release
-
-`release/build.sh` fabrique l'AppImage Linux et le `.exe` Windows dans `dist/`. Il ne demande que Nix.
+Aucune pour l'instant : tous droits réservés. La liste des bibliothèques utilisées et de leurs licences
+accompagne chaque version, dans `THIRD-PARTY.txt`.

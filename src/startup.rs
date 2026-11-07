@@ -3,6 +3,8 @@
 
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 /// The ways of drawing the window, tried in this order. Older graphics cards often have no Direct3D 12
 /// or recent OpenGL but do have older OpenGL; the last one needs no graphics card at all.
@@ -50,8 +52,53 @@ pub fn attempts(asked: Option<&str>) -> Vec<Engine> {
     }
 }
 
+/// Written when the program closes normally: a log without it belongs to one that died.
+pub const CLOSED: &str = "Closed.";
+
+/// Another copy is running, and the log is that copy's.
+static SECOND_COPY: AtomicBool = AtomicBool::new(false);
+/// Held while the program runs. The system lets it go however the program ends.
+static SESSION: Mutex<Option<std::fs::File>> = Mutex::new(None);
+static GRAPHICS: Mutex<String> = Mutex::new(String::new());
+
 fn log_file() -> Option<PathBuf> {
+    if SECOND_COPY.load(Ordering::Relaxed) {
+        return None;
+    }
     crate::app::settings_file("startup-log.txt")
+}
+
+/// Whether this is the only copy running. If it isn't, it leaves the log and the reports alone.
+pub fn claim_session() -> bool {
+    let Some(file) = crate::app::settings_file("session.lock") else { return true };
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let Ok(lock) = std::fs::OpenOptions::new().create(true).write(true).truncate(false).open(file) else { return true };
+    let first = lock.try_lock().is_ok();
+    if first {
+        if let Ok(mut held) = SESSION.lock() {
+            *held = Some(lock);
+        }
+    } else {
+        SECOND_COPY.store(true, Ordering::Relaxed);
+    }
+    first
+}
+
+pub fn is_second_copy() -> bool {
+    SECOND_COPY.load(Ordering::Relaxed)
+}
+
+pub fn set_graphics(card: &str) {
+    log(&format!("Graphics card: {card}"));
+    if let Ok(mut g) = GRAPHICS.lock() {
+        *g = card.to_string();
+    }
+}
+
+pub fn graphics_line() -> String {
+    GRAPHICS.try_lock().map_or(String::new(), |g| g.clone())
 }
 
 /// The ways of drawing that stopped the program dead when it last started, read from the log it left.
@@ -200,7 +247,8 @@ pub fn log(line: &str) {
 pub fn log_panics() {
     let before = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        log(&format!("Crash: {info}"));
+        log(&format!("Crash: {}", crate::crash::without_home(&info.to_string())));
+        crate::crash::record_panic(info);
         before(info);
     }));
 }

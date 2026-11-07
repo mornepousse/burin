@@ -1120,7 +1120,7 @@ impl App {
                     ui.label(crate::i18n::tr("The following issues will be marked:"));
                     for (name, colour, kind) in [
                         (crate::i18n::tr("Zero-length"), theme::RAPID, crate::edit::IssueKind::ZeroLength),
-                        (crate::i18n::tr("Overlaps"), theme::ACCENT, crate::edit::IssueKind::Overlap),
+                        (crate::i18n::tr("Overlaps"), theme::WARNING, crate::edit::IssueKind::Overlap),
                         (crate::i18n::tr("Intersections"), theme::CUT, crate::edit::IssueKind::Intersection),
                     ] {
                         ui.horizontal(|ui| {
