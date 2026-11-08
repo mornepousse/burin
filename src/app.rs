@@ -400,6 +400,10 @@ pub struct Doc {
     /// toolpaths, and only the active one shows (`vcCadSheetManager`, `ActiveSheetIndex`).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub extra_sheets: u8,
+    /// How many of a shape nesting lays out, when more than one (the original's per-object
+    /// `nestNumCopies`, set from the nesting form by `0x1403c17f0`).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub nest_copies: std::collections::BTreeMap<u64, u16>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub active_sheet: u8,
     /// The person's notes about the job, which go on the job sheet.
@@ -433,6 +437,7 @@ impl Default for Doc {
             new_construction: false,
             active_face: 0,
             extra_sheets: 0,
+            nest_copies: Default::default(),
             active_sheet: 0,
             bitmaps: Vec::new(),
             guides: Vec::new(),
@@ -936,6 +941,10 @@ pub struct XformForm {
     /// The last shape chosen is the outline to nest in, instead of the sheet ("Last vector is
     /// nest boundary").
     pub into_boundary: bool,
+    /// Nest by each part's true shape rather than its box, and let parts be mirrored to fit
+    /// (the original's `CanMirror`, "Mirror parts to find best fit").
+    pub by_shape: bool,
+    pub nest_mirror: bool,
     /// Set Size and Rotate: treat each selected shape on its own.
     pub each: bool,
     pub constraint: Option<crate::constraints::Kind>,
@@ -1006,6 +1015,8 @@ impl XformForm {
             nest_turn: false,
             part_in_part: false,
             into_boundary: false,
+            by_shape: false,
+            nest_mirror: false,
             nest_step: crate::edit::NEST_STEP,
             each: false,
             constraint: None,

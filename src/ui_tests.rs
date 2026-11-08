@@ -6678,3 +6678,145 @@ fn nesting_fills_a_chosen_outline() {
     }
     assert!(h.state().status.contains("outline"), "{}", h.state().status);
 }
+
+/// A turn step of 0 means no turning, as the original gives such a part a full turn.
+#[test]
+fn a_zero_turn_step_means_no_turning() {
+    let mut h = harness();
+    h.state_mut().new_file();
+    h.state_mut().doc.job.height = 5.0;
+    let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([3.0, 2.5], 1.0, 6.0, 0.0))], Prim::Free);
+    h.state_mut().selected = vec![id];
+    h.state_mut().start_xform(Xform::Nest);
+    if let crate::app::LeftForm::Xform(f) = &mut h.state_mut().left {
+        f.nest_turn = true;
+        f.nest_step = 0.0;
+    }
+    h.state_mut().apply_xform();
+    let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    assert!(hi[1] - lo[1] > hi[0] - lo[0], "still upright: {lo:?} {hi:?}");
+}
+
+/// Nesting by true shape: right triangles turn to fit into each other, so six fit on one sheet
+/// where their boxes need two, and no two come closer than the tool's gap.
+#[test]
+fn nesting_by_shape_fits_triangles_together() {
+    let make = |h: &mut Harness<'static, App>, by_shape: bool| {
+        h.state_mut().new_file();
+        let ids: Vec<u64> = (0..6).map(|k| {
+            let (x, y) = (0.5 + k as f64 * 1.5, 9.0);
+            h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(vec![[x, y - 4.0], [x + 4.0, y - 4.0], [x, y]])], Prim::Free)
+        }).collect();
+        h.state_mut().selected = ids;
+        h.state_mut().start_xform(Xform::Nest);
+        if let crate::app::LeftForm::Xform(f) = &mut h.state_mut().left {
+            f.by_shape = by_shape;
+            f.nest_turn = true;
+        }
+        h.state_mut().apply_xform();
+    };
+    let mut h = harness();
+    make(&mut h, false);
+    assert!(h.state().doc.sheet_count() > 1, "by their boxes they need two sheets");
+    make(&mut h, true);
+    let doc = &h.state().doc;
+    assert_eq!(doc.sheet_count(), 1, "{}", h.state().status);
+    let shapes: Vec<&crate::geom::Path> = doc.vectors.iter().map(|v| &v.paths[0]).collect();
+    let near = |p: [f64; 2], path: &crate::geom::Path| path.segments().map(|(a, b)| {
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let t = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+        (p[0] - a[0] - t * dx).hypot(p[1] - a[1] - t * dy)
+    }).fold(f64::MAX, f64::min);
+    for i in 0..shapes.len() {
+        let (lo, hi) = crate::geom::bbox(std::slice::from_ref(shapes[i])).unwrap();
+        assert!(lo[0] >= 0.25 - 1e-6 && lo[1] >= 0.25 - 1e-6 && hi[0] <= 9.75 + 1e-6 && hi[1] <= 9.75 + 1e-6, "inside the border: {lo:?} {hi:?}");
+        for j in 0..shapes.len() {
+            if i != j {
+                let d = shapes[i].pts.iter().map(|p| near(*p, shapes[j])).fold(f64::MAX, f64::min);
+                assert!(d >= 0.25 - 1e-6, "parts {i} and {j} are {d} apart");
+                assert!(!crate::geom::inside_even_odd(std::iter::once(shapes[j]), shapes[i].pts[0]));
+            }
+        }
+    }
+}
+
+/// Only closed outlines are nested; an open line stays where it is, and with nothing closed the
+/// original's message says so.
+#[test]
+fn nesting_leaves_open_lines_alone() {
+    let mut h = harness();
+    h.state_mut().new_file();
+    let line = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[6.0, 6.0], [8.0, 7.0]])], Prim::Free);
+    h.state_mut().selected = vec![line];
+    h.state_mut().start_xform(Xform::Nest);
+    h.state_mut().apply_xform();
+    assert!(h.state().status.contains("No suitable parts"), "{}", h.state().status);
+    let square = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 1.0, 1.0, 0.0))], Prim::Free);
+    h.state_mut().selected = vec![line, square];
+    h.state_mut().start_xform(Xform::Nest);
+    h.state_mut().apply_xform();
+    let doc = &h.state().doc;
+    assert_eq!(doc.vectors.iter().find(|v| v.id == line).unwrap().paths[0].pts[0], [6.0, 6.0], "the line didn't move");
+    let (lo, _) = crate::geom::bbox(&doc.vectors.iter().find(|v| v.id == square).unwrap().paths).unwrap();
+    assert!(lo[0] < 1.0 && lo[1] < 1.0, "the square was nested: {lo:?}");
+}
+
+/// Copies per part: a square asked for three times is nested three times; nesting from another
+/// sheet than the first, or into an outline with an open line, is refused.
+#[test]
+fn nesting_makes_the_copies_each_part_asks_for() {
+    let mut h = harness();
+    h.state_mut().new_file();
+    let square = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 2.0, 2.0, 0.0))], Prim::Free);
+    h.state_mut().doc.nest_copies.insert(square, 3);
+    h.state_mut().selected = vec![square];
+    h.state_mut().start_xform(Xform::Nest);
+    h.state_mut().apply_xform();
+    let doc = &h.state().doc;
+    assert_eq!(doc.vectors.len(), 3, "{}", h.state().status);
+    assert!(doc.nest_copies.is_empty(), "the count goes back to one");
+    let boxes: Vec<_> = doc.vectors.iter().map(|v| crate::geom::bbox(&v.paths).unwrap()).collect();
+    for i in 0..3 {
+        for j in i + 1..3 {
+            let (a, b) = (boxes[i], boxes[j]);
+            assert!(a.1[0] <= b.0[0] || b.1[0] <= a.0[0] || a.1[1] <= b.0[1] || b.1[1] <= a.0[1], "copies overlap");
+        }
+    }
+    // From the second sheet: refused.
+    h.state_mut().add_sheet();
+    let other = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 1.0, 1.0, 0.0))], Prim::Free);
+    h.state_mut().selected = vec![other];
+    h.state_mut().start_xform(Xform::Nest);
+    h.state_mut().apply_xform();
+    assert!(h.state().status.contains("first sheet"), "{}", h.state().status);
+    // An outline with an open line in it: refused.
+    h.state_mut().show_sheet(0);
+    let open_outline = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 8.0, 8.0, 0.0)), crate::geom::Path::open(vec![[1.0, 1.0], [2.0, 2.0]])], Prim::Free);
+    h.state_mut().selected = vec![square, open_outline];
+    h.state_mut().start_xform(Xform::Nest);
+    if let crate::app::LeftForm::Xform(f) = &mut h.state_mut().left {
+        f.into_boundary = true;
+    }
+    h.state_mut().apply_xform();
+    assert!(h.state().status.contains("open lines"), "{}", h.state().status);
+}
+
+/// The copies box shows the count the chosen shapes share, and stays empty when they differ.
+#[test]
+fn the_copies_box_shows_a_shared_count_or_nothing() {
+    let mut h = harness();
+    h.state_mut().new_file();
+    let a = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([3.0, 3.0], 1.0, 1.0, 0.0))], Prim::Free);
+    let b = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([6.0, 6.0], 1.0, 1.0, 0.0))], Prim::Free);
+    h.state_mut().doc.nest_copies.insert(a, 7);
+    h.state_mut().doc.nest_copies.insert(b, 9);
+    h.state_mut().selected = vec![a, b];
+    h.state_mut().start_xform(Xform::Nest);
+    h.run();
+    let values = |h: &Harness<'static, App>| h.get_all_by_role(egui::accesskit::Role::TextInput).filter_map(|n| n.value()).collect::<Vec<String>>();
+    let shown = values(&h);
+    assert!(!shown.iter().any(|v| v == "7" || v == "9"), "{shown:?}");
+    h.state_mut().doc.nest_copies.insert(b, 7);
+    h.run();
+    assert!(values(&h).iter().any(|v| v == "7"), "{:?}", values(&h));
+}

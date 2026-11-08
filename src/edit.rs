@@ -786,6 +786,244 @@ impl App {
     }
 
     /// Packs the selected shapes on the sheet in rows, by their bounding boxes.
+    /// Makes the extra copies the chosen parts ask for (their nesting copies), so they're laid
+    /// out with the rest, and adds them to the selection. A piece is copied whole, as a new
+    /// piece. The counts go back to one once the copies are made, so nesting again doesn't
+    /// multiply them.
+    fn make_nest_copies(&mut self, boundary: Option<u64>) {
+        let items: Vec<Vector> = self.selection_in_click_order().into_iter().filter(|v| Some(v.id) != boundary).collect();
+        for b in self.blocks(&items, None) {
+            let copies = b.ids.iter().filter_map(|id| self.doc.nest_copies.get(id)).copied().max().unwrap_or(1);
+            for id in &b.ids {
+                self.doc.nest_copies.remove(id);
+            }
+            for _ in 1..copies {
+                let originals: Vec<Vector> = self.doc.vectors.iter().filter(|v| b.ids.contains(&v.id)).cloned().collect();
+                let piece = originals.iter().find_map(|v| v.piece).map(|_| self.doc.new_id());
+                for mut v in originals {
+                    v.id = self.doc.new_id();
+                    if v.piece.is_some() {
+                        v.piece = piece;
+                    }
+                    self.selected.push(v.id);
+                    self.doc.vectors.push(v);
+                }
+            }
+        }
+    }
+
+    /// Nests by true shape. The sheet (or the chosen outline) and each part are drawn on a grid of
+    /// cells, about 200 across the sheet; a part's cells are those its material touches, grown by
+    /// half the tool's gap, so two parts never come closer than the gap. Biggest parts first, each
+    /// in every allowed turn (and mirrored, if asked) goes to the first free place from the chosen
+    /// corner, in rows along the chosen direction; the turn that lands earliest wins. With part in
+    /// part, holes stay free for smaller parts; without, a part is filled in. A part with no room
+    /// left starts a new sheet (or, in an outline, stays where it was).
+    fn nest_by_shape(&mut self, parts: Vec<Vec<u64>>, f: &XformForm, outline: Option<&Path>, border: f64, clear: f64) {
+        let (jw, jh) = (self.doc.job.width, self.doc.job.height);
+        let (area_lo, area_hi) = match outline.and_then(|o| geom::bbox(std::slice::from_ref(o))) {
+            Some(b) => b,
+            None => ([0.0, 0.0], [jw, jh]),
+        };
+        let span = (area_hi[0] - area_lo[0]).max(area_hi[1] - area_lo[1]);
+        let cell = (span / NEST_SHAPE_CELLS).max(1e-4);
+        let (nx, ny) = (((area_hi[0] - area_lo[0]) / cell).ceil() as usize + 1, ((area_hi[1] - area_lo[1]) / cell).ceil() as usize + 1);
+        let words = nx.div_ceil(64);
+        let reach = cell * std::f64::consts::FRAC_1_SQRT_2;
+        let pad = clear / 2.0;
+        let seg_dist = |p: P, a: P, b: P| {
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let l = dx * dx + dy * dy;
+            let t = if l > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l).clamp(0.0, 1.0) } else { 0.0 };
+            (p[0] - a[0] - t * dx).hypot(p[1] - a[1] - t * dy)
+        };
+        // Cells that can't be used: outside the sheet's border, or outside the outline.
+        let blank = |outline: Option<&Path>| -> Vec<Vec<u64>> {
+            let mut rows = vec![vec![0u64; words]; ny];
+            for (iy, row) in rows.iter_mut().enumerate() {
+                for ix in 0..nx {
+                    let c = [area_lo[0] + (ix as f64 + 0.5) * cell, area_lo[1] + (iy as f64 + 0.5) * cell];
+                    let bad = match outline {
+                        Some(o) => !geom::inside_even_odd(std::iter::once(o), c) || o.segments().any(|(a, b)| seg_dist(c, a, b) <= (border - pad).max(0.0) + reach),
+                        None => c[0] < border + reach || c[1] < border + reach || c[0] > jw - border - reach || c[1] > jh - border - reach,
+                    };
+                    if bad {
+                        row[ix / 64] |= 1 << (ix % 64);
+                    }
+                }
+            }
+            rows
+        };
+        let free = |rows: &[Vec<u64>], y: usize, a: usize, b: usize| -> bool {
+            let mut i = a;
+            while i < b {
+                let (w, bit) = (i / 64, i % 64);
+                let n = (64 - bit).min(b - i);
+                let mask = if n == 64 { u64::MAX } else { ((1u64 << n) - 1) << bit };
+                if rows[y][w] & mask != 0 {
+                    return false;
+                }
+                i += n;
+            }
+            true
+        };
+        let fill = |rows: &mut [Vec<u64>], y: usize, a: usize, b: usize| {
+            for i in a..b {
+                rows[y][i / 64] |= 1 << (i % 64);
+            }
+        };
+        // Each part: its closed outlines, area for the order.
+        let mut items: Vec<(Vec<u64>, Vec<Path>, f64)> = parts
+            .into_iter()
+            .map(|ids| {
+                let paths: Vec<Path> = self.doc.vectors.iter().filter(|v| ids.contains(&v.id)).flat_map(|v| v.paths.iter().filter(|p| p.closed && p.pts.len() > 2).cloned()).collect();
+                let area = geom::bbox(&paths).map_or(0.0, |(l, h)| (h[0] - l[0]) * (h[1] - l[1]));
+                (ids, paths, area)
+            })
+            .filter(|(_, paths, _)| !paths.is_empty())
+            .collect();
+        items.sort_by(|a, b| b.2.total_cmp(&a.2));
+        let step = nest_value(f.nest_step);
+        let step = if f.nest_turn && step > 0.0 { step } else { NEST_NO_TURN };
+        let turns: Vec<f64> = (0..).map(|k| k as f64 * step).take_while(|a| *a < NEST_NO_TURN - 1e-9).collect();
+        let flips: &[bool] = if f.nest_mirror { &[false, true] } else { &[false] };
+        let (from_right, from_top) = match f.anchor {
+            Datum::BottomRight => (true, false),
+            Datum::TopLeft => (false, true),
+            Datum::TopRight => (true, true),
+            _ => (false, false),
+        };
+        let mut sheets: Vec<Vec<Vec<u64>>> = vec![blank(outline)];
+        let mut first_new = None;
+        let (mut placed, mut left) = (0, 0);
+        for (ids, paths, _) in items {
+            let (lo, hi) = geom::bbox(&paths).unwrap();
+            let centre = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+            // Each way the part may lie: its cells as runs per row, and the transform.
+            let mut ways = Vec::new();
+            for &turn in &turns {
+                for &flip in flips {
+                    let (s, k) = turn.to_radians().sin_cos();
+                    let map = move |p: P| {
+                        let x = if flip { centre[0] - (p[0] - centre[0]) } else { p[0] };
+                        let (dx, dy) = (x - centre[0], p[1] - centre[1]);
+                        [centre[0] + dx * k - dy * s, centre[1] + dx * s + dy * k]
+                    };
+                    let shape: Vec<Path> = paths.iter().map(|p| Path { pts: p.pts.iter().map(|q| map(*q)).collect(), ..p.clone() }).collect();
+                    let (sl, sh) = geom::bbox(&shape).unwrap();
+                    let origin = [sl[0] - pad - cell, sl[1] - pad - cell];
+                    let (pw, ph) = (((sh[0] - sl[0] + 2.0 * pad) / cell).ceil() as usize + 3, ((sh[1] - sl[1] + 2.0 * pad) / cell).ceil() as usize + 3);
+                    let outer: Vec<&Path> = if f.part_in_part {
+                        shape.iter().collect()
+                    } else {
+                        let size = |p: &Path| geom::bbox(std::slice::from_ref(p)).map_or(0.0, |(l, h)| (h[0] - l[0]) * (h[1] - l[1]));
+                        let big = shape.iter().map(size).fold(0.0, f64::max);
+                        shape.iter().filter(|p| size(p) >= big).collect()
+                    };
+                    let mut runs: Vec<(usize, usize, usize)> = Vec::new();
+                    for py in 0..ph {
+                        let mut start = None;
+                        for px in 0..=pw {
+                            let on = px < pw && {
+                                let c = [origin[0] + (px as f64 + 0.5) * cell, origin[1] + (py as f64 + 0.5) * cell];
+                                geom::inside_even_odd(outer.iter().copied(), c) || shape.iter().any(|p| p.segments().any(|(a, b)| seg_dist(c, a, b) <= pad + reach))
+                            };
+                            match (on, start) {
+                                (true, None) => start = Some(px),
+                                (false, Some(a)) => {
+                                    runs.push((py, a, px));
+                                    start = None;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    ways.push((turn, flip, origin, pw, ph, runs));
+                }
+            }
+            // The first place for this part on a sheet, over every way it may lie.
+            let find = |rows: &[Vec<u64>]| -> Option<(usize, usize, usize)> {
+                let mut best: Option<(usize, usize, usize, usize)> = None;
+                for (w, (_, _, _, pw, ph, runs)) in ways.iter().enumerate() {
+                    if *pw > nx || *ph > ny {
+                        continue;
+                    }
+                    let (mx, my) = (nx - pw, ny - ph);
+                    let (outer_n, inner_n) = if f.along_x { (my, mx) } else { (mx, my) };
+                    'scan: for o in 0..=outer_n {
+                        if best.is_some_and(|b| b.0 < o) {
+                            break;
+                        }
+                        for i in 0..=inner_n {
+                            let (ox, oy) = if f.along_x { (i, o) } else { (o, i) };
+                            let ox = if from_right { mx - ox } else { ox };
+                            let oy = if from_top { my - oy } else { oy };
+                            if runs.iter().all(|(y, a, b)| free(rows, oy + y, ox + a, ox + b)) {
+                                if best.is_none_or(|b| (o, i) < (b.0, b.1)) {
+                                    best = Some((o, i, w, ox * 100_000 + oy));
+                                }
+                                break 'scan;
+                            }
+                        }
+                    }
+                }
+                best.map(|(_, _, w, packed)| (w, packed / 100_000, packed % 100_000))
+            };
+            let mut spot = None;
+            for (si, rows) in sheets.iter().enumerate() {
+                if let Some(found) = find(rows) {
+                    spot = Some((si, found));
+                    break;
+                }
+            }
+            if spot.is_none() && outline.is_none() {
+                let fresh = blank(None);
+                if let Some(found) = find(&fresh) {
+                    sheets.push(fresh);
+                    spot = Some((sheets.len() - 1, found));
+                }
+            }
+            let Some((si, (w, ox, oy))) = spot else {
+                left += 1;
+                continue;
+            };
+            let (turn, flip, origin, _, _, runs) = &ways[w];
+            for (y, a, b) in runs {
+                fill(&mut sheets[si], oy + y, ox + a, ox + b);
+            }
+            // Turn and mirror the part as chosen, then move it into place.
+            let (s, k) = turn.to_radians().sin_cos();
+            let flip = *flip;
+            let keep = std::mem::replace(&mut self.selected, ids.clone());
+            self.map_selected(|p| {
+                let x = if flip { centre[0] - (p[0] - centre[0]) } else { p[0] };
+                let (dx, dy) = (x - centre[0], p[1] - centre[1]);
+                [centre[0] + dx * k - dy * s, centre[1] + dx * s + dy * k]
+            });
+            self.selected = keep;
+            let to = [area_lo[0] + ox as f64 * cell, area_lo[1] + oy as f64 * cell];
+            self.translate_ids(&ids, to[0] - origin[0], to[1] - origin[1]);
+            if si > 0 {
+                let base = *first_new.get_or_insert(self.doc.sheet_count());
+                let target = (base + si - 1).min(u8::MAX as usize - 1);
+                self.doc.extra_sheets = self.doc.extra_sheets.max(target as u8);
+                for v in self.doc.vectors.iter_mut().filter(|v| ids.contains(&v.id)) {
+                    v.sheet = target as u8;
+                }
+                self.selected.retain(|id| !ids.contains(id));
+            }
+            placed += 1;
+        }
+        let used = sheets.len();
+        self.status = if left > 0 {
+            tf!("Nested {placed} parts by shape; {left} didn't fit.")
+        } else if used > 1 {
+            tf!("Nested {placed} parts by shape on {used} sheets.")
+        } else {
+            tf!("Nested {placed} parts by shape.")
+        };
+    }
+
     /// Fills a chosen outline instead of the sheet: biggest parts first, each at the first place
     /// from the chosen corner where its box, kept the border gap from the outline and the tool's
     /// gap from the parts already in, fits wholly inside. Places are tried at the nester's
@@ -860,8 +1098,12 @@ impl App {
         let border = nest_value(f.border);
         let (w, h) = (self.doc.job.width - 2.0 * border, self.doc.job.height - 2.0 * border);
         let (primary, secondary) = if f.along_x { (w, h) } else { (h, w) };
-        let step = if f.nest_step > 0.5 { f.nest_step } else { NEST_STEP };
-        let turns: Vec<f64> = (0..).map(|k| k as f64 * step).take_while(|a| *a < 180.0 - 1e-9).collect();
+        // As the original hands each part its step (`0x1403bf330`): the form's step when turning is
+        // on and the step is above 0, otherwise a full turn (360, `0x14210c1d8`), which is no turning.
+        let step = nest_value(f.nest_step);
+        let step = if step > 0.0 { step } else { NEST_NO_TURN };
+        // Turns half a turn apart give the same box, so the first half turn is enough.
+        let turns: Vec<f64> = (0..).map(|k| k as f64 * step).take_while(|a| *a < (NEST_NO_TURN / 2.0).max(step) - 1e-9).collect();
         for Block { ids, lo, hi } in self.blocks(items, None) {
             let c = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
             let pts: Vec<P> = self.doc.vectors.iter().filter(|v| ids.contains(&v.id)).flat_map(|v| v.paths.iter().flat_map(|p| p.pts.iter().copied())).collect();
@@ -909,6 +1151,17 @@ impl App {
             return;
         }
         // With "Last vector is nest boundary", the last shape chosen is the outline to fill.
+        // Only shapes on the first sheet are nested, as in the original ("Invalid Sheet For
+        // Nesting", `0x1403be110`, string 710).
+        if self.doc.active_sheet != 0 {
+            self.status = crate::i18n::tr("Only shapes on the first sheet can be nested.").into();
+            return;
+        }
+        // A boundary with an open line in it is refused (string 1086).
+        if f.into_boundary && items.last().is_some_and(|v| v.paths.iter().any(|p| !p.closed)) {
+            self.status = crate::i18n::tr("Invalid boundary for nesting: the boundary contains open lines.").into();
+            return;
+        }
         let boundary = if f.into_boundary {
             match items.last().and_then(|v| v.paths.iter().find(|p| p.closed).cloned().map(|p| (v.id, p))) {
                 Some(b) if items.len() > 1 => Some(b),
@@ -921,12 +1174,13 @@ impl App {
             None
         };
         self.checkpoint();
+        self.make_nest_copies(boundary.as_ref().map(|b| b.0));
         let keep_selection = self.selected.clone();
         if let Some((bid, _)) = &boundary {
             self.selected.retain(|id| id != bid);
         }
         let items = self.selection_in_click_order();
-        if f.nest_turn {
+        if f.nest_turn && !f.by_shape {
             self.turn_parts_to_nest(&items, f);
         }
         let items = self.selection_in_click_order();
@@ -940,6 +1194,18 @@ impl App {
         let mut placed = 0;
         let mut landed: Vec<(Vec<u64>, usize)> = Vec::new();
         let mut sized = self.blocks(&items, None);
+        // Only closed outlines make parts, as the original's (`0x14090b960`: a contour that is
+        // closed and not empty); open lines stay where they are.
+        sized.retain(|b| self.doc.vectors.iter().filter(|v| b.ids.contains(&v.id)).any(|v| v.paths.iter().any(|p| p.closed && p.pts.len() > 2)));
+        if sized.is_empty() {
+            self.status = crate::i18n::tr("No suitable parts to nest are selected").into();
+            return;
+        }
+        if f.by_shape {
+            let parts: Vec<Vec<u64>> = sized.into_iter().map(|b| b.ids).collect();
+            self.nest_by_shape(parts, f, boundary.as_ref().map(|b| &b.1), border, clear);
+            return;
+        }
         sized.sort_by(|a, b| {
             let height = |x: &Block| if f.along_x { x.hi[1] - x.lo[1] } else { x.hi[0] - x.lo[0] };
             height(b).total_cmp(&height(a))
@@ -1180,9 +1446,15 @@ pub fn nest_value(v: f64) -> f64 {
     if v > 0.0 { v } else { 0.0 }
 }
 
-/// How far nesting turns a part at a time when it may turn: a quarter turn (Burin's choice; the
-/// original's starting value for `RotationStepAngle` wasn't read).
+/// How far nesting turns a part at a time when it may turn: a quarter turn, the step each part
+/// the original hands its nester starts with (`0x14090b960`, 90.0 at `+0x30`).
 pub const NEST_STEP: f64 = 90.0;
+/// How many grid cells nesting by shape lays across the sheet's longer side (Burin's choice, so
+/// a nest takes a moment rather than minutes).
+pub const NEST_SHAPE_CELLS: f64 = 200.0;
+
+/// The step a part gets when it may not turn: a full turn (`0x14210c1d8`).
+pub const NEST_NO_TURN: f64 = 360.0;
 
 /// Connects open lines whose ends touch within `tolerance`.
 pub fn join_paths(paths: Vec<Path>, tolerance: f64) -> Vec<Path> {

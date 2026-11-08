@@ -10,9 +10,9 @@ A desktop program to draw parts, prepare toolpaths and write the control files o
 
 Linux · Windows · Browser · English · Français
 
-**[Website](https://mornepousse.github.io/burin/)** ·
+**[Website](https://burin.cc/)** ·
 **[Download](https://github.com/mornepousse/burin/releases/latest)** ·
-**[Try it in your browser](https://mornepousse.github.io/burin/app/)** ·
+**[Try it in your browser](https://burin.cc/app/)** ·
 [Version française](README.fr.md)
 
 </div>
@@ -85,7 +85,7 @@ files. A project can also be given as an argument, or dropped on the window.
 
 ### In a browser
 
-**[mornepousse.github.io/burin/app](https://mornepousse.github.io/burin/app/)** runs Burin in the page.
+**[burin.cc/app](https://burin.cc/app/)** runs Burin in the page.
 Nothing is installed and nothing leaves the computer: everything is computed in the page.
 
 What changes compared with the program:
