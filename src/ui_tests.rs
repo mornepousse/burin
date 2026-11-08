@@ -6582,6 +6582,10 @@ fn nesting_may_turn_parts() {
     });
     let mut h = harness();
     make(&mut h);
+    if let crate::app::LeftForm::Xform(f) = &mut h.state_mut().left {
+        assert!(f.nest_turn && f.part_in_part && f.nest_step == 45.0, "the original's starting values");
+        f.nest_turn = false;
+    }
     h.state_mut().apply_xform();
     assert!(!inside(&h), "upright they run past the sheet");
     make(&mut h);

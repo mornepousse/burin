@@ -1105,6 +1105,10 @@ impl App {
         // Turns half a turn apart give the same box, so the first half turn is enough.
         let turns: Vec<f64> = (0..).map(|k| k as f64 * step).take_while(|a| *a < (NEST_NO_TURN / 2.0).max(step) - 1e-9).collect();
         for Block { ids, lo, hi } in self.blocks(items, None) {
+            // Open lines are never parts, so they aren't turned either.
+            if !self.doc.vectors.iter().filter(|v| ids.contains(&v.id)).any(|v| v.paths.iter().any(|p| p.closed && p.pts.len() > 2)) {
+                continue;
+            }
             let c = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
             let pts: Vec<P> = self.doc.vectors.iter().filter(|v| ids.contains(&v.id)).flat_map(|v| v.paths.iter().flat_map(|p| p.pts.iter().copied())).collect();
             let size = |a: f64| {
@@ -1449,6 +1453,10 @@ pub fn nest_value(v: f64) -> f64 {
 /// How far nesting turns a part at a time when it may turn: a quarter turn, the step each part
 /// the original hands its nester starts with (`0x14090b960`, 90.0 at `+0x30`).
 pub const NEST_STEP: f64 = 90.0;
+/// The turn step the nest form starts with, 45 degrees, with turning and part in part ticked:
+/// how the original sets up its nesting settings (`0x14090b8c0`, called from the form's
+/// constructor `0x1403bbc10`) before the saved values are read.
+pub const NEST_FORM_STEP: f64 = 45.0;
 /// How many grid cells nesting by shape lays across the sheet's longer side (Burin's choice, so
 /// a nest takes a moment rather than minutes).
 pub const NEST_SHAPE_CELLS: f64 = 200.0;
