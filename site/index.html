@@ -5,16 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Burin: design it, then carve it</title>
 <meta name="description" content="Burin draws parts, prepares toolpaths and writes the control files of a CNC machine. Free download for Windows and Linux, or try it in your browser.">
+<link rel="canonical" href="https://burin.cc/">
 <link rel="icon" type="image/png" href="burin.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://burin.cc/">
+<meta property="og:title" content="Burin: design it, then carve it">
+<meta property="og:description" content="Draw your parts, prepare the toolpaths and write the file your CNC machine reads. Free, for Windows, Linux or in your browser.">
+<meta property="og:image" content="https://burin.cc/docs/apercu-3d.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0e1014">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
   <a class="brand" href="./"><img src="burin.png" alt=""> Burin</a>
   <nav>
-    <a href="#features" data-en="Features" data-fr="Fonctions">Features</a>
-    <a href="#download" data-en="Download" data-fr="Télécharger">Download</a>
-    <a href="https://github.com/mornepousse/burin">GitHub</a>
+    <a class="wide" href="#how" data-en="How it works" data-fr="Comment ça marche">How it works</a>
+    <a class="wide" href="#features" data-en="Features" data-fr="Fonctions">Features</a>
+    <a class="wide" href="#faq" data-en="Questions" data-fr="Questions">Questions</a>
+    <a class="wide" href="https://github.com/mornepousse/burin">GitHub</a>
+    <a class="nav-download" href="#download" data-en="Download" data-fr="Télécharger">Download</a>
     <button id="lang" type="button" aria-label="Français / English">FR</button>
   </nav>
 </header>
@@ -34,11 +44,38 @@
       <small data-en="Nothing to install" data-fr="Rien à installer">Nothing to install</small>
     </a>
   </div>
-  <img class="shot" src="docs/apercu-3d.png" alt="A part carved in Burin's 3D preview, in a beech board">
+  <ul class="facts">
+    <li data-en="Free and open source" data-fr="Gratuit et libre">Free and open source</li>
+    <li data-en="No account" data-fr="Sans compte">No account</li>
+    <li data-en="Works offline" data-fr="Marche hors ligne">Works offline</li>
+    <li data-en="Sends nothing on its own" data-fr="N'envoie rien tout seul">Sends nothing on its own</li>
+  </ul>
+  <img class="shot" src="docs/apercu-3d.png" alt="A part carved in Burin's 3D preview, in a beech board" width="1400" height="855">
 </section>
 
 <section class="warning">
   <p data-en="&lt;b&gt;Burin has never driven a real machine yet.&lt;/b&gt; Check every file in a simulator, then run it in the air, with the bit well above the material, before you cut." data-fr="&lt;b&gt;Burin n'a encore jamais piloté de vraie machine.&lt;/b&gt; Vérifiez chaque fichier dans un simulateur, puis faites-le tourner à vide, fraise bien au-dessus de la matière, avant de couper."><b>Burin has never driven a real machine yet.</b> Check every file in a simulator, then run it in the air, with the bit well above the material, before you cut.</p>
+</section>
+
+<section id="how" class="how">
+  <h2 data-en="How it works" data-fr="Comment ça marche">How it works</h2>
+  <ol class="steps">
+    <li>
+      <span class="num">1</span>
+      <h3 data-en="Draw the part" data-fr="Dessinez la pièce">Draw the part</h3>
+      <p data-en="Set the size of your board, then draw shapes and text, or open an SVG, DXF or .crv3d file." data-fr="Indiquez la taille de votre planche, puis dessinez des formes et du texte, ou ouvrez un fichier SVG, DXF ou .crv3d.">Set the size of your board, then draw shapes and text, or open an SVG, DXF or .crv3d file.</p>
+    </li>
+    <li>
+      <span class="num">2</span>
+      <h3 data-en="Choose how to cut" data-fr="Choisissez comment couper">Choose how to cut</h3>
+      <p data-en="Pick a bit and a toolpath: cut out, pocket, engrave or carve in 3D. The 3D preview shows the result in wood before you cut." data-fr="Choisissez une fraise et un parcours : découpe, poche, gravure ou sculpture 3D. L'aperçu 3D montre le résultat dans le bois avant de couper.">Pick a bit and a toolpath: cut out, pocket, engrave or carve in 3D. The 3D preview shows the result in wood before you cut.</p>
+    </li>
+    <li>
+      <span class="num">3</span>
+      <h3 data-en="Save the machine file" data-fr="Enregistrez le fichier machine">Save the machine file</h3>
+      <p data-en="Choose your machine's controller and save the G-code. Check it, run it in the air, then cut." data-fr="Choisissez le contrôleur de votre machine et enregistrez le G-code. Vérifiez-le, faites-le tourner à vide, puis coupez.">Choose your machine's controller and save the G-code. Check it, run it in the air, then cut.</p>
+    </li>
+  </ol>
 </section>
 
 <section id="features" class="features">
@@ -47,15 +84,22 @@
     <article><h3 data-en="Draw" data-fr="Dessiner">Draw</h3><p data-en="Lines, curves, circles, polygons, stars, text with your computer's fonts or single-line fonts for engraving, dimensions and constraints." data-fr="Lignes, courbes, cercles, polygones, étoiles, texte avec les polices de l'ordinateur ou à trait unique pour la gravure, cotes et contraintes.">Lines, curves, circles, polygons, stars, text with your computer's fonts or single-line fonts for engraving, dimensions and constraints.</p></article>
     <article><h3 data-en="Model in 3D" data-fr="Modeler en 3D">Model in 3D</h3><p data-en="Components, reliefs from pictures or STL, sculpting, emboss, two-rail sweep, extrude and weave." data-fr="Composants, reliefs depuis une image ou un STL, sculpture, estampage, balayage à deux rails, extrusion et tissage.">Components, reliefs from pictures or STL, sculpting, emboss, two-rail sweep, extrude and weave.</p></article>
     <article><h3 data-en="Machine" data-fr="Usiner">Machine</h3><p data-en="Profile, pocket, drilling, engraving, V-carving, 3D roughing and finishing, with ramps, leads, tabs and adaptive clearing." data-fr="Contour, poche, perçage, gravure, gravure en V, ébauche et finition 3D, avec rampes, entrées, attaches et vidage adaptatif.">Profile, pocket, drilling, engraving, V-carving, 3D roughing and finishing, with ramps, leads, tabs and adaptive clearing.</p></article>
-    <article><h3 data-en="Nest" data-fr="Imbriquer">Nest</h3><p data-en="Several sheets per job. Parts are laid out in rows, turned, put in the holes of bigger ones, or fitted in an outline." data-fr="Plusieurs plaques par travail. Les pièces sont rangées en rangées, tournées, mises dans les trous des grandes, ou dans un contour.">Several sheets per job. Parts are laid out in rows, turned, put in the holes of bigger ones, or fitted in an outline.</p></article>
+    <article><h3 data-en="Nest" data-fr="Imbriquer">Nest</h3><p data-en="Several sheets per job. Parts are laid out in rows or by their true shape, turned, put in the holes of bigger ones, or fitted in an outline." data-fr="Plusieurs plaques par travail. Les pièces sont rangées en rangées ou selon leur vraie forme, tournées, mises dans les trous des grandes, ou dans un contour.">Several sheets per job. Parts are laid out in rows or by their true shape, turned, put in the holes of bigger ones, or fitted in an outline.</p></article>
     <article><h3 data-en="Check" data-fr="Vérifier">Check</h3><p data-en="A 3D preview of the cut, the machining time, a check before cutting and a job sheet to print." data-fr="Un aperçu 3D de la coupe, le temps d'usinage, une vérification avant coupe et une fiche de travail à imprimer.">A 3D preview of the cut, the machining time, a check before cutting and a job sheet to print.</p></article>
     <article><h3 data-en="Write and exchange" data-fr="Écrire et échanger">Write and exchange</h3><p data-en="G-code for GRBL, Mach3, LinuxCNC, PlanetCNC or your own post processors. Opens .crv3d projects, SVG, DXF and STL." data-fr="G-code pour GRBL, Mach3, LinuxCNC, PlanetCNC ou vos propres post-processeurs. Ouvre les projets .crv3d, SVG, DXF et STL.">G-code for GRBL, Mach3, LinuxCNC, PlanetCNC or your own post processors. Opens .crv3d projects, SVG, DXF and STL.</p></article>
   </div>
+
+  <h2 class="sub" data-en="In pictures" data-fr="En images">In pictures</h2>
+  <p class="hint" data-en="Click a picture to see it full size." data-fr="Cliquez sur une image pour la voir en grand.">Click a picture to see it full size.</p>
   <div class="gallery">
-    <figure><img src="docs/weave.png" alt="Two rings extruded and woven"><figcaption data-en="Extrude and weave" data-fr="Extrusion et tissage">Extrude and weave</figcaption></figure>
-    <figure><img src="docs/sweep.png" alt="Two moulded frames"><figcaption data-en="Two-rail sweep" data-fr="Balayage à deux rails">Two-rail sweep</figcaption></figure>
-    <figure><img src="docs/adaptive.png" alt="An adaptive pocket"><figcaption data-en="Adaptive clearing" data-fr="Vidage adaptatif">Adaptive clearing</figcaption></figure>
-    <figure><img src="docs/nesting.png" alt="Parts nested in holes"><figcaption data-en="Part-in-part nesting" data-fr="Imbrication pièce dans pièce">Part-in-part nesting</figcaption></figure>
+    <figure><a href="docs/weave.png"><img src="docs/weave.png" alt="Two rings extruded and woven" loading="lazy"></a><figcaption><b data-en="Extrude and weave" data-fr="Extrusion et tissage">Extrude and weave</b><span data-en="A cross section along rails, over and under where they cross." data-fr="Une section le long de rails, dessus-dessous là où ils se croisent.">A cross section along rails, over and under where they cross.</span></figcaption></figure>
+    <figure><a href="docs/sweep.png"><img src="docs/sweep.png" alt="Two moulded frames" loading="lazy"></a><figcaption><b data-en="Two-rail sweep" data-fr="Balayage à deux rails">Two-rail sweep</b><span data-en="Mouldings and frames swept between two rails." data-fr="Moulures et cadres balayés entre deux rails.">Mouldings and frames swept between two rails.</span></figcaption></figure>
+    <figure><a href="docs/adaptive.png"><img src="docs/adaptive.png" alt="An adaptive pocket" loading="lazy"></a><figcaption><b data-en="Adaptive clearing" data-fr="Vidage adaptatif">Adaptive clearing</b><span data-en="Small steps that never bury the bit, coming down in a helix." data-fr="De petits pas qui n'enterrent jamais la fraise, avec une descente en hélice.">Small steps that never bury the bit, coming down in a helix.</span></figcaption></figure>
+    <figure><a href="docs/nesting.png"><img src="docs/nesting.png" alt="Parts nested in holes" loading="lazy"></a><figcaption><b data-en="Nesting" data-fr="Imbrication">Nesting</b><span data-en="Small parts go in the holes of big ones; extra sheets when one is full." data-fr="Les petites pièces vont dans les trous des grandes ; une plaque de plus quand l'une est pleine.">Small parts go in the holes of big ones; extra sheets when one is full.</span></figcaption></figure>
+    <figure><a href="docs/poignees.png"><img src="docs/poignees.png" alt="A selected shape with its size and rotation handles" loading="lazy"></a><figcaption><b data-en="Handles" data-fr="Poignées">Handles</b><span data-en="Move, turn and resize with the mouse, or type an exact value." data-fr="Déplacez, tournez et redimensionnez à la souris, ou tapez une valeur exacte.">Move, turn and resize with the mouse, or type an exact value.</span></figcaption></figure>
+    <figure><a href="docs/pieces.png"><img src="docs/pieces.png" alt="A piece and its list in the Layers tab" loading="lazy"></a><figcaption><b data-en="Pieces" data-fr="Pièces">Pieces</b><span data-en="Named parts that move as one, each with its own machine file." data-fr="Des pièces nommées qui bougent d'un bloc, chacune avec son fichier machine.">Named parts that move as one, each with its own machine file.</span></figcaption></figure>
+    <figure><a href="docs/fiche-de-travail.png"><img src="docs/fiche-de-travail.png" alt="A job sheet with the drawing and the material setup" loading="lazy"></a><figcaption><b data-en="Job sheet" data-fr="Fiche de travail">Job sheet</b><span data-en="The drawing, the material setup and every toolpath on one page." data-fr="Le dessin, la mise en place de la matière et chaque parcours sur une page.">The drawing, the material setup and every toolpath on one page.</span></figcaption></figure>
+    <figure><a href="docs/preferences.png"><img src="docs/preferences.png" alt="The preferences window, with the language and the keys" loading="lazy"></a><figcaption><b data-en="Your way" data-fr="À votre façon">Your way</b><span data-en="English or French, and every key can be changed." data-fr="Français ou anglais, et chaque raccourci se change.">English or French, and every key can be changed.</span></figcaption></figure>
   </div>
 </section>
 
@@ -79,13 +123,51 @@
       <span class="get" data-en="Open in the browser" data-fr="Ouvrir dans le navigateur">Open in the browser</span>
     </a>
   </div>
-  <p class="small"><a href="https://github.com/mornepousse/burin/releases" data-en="All versions and checksums" data-fr="Toutes les versions et les sommes de contrôle">All versions and checksums</a></p>
+  <p class="links">
+    <a href="https://github.com/mornepousse/burin/releases/tag/v{{VERSION}}" data-en="What's new in {{VERSION}}" data-fr="Les nouveautés de la {{VERSION}}">What's new in {{VERSION}}</a>
+    <span aria-hidden="true">·</span>
+    <a href="https://github.com/mornepousse/burin/releases" data-en="All versions and checksums" data-fr="Toutes les versions et les sommes de contrôle">All versions and checksums</a>
+  </p>
+</section>
+
+<section id="faq" class="faq">
+  <h2 data-en="Questions" data-fr="Questions">Questions</h2>
+  <details>
+    <summary data-en="Is it really free?" data-fr="C'est vraiment gratuit ?">Is it really free?</summary>
+    <p data-en="Yes. Burin is free software under the GNU GPL: you can use it, share it and change it, with no account, no subscription and no advertising." data-fr="Oui. Burin est un logiciel libre sous licence GNU GPL : vous pouvez l'utiliser, le partager et le modifier, sans compte, sans abonnement et sans publicité.">Yes. Burin is free software under the GNU GPL: you can use it, share it and change it, with no account, no subscription and no advertising.</p>
+  </details>
+  <details>
+    <summary data-en="Which machines does it work with?" data-fr="Avec quelles machines fonctionne-t-il ?">Which machines does it work with?</summary>
+    <p data-en="Burin writes G-code for GRBL, Mach3, LinuxCNC and PlanetCNC controllers, and for others through post processor files (.pp). It doesn't drive the machine itself: you open the saved file in your machine's control program." data-fr="Burin écrit du G-code pour les contrôleurs GRBL, Mach3, LinuxCNC et PlanetCNC, et pour d'autres grâce aux fichiers de post-processeur (.pp). Il ne pilote pas la machine lui-même : vous ouvrez le fichier enregistré dans le programme de commande de votre machine.">Burin writes G-code for GRBL, Mach3, LinuxCNC and PlanetCNC controllers, and for others through post processor files (.pp). It doesn't drive the machine itself: you open the saved file in your machine's control program.</p>
+  </details>
+  <details>
+    <summary data-en="Can I open my .crv3d projects?" data-fr="Puis-je ouvrir mes projets .crv3d ?">Can I open my .crv3d projects?</summary>
+    <p data-en="Yes: Burin reads .crv3d files, with their shapes, toolpaths, guides, grid and notes. Some 3D parts of a project aren't read yet. It also opens SVG, DXF, STL and pictures." data-fr="Oui : Burin lit les fichiers .crv3d, avec leurs formes, parcours, repères, grille et notes. Certaines parties 3D d'un projet ne sont pas encore lues. Il ouvre aussi les SVG, DXF, STL et images.">Yes: Burin reads .crv3d files, with their shapes, toolpaths, guides, grid and notes. Some 3D parts of a project aren't read yet. It also opens SVG, DXF, STL and pictures.</p>
+  </details>
+  <details>
+    <summary data-en="Is it safe to use on my machine?" data-fr="Est-ce sans risque pour ma machine ?">Is it safe to use on my machine?</summary>
+    <p data-en="Burin hasn't been tried on a real machine yet, so treat every file as untested: check it in a simulator, run it in the air with the bit well above the material, and keep a hand near the emergency stop." data-fr="Burin n'a pas encore été essayé sur une vraie machine, alors considérez chaque fichier comme non testé : vérifiez-le dans un simulateur, faites-le tourner à vide fraise bien au-dessus de la matière, et gardez une main près de l'arrêt d'urgence.">Burin hasn't been tried on a real machine yet, so treat every file as untested: check it in a simulator, run it in the air with the bit well above the material, and keep a hand near the emergency stop.</p>
+  </details>
+  <details>
+    <summary data-en="Does it need the internet?" data-fr="Faut-il internet ?">Does it need the internet?</summary>
+    <p data-en="No. The Windows and Linux programs work fully offline. The browser version needs the internet to load once, then everything is computed in the page." data-fr="Non. Les programmes Windows et Linux marchent entièrement hors ligne. La version navigateur a besoin d'internet pour se charger, puis tout est calculé dans la page.">No. The Windows and Linux programs work fully offline. The browser version needs the internet to load once, then everything is computed in the page.</p>
+  </details>
+  <details>
+    <summary data-en="How do I report a problem?" data-fr="Comment signaler un problème ?">How do I report a problem?</summary>
+    <p data-en="In Burin, Help &gt; Send Feedback opens a draft you can read before sending; your work and file names are never in it. You can also open an issue on GitHub." data-fr="Dans Burin, Aide &gt; Envoyer un retour ouvre un brouillon que vous lisez avant de l'envoyer ; votre travail et vos noms de fichiers n'y sont jamais. Vous pouvez aussi ouvrir un ticket sur GitHub.">In Burin, Help &gt; Send Feedback opens a draft you can read before sending; your work and file names are never in it. You can also open an issue on GitHub.</p>
+  </details>
 </section>
 
 <footer>
   <p data-en="Free software under the GNU GPL, version 3 or later." data-fr="Logiciel libre sous licence GNU GPL, version 3 ou ultérieure.">Free software under the GNU GPL, version 3 or later.</p>
-  <p><a href="https://github.com/mornepousse/burin" data-en="Source code on GitHub" data-fr="Code source sur GitHub">Source code on GitHub</a></p>
+  <p><a href="https://github.com/mornepousse/burin" data-en="Source code on GitHub" data-fr="Code source sur GitHub">Source code on GitHub</a> · <a href="https://github.com/mornepousse/burin/issues" data-en="Report a problem" data-fr="Signaler un problème">Report a problem</a></p>
 </footer>
+
+<dialog id="viewer" aria-label="Picture">
+  <button type="button" class="close" aria-label="Close">×</button>
+  <img alt="">
+  <p class="caption"></p>
+</dialog>
 
 <script>
   // The main button offers the file for this computer.
@@ -111,6 +193,20 @@
   }
   button.addEventListener("click", () => { show(lang === "fr" ? "en" : "fr"); localStorage.setItem("burin-lang", lang); });
   show(lang);
+  // A picture of the gallery opens full size over the page; a click or Escape closes it.
+  const viewer = document.getElementById("viewer");
+  if (viewer.showModal) {
+    for (const link of document.querySelectorAll(".gallery a")) {
+      link.addEventListener("click", (e) => {
+        e.preventDefault();
+        viewer.querySelector("img").src = link.href;
+        viewer.querySelector("img").alt = link.querySelector("img").alt;
+        viewer.querySelector(".caption").textContent = link.parentElement.querySelector("b").textContent;
+        viewer.showModal();
+      });
+    }
+    viewer.addEventListener("click", () => viewer.close());
+  }
 </script>
 </body>
 </html>
