@@ -672,7 +672,7 @@ fn write_moves(w: &mut Writer, path: &PostPath, arcs: Option<f64>) {
             }
             continue;
         }
-        w.rate = if flat < rise.abs() { tool.plunge } else { tool.feed };
+        w.rate = if flat < rise.abs() { tool.plunge } else { tool.feed * crate::toolpath::SlowMoves::share_at(path.slow, m.p) };
         w.note_rate();
         if flat < 1e-9 && rise < 0.0 {
             w.plunge();
@@ -807,8 +807,8 @@ begin FOOTER
     }
 
     fn moves() -> Vec<Move> {
-        let r = |p| Move { p, rapid: true };
-        let f = |p| Move { p, rapid: false };
+        let r = |p| Move { p, rapid: true, join: false };
+        let f = |p| Move { p, rapid: false, join: false };
         vec![r([0.0, 0.0, 20.0]), r([10.0, 5.0, 5.0]), f([10.0, 5.0, -2.0]), f([20.0, 5.0, -2.0]), f([20.0, 15.0, -2.0]), r([20.0, 15.0, 5.0])]
     }
 
@@ -835,8 +835,8 @@ begin FOOTER
     fn notes_go_in_line_by_line_and_cannot_close_a_comment() {
         let text = "POST_NAME = \"x\"\nFILE_EXTENSION = \"nc\"\nbegin HEADER\n\"([FILE_NOTES])\"\n\"[TOOL_NOTES]!\"\n\"<[TOOLPATH_NOTES]>\"\n\"G0 X1\"\nbegin RAPID_MOVE\n\"G0\"\nbegin FEED_MOVE\n\"G1\"\nbegin FOOTER\n\"M30\"\n";
         let tool = crate::toolpath::Tool { notes: "One\nTwo".into(), ..crate::toolpath::default_tools().remove(0) };
-        let moves = [Move { p: [0.0, 0.0, 5.0], rapid: true }];
-        let paths = [PostPath { name: "a", tool: &tool, moves: &moves, dwell: 0.0, steps: None, notes: "Climb (careful)\nThen clean" }];
+        let moves = [Move { p: [0.0, 0.0, 5.0], rapid: true, join: false }];
+        let paths = [PostPath { name: "a", tool: &tool, moves: &moves, dwell: 0.0, steps: None, notes: "Climb (careful)\nThen clean", slow: None }];
         let written = |def: &PostDef, notes: &str| render(def, &paths, &PostJob { notes, ..job() }, None);
 
         // No list in the file: brackets still can't end the comment early.
@@ -870,7 +870,7 @@ begin FOOTER
     fn a_file_is_written_the_way_the_blocks_say() {
         let t = mm_tool();
         let m = moves();
-        let text = render(&def(), &[PostPath { name: "Profile 1", tool: &t, moves: &m, dwell: 0.0, steps: None, notes: "" }], &job(), None);
+        let text = render(&def(), &[PostPath { name: "Profile 1", tool: &t, moves: &m, dwell: 0.0, steps: None, notes: "", slow: None }], &job(), None);
         let l = lines(&text);
         assert_eq!(l[0], "( plate.tap by Burin )");
         // The file's SUBSTITUTE keeps the brackets in a tool's name from closing the comment early.
@@ -895,7 +895,7 @@ begin FOOTER
         let t = mm_tool();
         let m = moves();
         let j = PostJob { origin: [10.0, 5.0], z_shift: 10.0, scale: 2.0, ..job() };
-        let text = render(&def(), &[PostPath { name: "p", tool: &t, moves: &m, dwell: 0.0, steps: None, notes: "" }], &j, None);
+        let text = render(&def(), &[PostPath { name: "p", tool: &t, moves: &m, dwell: 0.0, steps: None, notes: "", slow: None }], &j, None);
         assert!(text.contains(" X0.000 Y0.000 Z30.000"), "{text}");
         assert!(text.contains(&format!(" Z16.000 F{:.1}", t.plunge * 2.0)), "{text}");
     }
@@ -906,9 +906,9 @@ begin FOOTER
         let (a, b) = (tools[0].clone(), tools[1].clone());
         let m = moves();
         let paths = [
-            PostPath { name: "One", tool: &a, moves: &m, dwell: 0.0, steps: None, notes: "" },
-            PostPath { name: "Two", tool: &a, moves: &m, dwell: 0.0, steps: None, notes: "" },
-            PostPath { name: "Three", tool: &b, moves: &m, dwell: 0.0, steps: None, notes: "" },
+            PostPath { name: "One", tool: &a, moves: &m, dwell: 0.0, steps: None, notes: "", slow: None },
+            PostPath { name: "Two", tool: &a, moves: &m, dwell: 0.0, steps: None, notes: "", slow: None },
+            PostPath { name: "Three", tool: &b, moves: &m, dwell: 0.0, steps: None, notes: "", slow: None },
         ];
         let text = render(&def(), &paths, &job(), None);
         assert!(text.contains("( Same tool: Two )"), "{text}");
@@ -921,8 +921,8 @@ begin FOOTER
     #[test]
     fn dwell_is_written_at_the_bottom_of_a_hole() {
         let t = mm_tool();
-        let m = vec![Move { p: [5.0, 5.0, 5.0], rapid: true }, Move { p: [5.0, 5.0, -3.0], rapid: false }, Move { p: [5.0, 5.0, 5.0], rapid: true }];
-        let text = render(&def(), &[PostPath { name: "d", tool: &t, moves: &m, dwell: 0.25, steps: None, notes: "" }], &job(), None);
+        let m = vec![Move { p: [5.0, 5.0, 5.0], rapid: true, join: false }, Move { p: [5.0, 5.0, -3.0], rapid: false, join: false }, Move { p: [5.0, 5.0, 5.0], rapid: true, join: false }];
+        let text = render(&def(), &[PostPath { name: "d", tool: &t, moves: &m, dwell: 0.25, steps: None, notes: "", slow: None }], &job(), None);
         assert!(text.contains("G4 P0.25"), "{text}");
     }
 
@@ -933,7 +933,7 @@ begin FOOTER
         assert_eq!(d.metric, None);
         let t = mm_tool();
         let m = moves();
-        let text = render(&d, &[PostPath { name: "p", tool: &t, moves: &m, dwell: 0.0, steps: None, notes: "" }], &job(), None);
+        let text = render(&d, &[PostPath { name: "p", tool: &t, moves: &m, dwell: 0.0, steps: None, notes: "", slow: None }], &job(), None);
         assert!(text.contains("G1 X20.0"), "{text}");
         assert!(text.ends_with('\n'));
     }
@@ -955,7 +955,7 @@ begin FOOTER
         let text = "POST_NAME = \"W\"\nLINE_NUMBER_START = 1\nLINE_NUMBER_INCREMENT = 1\nLINE_NUMBER_MAXIMUM = 2\nVAR N = [N|A|N|1.0]\nbegin HEADER\n\"[N]\"\n\"[N]\"\n\"[N]\"\nbegin RAPID_MOVE\n\"\"\nbegin FEED_MOVE\n\"\"\n";
         let d = PostDef::parse(text, &|_| None).unwrap();
         let t = mm_tool();
-        let out = render(&d, &[PostPath { name: "p", tool: &t, moves: &[], dwell: 0.0, steps: None, notes: "" }], &job(), None);
+        let out = render(&d, &[PostPath { name: "p", tool: &t, moves: &[], dwell: 0.0, steps: None, notes: "", slow: None }], &job(), None);
         assert!(out.starts_with("N1\nN2\nN1\n"), "{out}");
     }
 
@@ -997,10 +997,10 @@ begin FOOTER
     }
 
     fn circle_moves() -> Vec<Move> {
-        let mut m = vec![Move { p: [7.0, 5.0, 5.0], rapid: true }];
+        let mut m = vec![Move { p: [7.0, 5.0, 5.0], rapid: true, join: false }];
         for i in 0..=256 {
             let a = i as f64 / 256.0 * std::f64::consts::TAU;
-            m.push(Move { p: [5.0 + 2.0 * a.cos(), 5.0 + 2.0 * a.sin(), -1.0], rapid: false });
+            m.push(Move { p: [5.0 + 2.0 * a.cos(), 5.0 + 2.0 * a.sin(), -1.0], rapid: false, join: false });
         }
         m
     }
@@ -1009,7 +1009,7 @@ begin FOOTER
     fn curves_use_the_arc_blocks_when_asked_and_their_centres_are_always_written() {
         let t = mm_tool();
         let m = circle_moves();
-        let path = [PostPath { name: "p", tool: &t, moves: &m, dwell: 0.0, steps: None, notes: "" }];
+        let path = [PostPath { name: "p", tool: &t, moves: &m, dwell: 0.0, steps: None, notes: "", slow: None }];
         let plain = render(&def(), &path, &job(), None);
         assert!(!plain.contains("G3"));
         // Without a way to write the centres, it stays with straight moves.
@@ -1031,7 +1031,7 @@ begin FOOTER
         let d = PostDef::parse(&no_arcs, &|_| None).unwrap();
         let t = mm_tool();
         let m = circle_moves();
-        let text = render(&d, &[PostPath { name: "p", tool: &t, moves: &m, dwell: 0.0, steps: None, notes: "" }], &job(), Some(0.012));
+        let text = render(&d, &[PostPath { name: "p", tool: &t, moves: &m, dwell: 0.0, steps: None, notes: "", slow: None }], &job(), Some(0.012));
         assert!(!text.contains(" G2 ") && !text.contains(" G3 "), "{text}");
     }
 
@@ -1055,11 +1055,11 @@ begin FOOTER
         }
         d.blocks.insert("HEADER".to_string(), vec!["HEAD".to_string()]);
         d.blocks.insert("FOOTER".to_string(), vec!["FOOT".to_string()]);
-        let m = |p: [f64; 3], rapid: bool| Move { p, rapid };
+        let m = |p: [f64; 3], rapid: bool| Move { p, rapid, join: false };
         let one = vec![m([10.0, 0.0, 5.0], true), m([20.0, 0.0, 5.0], true), m([20.0, 0.0, -2.0], false), m([30.0, 0.0, -2.0], false), m([40.0, 0.0, -2.0], false), m([40.0, 0.0, 5.0], true)];
         let (t, mut other) = (mm_tool(), mm_tool());
         other.number += 1;
-        let path = |tool, moves| PostPath { name: "P", tool, moves, dwell: 0.0, steps: None, notes: "" };
+        let path = |tool, moves| PostPath { name: "P", tool, moves, dwell: 0.0, steps: None, notes: "", slow: None };
         let text = render(&d, &[path(&t, &one), path(&t, &one), path(&other, &one)], &job(), None);
         let blocks: Vec<String> = text.lines().map(|l| l.split_whitespace().next().unwrap_or("").trim_end_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '-').to_string()).collect();
         let first = ["HEAD", "INIT", "X", "RATE", "DOWN", "RATE", "G", "X", "UP"];
@@ -1076,12 +1076,12 @@ begin FOOTER
 
     #[test]
     fn a_file_can_ask_to_come_down_at_the_plunge_rate_the_whole_way() {
-        let m = |p: [f64; 3], rapid: bool| Move { p, rapid };
+        let m = |p: [f64; 3], rapid: bool| Move { p, rapid, join: false };
         let moves = vec![m([10.0, 0.0, 15.0], true), m([10.0, 0.0, 2.0], true), m([10.0, 0.0, -3.0], false)];
         let t = mm_tool();
         let mut d = def();
         d.blocks.insert("PLUNGE_MOVE".to_string(), vec!["DOWN [Z]".to_string()]);
-        let text = |d: &PostDef| render(d, &[PostPath { name: "P", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "" }], &job(), None);
+        let text = |d: &PostDef| render(d, &[PostPath { name: "P", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "", slow: None }], &job(), None);
         assert_eq!(text(&d).lines().filter(|l| l.contains("DOWN")).count(), 1, "fast to just above, by default");
         d.rapid_plunge = false;
         assert_eq!(text(&d).lines().filter(|l| l.contains("DOWN")).count(), 2, "{}", text(&d));

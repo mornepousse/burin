@@ -38,6 +38,13 @@ pub const RAPID: Color32 = Color32::from_rgb(255, 112, 92);
 /// Going straight down into the material, and coming straight back up, as the original tells them apart.
 pub const PLUNGE: Color32 = Color32::from_rgb(0, 220, 220);
 pub const RETRACT: Color32 = Color32::from_rgb(60, 205, 90);
+/// Joins: purple, as in the original, made lighter to show on the dark view.
+/// The rulers while the bottom side of a two-sided job is worked on: the original's default,
+/// `0x64C2ED` as Windows keeps colours, blue first.
+pub const BOTTOM_RULER: Color32 = Color32::from_rgb((BOTTOM_RULER_VALUE & 0xff) as u8, ((BOTTOM_RULER_VALUE >> 8) & 0xff) as u8, ((BOTTOM_RULER_VALUE >> 16) & 0xff) as u8);
+/// The same colour as the original keeps it, a Windows colour value (red in the low byte).
+pub const BOTTOM_RULER_VALUE: u32 = 6603501;
+pub const JOIN: Color32 = Color32::from_rgb(190, 100, 230);
 pub const BACKDROP_TOP: Color32 = Color32::from_rgb(38, 42, 49);
 pub const BACKDROP_BOTTOM: Color32 = Color32::from_rgb(13, 15, 18);
 /// Guide lines that are never cut.

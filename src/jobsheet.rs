@@ -26,7 +26,7 @@ impl App {
         let length = |v: f64| format!("{}{unit}", (v * 10000.0).round() / 10000.0);
         let machine = self.doc.machine_on_job();
         let rapid = if inches { toolpath::RAPID_RATE_MM / 25.4 } else { toolpath::RAPID_RATE_MM };
-        let seconds = |t: &Toolpath| toolpath::estimate_seconds(toolpath::working_moves(&t.moves), &t.op.tool, rapid, t.op.dwell);
+        let seconds = |t: &Toolpath| self.toolpath_seconds(t, rapid);
         let calculated = |t: &Toolpath| !t.moves.is_empty();
 
         let mut out = format!("<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>{}</title><style>{STYLE}</style></head><body>\n", escaped(title));
@@ -37,7 +37,7 @@ impl App {
         }
         out.push_str(&format!("<section><h2>{}</h2>\n", escaped(tr("Job layout"))));
         out.push_str(&format!("<svg viewBox=\"0 0 {} {}\" xmlns=\"http://www.w3.org/2000/svg\"><g transform=\"translate(0 {}) scale(1 -1)\" fill=\"none\" stroke=\"#1b1d21\">\n", job.width, job.height, job.height));
-        for v in self.doc.vectors.iter().filter(|v| !v.construction && self.doc.layers.get(v.layer).is_none_or(|l| l.visible)) {
+        for v in self.doc.vectors.iter().filter(|v| !v.construction && self.doc.shows(v)) {
             for p in &v.paths {
                 let points: Vec<String> = p.pts.iter().map(|q| format!("{:.4},{:.4}", q[0], q[1])).collect();
                 let shape = if p.closed { "polygon" } else { "polyline" };

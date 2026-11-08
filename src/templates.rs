@@ -156,7 +156,7 @@ impl App {
             op.source = op.selector.as_ref().map_or(Vec::new(), |f| self.filter_ids(f, op.tool.dia));
             op.paths = op.source.iter().filter_map(|id| lines.get(id)).flatten().cloned().collect();
             let color = TOOLPATH_COLOURS[self.doc.toolpaths.len() % TOOLPATH_COLOURS.len()];
-            self.doc.toolpaths.push(Toolpath { op, visible: true, color, moves: Arc::new(Vec::new()), kept_moves: None, kept_steps: None });
+            self.doc.toolpaths.push(Toolpath { op, visible: true, color, moves: Arc::new(Vec::new()), kept_moves: None, kept_steps: None, face: self.doc.active_face, sheet: self.doc.active_sheet });
         }
         self.selected_tp = Some(self.doc.toolpaths.len() - 1);
         self.right_open = true;

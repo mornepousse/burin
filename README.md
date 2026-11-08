@@ -9,7 +9,9 @@
 Un logiciel de bureau pour dessiner des pièces, préparer des parcours d'outil
 et écrire les fichiers de commande d'une machine CNC.
 
-Linux · Windows · Français · English
+Linux · Windows · Navigateur · Français · English
+
+**[Essayer dans le navigateur](https://mornepousse.github.io/burin/)** : rien à installer, tout se calcule dans la page.
 
 </div>
 
@@ -26,15 +28,15 @@ Linux · Windows · Français · English
 |---|---|
 | **Dessiner** | Lignes, courbes, arcs, cercles, ellipses, rectangles, polygones, étoiles, spirales, texte (polices de l'ordinateur, gras, italique, alignement, et polices à trait unique pour la gravure), cotes, contraintes d'esquisse |
 | **Modifier** | Déplacer, tourner et redimensionner à la souris (avec une valeur exacte tapée au clavier), décaler, souder, couper, aligner, copier en série, lisser les tracés |
-| **Organiser** | Calques, groupes et **pièces** : on sélectionne un seul trou sans rien dégrouper, mais la pièce se déplace d'un bloc |
-| **Modeler** | Composants 3D, reliefs importés, cliparts, copie du modèle visible, contour d'un composant, découpe à l'intérieur ou à l'extérieur de formes, échelle Z du modèle |
+| **Organiser** | Calques, groupes, **pièces** (on sélectionne un seul trou sans rien dégrouper, mais la pièce se déplace d'un bloc), **plusieurs plaques** par travail, imbrication qui ajoute des plaques et peut tourner les pièces |
+| **Modeler** | Composants 3D, reliefs importés, cliparts, sculpture, estampage, balayage à deux rails, extrusion et tissage, copie du modèle visible, contour d'un composant, découpe à l'intérieur ou à l'extérieur de formes, échelle Z du modèle |
 | **Usiner** | Contour, poche, perçage, gravure, gravure en V, ébauche et finition 3D, prisme, texture, moulure, cannelure, chanfrein |
-| **Préparer** | Rampes, entrées et sorties, attaches, ordre de coupe, fusion de parcours, modèles de parcours réutilisables |
+| **Préparer** | Rampes, entrées et sorties, attaches, ordre de coupe, fusion de parcours, modèles de parcours réutilisables, poche à deux outils qui vide ce que le grand ne peut pas atteindre, **vidage adaptatif** (l'outil ne mord jamais plus que sa passe), ralentissement dans les coins serrés |
 | **Calculer** | Un calcul dans n'importe quel champ (`W/2`, `T-0.1`…), et des **variables du document** (`{epaisseur}`) : les profondeurs des parcours les suivent quand elles changent |
 | **Vérifier** | Aperçu 3D de la coupe (rapides, plongées et remontées de couleurs différentes), estimation du temps, **vérification avant coupe** (vitesses à 0, outil trop court, rapides dans la matière, attaches trop fines…), fiche de travail |
 | **Reprendre** | Après un arrêt, un fichier qui repart d'un passage choisi d'un parcours |
 | **Écrire** | G-code générique, GRBL, Mach3, PlanetCNC, et vos post-processeurs `.pp` |
-| **Échanger** | Lit les projets `.crv3d` et les fichiers G-code d'autres logiciels, importe SVG, DXF, STL et images, exporte SVG, EPS, PDF, STL, imprime via un PDF (format du papier, taille réelle sur plusieurs pages ou réduit à une page) |
+| **Échanger** | Lit les projets `.crv3d` et les fichiers G-code d'autres logiciels, importe SVG, DXF, STL et images, exporte SVG, EPS, AI, PDF, STL, imprime via un PDF (format du papier, taille réelle sur plusieurs pages ou réduit à une page) |
 
 Le détail de ce qui manque est à la fin de cette page.
 
@@ -82,7 +84,8 @@ cargo test
 
 ### Dans un navigateur
 
-`release/web.sh` fabrique la version web dans `dist-web/` : une page et ses fichiers, à déposer tels quels
+La version web est en ligne sur [mornepousse.github.io/burin](https://mornepousse.github.io/burin/).
+`release/web.sh` la fabrique dans `dist-web/` : une page et ses fichiers, à déposer tels quels
 sur n'importe quel hébergement de pages (GitHub Pages, par exemple). Rien n'est installé et rien ne part de
 l'ordinateur : tout se calcule dans la page.
 

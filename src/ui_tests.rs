@@ -193,7 +193,7 @@ fn view_tools_stay_clear_of_the_right_panel_in_a_narrow_window() {
     click(&mut h, "OK");
     h.state_mut().right_open = true;
     h.run();
-    let last = h.get_by_label("Show or hide the right panel").rect();
+    let last = h.get_by_label("Tile Windows Horizontal").rect();
     assert!(last.right() <= 943.0 - 282.0, "the last tool ends at {}", last.right());
     click(&mut h, "Show grid");
     assert!(h.state().grid);
@@ -277,6 +277,55 @@ fn fillet_form_rounds_the_clicked_corner() {
     let corner = h.state().to_screen([3.0, 3.0]);
     click_at(&mut h, corner);
     assert!(h.state().doc.vectors[0].paths[0].pts.len() > 10);
+}
+
+#[test]
+fn tools_can_be_kept_in_a_group_of_their_own() {
+    let mut h = harness();
+    click(&mut h, "Create a new file");
+    click(&mut h, "OK");
+    h.state_mut().right_open = true;
+    h.run();
+    click(&mut h, "Profile toolpath");
+    click(&mut h, "Select ...");
+    click(&mut h, "End Mill (0.5 inch)");
+    click(&mut h, "New Group");
+    // The name starts as "New Group"; Apply puts the chosen tool in it.
+    h.get_all_by_value("New Group").next().unwrap().focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.get_all_by_value("New Group").next().unwrap().type_text("Roughing");
+    h.run();
+    click(&mut h, "Apply");
+    // An empty group at first, as the original's New Group makes; tools are dragged onto it.
+    assert!(h.query_by_label("Roughing").is_some(), "shown as a folder of its own");
+    let tools = h.state().tool_edit.clone().unwrap();
+    assert!(tools.iter().all(|t| t.group.is_empty()), "nothing in it yet");
+    let from = h.get_all_by_label("End Mill (0.5 inch)").map(|n| n.rect().center()).min_by(|a, b| a.x.total_cmp(&b.x)).unwrap();
+    let to = h.get_all_by_label("Roughing").map(|n| n.rect().center()).min_by(|a, b| a.x.total_cmp(&b.x)).unwrap();
+    drag(&mut h, from, to);
+    let tools = h.state().tool_edit.clone().unwrap();
+    assert_eq!(tools.iter().find(|t| t.label() == "End Mill (0.5 inch)").unwrap().group, "Roughing");
+    // Dragged onto the group's folder, another tool joins it.
+    let from = h.get_all_by_label("End Mill (0.25 inch)").map(|n| n.rect().center()).min_by(|a, b| a.x.total_cmp(&b.x)).unwrap();
+    let to = h.get_all_by_label("Roughing").map(|n| n.rect().center()).min_by(|a, b| a.x.total_cmp(&b.x)).unwrap();
+    drag(&mut h, from, to);
+    let tools = h.state().tool_edit.clone().unwrap();
+    assert_eq!(tools.iter().find(|t| t.label() == "End Mill (0.25 inch)").unwrap().group, "Roughing", "dragged in");
+    // And dragged back onto the units' folder, it leaves.
+    let from = h.get_all_by_label("End Mill (0.25 inch)").map(|n| n.rect().center()).min_by(|a, b| a.x.total_cmp(&b.x)).unwrap();
+    let to = h.get_by_label("Imperial Tools").rect().center();
+    drag(&mut h, from, to);
+    let tools = h.state().tool_edit.clone().unwrap();
+    assert_eq!(tools.iter().find(|t| t.label() == "End Mill (0.25 inch)").unwrap().group, "", "dragged out");
+    let tree = h.get_all_by_label("End Mill (0.5 inch)").map(|n| n.rect().center()).min_by(|a, b| a.x.total_cmp(&b.x)).unwrap();
+    click_at(&mut h, tree);
+    h.run();
+    click(&mut h, "Use This Tool");
+    assert!(h.state().doc.tools.iter().any(|t| t.group == "Roughing"), "kept with the tools");
+    assert_eq!(h.state().doc.tool_groups, ["Roughing"], "and the group with the project");
+    let text = serde_json::to_string(&h.state().doc.tools).unwrap();
+    assert_eq!(text.matches("\"group\"").count(), 1, "only grouped tools say so");
 }
 
 #[test]
@@ -1639,11 +1688,11 @@ fn opening_a_project_brings_its_toolpaths_with_their_tool_settings_and_moves() {
     // Moves sit on the sheet like the shapes do: 200 up from the file's Y.
     assert_eq!(a.doc.machine_on_job().home, [0.0, 200.0, 20.0]);
     assert_eq!(a.doc.machine.home, [0.0, 0.0, 20.0], "measured from the zero, at the sheet's top left here");
-    assert_eq!(t.moves[0], crate::toolpath::Move { p: [0.0, 200.0, 20.0], rapid: true });
-    assert_eq!(t.moves[1], crate::toolpath::Move { p: [10.0, 190.0, 15.0], rapid: true });
+    assert_eq!(t.moves[0], crate::toolpath::Move { p: [0.0, 200.0, 20.0], rapid: true, join: false });
+    assert_eq!(t.moves[1], crate::toolpath::Move { p: [10.0, 190.0, 15.0], rapid: true, join: false });
     // It comes down fast to just above the material, then slowly.
-    assert_eq!(t.moves[2], crate::toolpath::Move { p: [10.0, 190.0, 2.0], rapid: true });
-    assert_eq!(t.moves[3], crate::toolpath::Move { p: [10.0, 190.0, -6.0], rapid: false });
+    assert_eq!(t.moves[2], crate::toolpath::Move { p: [10.0, 190.0, 2.0], rapid: true, join: false });
+    assert_eq!(t.moves[3], crate::toolpath::Move { p: [10.0, 190.0, -6.0], rapid: false, join: false });
     // It knows which shapes it was made from.
     assert_eq!(t.op.source.len(), 1);
     assert!(!t.op.paths.is_empty());
@@ -2576,7 +2625,7 @@ fn the_carve_preview_is_as_fine_as_the_smallest_tool_needs() {
     h.state_mut().doc.job.height = 400.0;
     let mut op = crate::toolpath::blank_op(crate::toolpath::OpKind::Profile, "p".into(), crate::toolpath::default_tools()[0].in_units(true), 3.0, Vec::new());
     op.tool.dia = 3.0;
-    h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op: op.clone(), visible: true, color: [0, 0, 0], moves: Default::default(), kept_moves: None, kept_steps: None });
+    h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op: op.clone(), visible: true, color: [0, 0, 0], moves: Default::default(), kept_moves: None, kept_steps: None, face: 0, sheet: 0 });
     let points = h.state().sim_points();
     let cell = (600.0f64 * 400.0 / points as f64).sqrt();
     assert!((cell - 0.375).abs() < 1e-3, "{cell}");
@@ -2682,7 +2731,7 @@ fn going_to_the_end_of_a_big_carve_never_holds_the_window_long() {
     // Many tiny moves, as in a real job.
     let cut: Vec<crate::toolpath::Move> = (0..400_000).map(|i| {
         let a = i as f64 * 0.001;
-        crate::toolpath::Move { p: [5.0 + 3.0 * a.cos(), 5.0 + 3.0 * a.sin(), -0.1], rapid: false }
+        crate::toolpath::Move { p: [5.0 + 3.0 * a.cos(), 5.0 + 3.0 * a.sin(), -0.1], rapid: false, join: false }
     }).collect();
     h.state_mut().doc.toolpaths[0].moves = std::sync::Arc::new(cut);
     h.state_mut().doc.toolpaths[0].visible = false;
@@ -2721,7 +2770,7 @@ fn a_toolpath_deeper_than_its_settings_say_warns_from_its_moves() {
     let thick = h.state().doc.job.thickness;
     h.state_mut().doc.toolpaths[0].op.kind = crate::toolpath::OpKind::VCarve;
     h.state_mut().doc.toolpaths[0].op.flat_depth = 0.0;
-    h.state_mut().doc.toolpaths[0].moves = std::sync::Arc::new(vec![crate::toolpath::Move { p: [1.0, 1.0, 1.0], rapid: true }, crate::toolpath::Move { p: [1.0, 1.0, -thick - 0.2], rapid: false }]);
+    h.state_mut().doc.toolpaths[0].moves = std::sync::Arc::new(vec![crate::toolpath::Move { p: [1.0, 1.0, 1.0], rapid: true, join: false }, crate::toolpath::Move { p: [1.0, 1.0, -thick - 0.2], rapid: false, join: false }]);
     h.state_mut().warn_if_too_deep(&[0]);
     assert!(h.state().message.as_deref().unwrap_or("").contains("cut through"), "{:?}", h.state().message);
 }
@@ -3603,7 +3652,10 @@ fn with_handles_a_side_stretches_one_way_and_without_them_it_only_moves() {
     // With them: the left side stays, and only the width changes.
     h.state_mut().handles_on = Some(vec![id]);
     h.run();
-    drag(&mut h, side, further);
+    // The handle is drawn 8 pixels out from the side, as the original does.
+    let out = egui::vec2(8.0, 0.0);
+    assert!((h.state().handle_rects()[5].0 - (side + out)).length() < 0.01);
+    drag(&mut h, side + out, further + out);
     let (at, nw, nh) = size(&h);
     assert!((at[0] - lo[0]).abs() < 1e-6, "the far side stays");
     assert!((nw - w - 1.0).abs() < 0.1, "{nw}");
@@ -4308,14 +4360,14 @@ fn the_icon_is_a_rounded_square_with_clear_corners() {
 fn two_parts_in_two_toolpaths(h: &mut Harness<'static, App>) {
     use crate::toolpath::{self, Move, OpKind};
     let square = |x: f64, y: f64, size: f64, z: f64| -> Vec<Move> {
-        let mut m = vec![Move { p: [x, y, 0.2], rapid: true }, Move { p: [x, y, z], rapid: false }];
+        let mut m = vec![Move { p: [x, y, 0.2], rapid: true, join: false }, Move { p: [x, y, z], rapid: false, join: false }];
         for p in [[x + size, y], [x + size, y + size], [x, y + size], [x, y]] {
-            m.push(Move { p: [p[0], p[1], z], rapid: false });
+            m.push(Move { p: [p[0], p[1], z], rapid: false, join: false });
         }
-        m.push(Move { p: [x, y, 0.8], rapid: true });
+        m.push(Move { p: [x, y, 0.8], rapid: true, join: false });
         m
     };
-    let home = Move { p: [0.0, 0.0, 0.8], rapid: true };
+    let home = Move { p: [0.0, 0.0, 0.8], rapid: true, join: false };
     let path = |parts: Vec<Vec<Move>>| {
         let mut m = vec![home];
         m.extend(parts.into_iter().flatten());
@@ -4327,7 +4379,7 @@ fn two_parts_in_two_toolpaths(h: &mut Harness<'static, App>) {
     let outer = path(vec![square(1.0, 1.0, 3.0, -0.5), square(6.0, 1.0, 3.0, -0.5)]);
     for (name, moves) in [("Holes", inner), ("Outlines", outer)] {
         let op = toolpath::blank_op(OpKind::Profile, name.into(), tool.clone(), 0.5, Vec::new());
-        h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves, kept_moves: None, kept_steps: None });
+        h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves, kept_moves: None, kept_steps: None, face: 0, sheet: 0 });
     }
 }
 
@@ -4456,7 +4508,7 @@ fn merging_real_toolpaths_keeps_every_cut_and_makes_a_machine_file() {
         let op = toolpath::blank_op(kind, name.into(), tool.clone(), depth, paths);
         let moves = toolpath::generate(&op, machine, &job, None).unwrap();
         assert!(!moves.is_empty());
-        h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(moves), kept_moves: None, kept_steps: None });
+        h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(moves), kept_moves: None, kept_steps: None, face: 0, sheet: 0 });
     }
     h.state_mut().open_merge_form();
     h.run();
@@ -4576,7 +4628,7 @@ fn a_layer_and_a_toolpath(h: &mut Harness<'static, App>) -> usize {
     let doc = &h.state().doc;
     let (machine, job) = (doc.machine_on_job(), toolpath::JobSize { width: doc.job.width, height: doc.job.height, thickness: doc.job.thickness });
     let moves = toolpath::generate(&op, machine, &job, None).unwrap();
-    h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(moves), kept_moves: None, kept_steps: None });
+    h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(moves), kept_moves: None, kept_steps: None, face: 0, sheet: 0 });
     h.state_mut().selected_tp = Some(0);
     on
 }
@@ -5008,8 +5060,8 @@ fn saving_stops_on_a_danger_until_told_to_go_on() {
     let mut h = job_with_square([3.0, 3.0]);
     let mut op = crate::toolpath::blank_op(crate::toolpath::OpKind::Profile, "Around".into(), crate::toolpath::default_tools().remove(0), 0.25, Vec::new());
     op.tool.feed = 0.0;
-    let moves = vec![Move { p: [0.0, 0.0, 0.8], rapid: true }, Move { p: [1.0, 1.0, -0.1], rapid: false }, Move { p: [2.0, 1.0, -0.1], rapid: false }, Move { p: [0.0, 0.0, 0.8], rapid: true }];
-    h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(moves), kept_moves: None, kept_steps: None });
+    let moves = vec![Move { p: [0.0, 0.0, 0.8], rapid: true, join: false }, Move { p: [1.0, 1.0, -0.1], rapid: false, join: false }, Move { p: [2.0, 1.0, -0.1], rapid: false, join: false }, Move { p: [0.0, 0.0, 0.8], rapid: true, join: false }];
+    h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(moves), kept_moves: None, kept_steps: None, face: 0, sheet: 0 });
     h.state_mut().save_gcode_dialog();
     assert!(h.state().checks_open);
     assert_eq!(h.state().checks_for_save, Some(None));
@@ -5026,11 +5078,11 @@ fn saving_stops_on_a_danger_until_told_to_go_on() {
 fn each_kind_of_move_is_told_apart_for_drawing() {
     use crate::toolpath::{move_kind, Move, MoveKind};
     let at = [1.0, 1.0, 5.0];
-    assert_eq!(move_kind(at, &Move { p: [1.0, 1.0, -2.0], rapid: false }), MoveKind::Plunge);
-    assert_eq!(move_kind([1.0, 1.0, -2.0], &Move { p: [1.0, 1.0, 5.0], rapid: true }), MoveKind::Retract);
-    assert_eq!(move_kind(at, &Move { p: [4.0, 1.0, 5.0], rapid: true }), MoveKind::Rapid);
-    assert_eq!(move_kind(at, &Move { p: [1.0, 1.0, 2.0], rapid: true }), MoveKind::Rapid, "fast and down is a fast move");
-    assert_eq!(move_kind(at, &Move { p: [4.0, 1.0, -2.0], rapid: false }), MoveKind::Cut, "a ramp cuts");
+    assert_eq!(move_kind(at, &Move { p: [1.0, 1.0, -2.0], rapid: false, join: false }), MoveKind::Plunge);
+    assert_eq!(move_kind([1.0, 1.0, -2.0], &Move { p: [1.0, 1.0, 5.0], rapid: true, join: false }), MoveKind::Retract);
+    assert_eq!(move_kind(at, &Move { p: [4.0, 1.0, 5.0], rapid: true, join: false }), MoveKind::Rapid);
+    assert_eq!(move_kind(at, &Move { p: [1.0, 1.0, 2.0], rapid: true, join: false }), MoveKind::Rapid, "fast and down is a fast move");
+    assert_eq!(move_kind(at, &Move { p: [4.0, 1.0, -2.0], rapid: false, join: false }), MoveKind::Cut, "a ramp cuts");
 }
 
 #[test]
@@ -5819,5 +5871,729 @@ fn one_toolpath_moves() {
         for w in m.windows(2).filter(|w| w[0].rapid != w[1].rapid).take(16) {
             println!("   {:?} -> {:?} ({})", w[0].p.map(|v| (v * 100.0).round() / 100.0), w[1].p.map(|v| (v * 100.0).round() / 100.0), if w[1].rapid { "lift" } else { "down" });
         }
+    }
+}
+
+/// Page Up puts the 2D and 3D views side by side, Page Down one above the other, the view in
+/// use first; the same key again goes back to one view, and a click in the other view uses it.
+#[test]
+fn page_keys_show_both_views_at_once() {
+    use crate::app::Tiling;
+    let mut h = job_with_square([5.0, 5.0]);
+    h.run();
+    let whole = h.state().view_rect;
+    h.key_press(egui::Key::PageUp);
+    h.run();
+    h.run();
+    assert_eq!(h.state().tiled, Some(Tiling::SideBySide));
+    let left = h.state().view_rect;
+    assert!(left.width() < whole.width() * 0.6, "{left:?} {whole:?}");
+    assert!((left.height() - whole.height()).abs() < 1.0);
+    // The square is still drawn where the 2D view says it is, inside the left half.
+    let at = h.state().to_screen([5.0, 5.0]);
+    assert!(left.contains(at), "{at:?} {left:?}");
+    // A click in the right half makes the 3D view the one in use.
+    click_at(&mut h, egui::pos2(whole.right() - 40.0, whole.center().y));
+    assert!(h.state().view3d);
+    h.key_press(egui::Key::PageDown);
+    h.run();
+    assert_eq!(h.state().tiled, Some(Tiling::Stacked));
+    let top = h.state().view_rect;
+    assert!(top.height() < whole.height() * 0.6 && top.top() < whole.center().y, "the 3D view in use goes on top: {top:?}");
+    h.key_press(egui::Key::PageDown);
+    h.run();
+    assert_eq!(h.state().tiled, None);
+}
+
+/// The view toolbar's last two buttons are the original's Tile Windows Vertical and Horizontal.
+#[test]
+fn toolbar_tiles_the_views() {
+    use crate::app::Tiling;
+    let mut h = job_with_square([5.0, 5.0]);
+    h.run();
+    click(&mut h, "Tile Windows Vertical");
+    assert_eq!(h.state().tiled, Some(Tiling::SideBySide));
+    click(&mut h, "Tile Windows Horizontal");
+    assert_eq!(h.state().tiled, Some(Tiling::Stacked));
+    click(&mut h, "Tile Windows Horizontal");
+    assert_eq!(h.state().tiled, None);
+}
+
+/// With a component chosen and no shape, Up and Down move through the component list and
+/// stop at its ends, and Delete takes the component away, as the original's component tree does.
+#[test]
+fn component_list_takes_the_arrow_and_delete_keys() {
+    let mut h = harness();
+    h.state_mut().load_sample();
+    h.state_mut().left_tab = crate::app::LeftTab::Modeling;
+    h.state_mut().selected.clear();
+    h.state_mut().selected_comp = Some(0);
+    h.run();
+    let count = h.state().doc.components.len();
+    assert!(count >= 2, "the sample has {count} components");
+    h.key_press(egui::Key::ArrowDown);
+    h.run();
+    assert_eq!(h.state().selected_comp, Some(1));
+    h.key_press(egui::Key::ArrowUp);
+    h.run();
+    h.key_press(egui::Key::ArrowUp);
+    h.run();
+    assert_eq!(h.state().selected_comp, Some(0), "it stops at the top");
+    h.key_press(egui::Key::Delete);
+    h.run();
+    assert_eq!(h.state().doc.components.len(), count - 1);
+    assert_eq!(h.state().selected_comp, None);
+}
+
+/// Add Zero Plane puts a flat component under the whole model, so a dish cut after it goes
+/// below zero and a 3D finishing toolpath then carves it into the material.
+#[test]
+fn a_zero_plane_lets_a_dish_go_into_the_material() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().selected = vec![id];
+    h.state_mut().open_shape_form(None);
+    let crate::app::LeftForm::Shape(mut f) = h.state().left.clone() else { panic!("the shape form") };
+    f.combine = crate::relief::Combine::Subtract;
+    f.profile = crate::relief::Profile::Round;
+    f.height = 0.25;
+    h.state_mut().add_component(f);
+    h.state_mut().refresh_model();
+    assert!(h.state().model.as_ref().map_or(true, |m| m.data.iter().all(|v| *v == 0.0)), "nothing to cut into");
+    h.state_mut().left_tab = crate::app::LeftTab::Modeling;
+    h.state_mut().left = LeftForm::None;
+    h.run();
+    click(&mut h, "Add Zero Plane");
+    assert_eq!(h.state().doc.components[0].name, "Zero Plane");
+    assert!(h.state().doc.components[0].whole);
+    h.state_mut().refresh_model();
+    let low = h.state().model.as_ref().unwrap().data.iter().cloned().fold(0.0f32, f32::min);
+    assert!(low < -0.2, "the dish goes below zero: {low}");
+    h.state_mut().do_undo();
+    assert!(h.state().doc.components.iter().all(|c| c.name != "Zero Plane"), "one step to undo");
+}
+
+/// Space opens the last drawing form again, as the original's manual says.
+#[test]
+fn space_opens_the_last_drawing_form_again() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().selected.clear();
+    h.run();
+    h.key_press(egui::Key::Space);
+    h.run();
+    assert!(matches!(h.state().left, LeftForm::None), "nothing drawn yet: nothing to open");
+    h.state_mut().start_draw(crate::app::DrawKind::Star);
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(matches!(h.state().left, LeftForm::None));
+    h.key_press(egui::Key::Space);
+    h.run();
+    assert!(matches!(&h.state().left, LeftForm::Draw(f) if f.kind == crate::app::DrawKind::Star));
+}
+
+/// Groups go inside groups: New Group with a group chosen makes one inside it, New makes a tool
+/// in it, and a group dragged onto another goes inside with everything it holds.
+#[test]
+fn tool_groups_can_hold_groups() {
+    use crate::panels::{group_paths, move_group};
+    let mut tools = crate::toolpath::default_tools();
+    tools[0].group = "Roughing/Big".into();
+    let mut groups = vec!["Finishing".to_string()];
+    assert_eq!(group_paths(&groups, &tools), ["Finishing", "Roughing", "Roughing/Big"]);
+    // Finishing goes inside Roughing; Roughing can't go inside its own Big.
+    assert_eq!(move_group(&mut groups, &mut tools, "Finishing", "Roughing").as_deref(), Some("Roughing/Finishing"));
+    assert_eq!(move_group(&mut groups, &mut tools, "Roughing", "Roughing/Big"), None);
+    // Big, with its tool, goes to the top.
+    assert_eq!(move_group(&mut groups, &mut tools, "Roughing/Big", "").as_deref(), Some("Big"));
+    assert_eq!(tools[0].group, "Big");
+    assert_eq!(group_paths(&groups, &tools), ["Big", "Roughing", "Roughing/Finishing"]);
+
+    let mut h = harness();
+    click(&mut h, "Create a new file");
+    click(&mut h, "OK");
+    h.state_mut().right_open = true;
+    h.state_mut().open_tool_list(None);
+    h.state_mut().tool_groups_edit = vec!["Roughing".into()];
+    h.run();
+    click(&mut h, "Roughing");
+    assert_eq!(h.state().tool_group_picked.as_deref(), Some("Roughing"));
+    click(&mut h, "New Group");
+    h.get_all_by_value("New Group").next().unwrap().focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.get_all_by_value("New Group").next().unwrap().type_text("Big");
+    h.run();
+    click(&mut h, "Apply");
+    assert!(h.state().tool_groups_edit.contains(&"Roughing/Big".to_string()), "{:?}", h.state().tool_groups_edit);
+    assert!(h.query_by_label("Big").is_some(), "shown inside Roughing");
+    click(&mut h, "Big");
+    click(&mut h, "New ...");
+    let tools = h.state().tool_edit.clone().unwrap();
+    assert_eq!(tools.last().unwrap().group, "Roughing/Big", "the new tool goes into the chosen group");
+}
+
+/// Export as 3D Clipart writes the whole model, every component in order, as the original's
+/// does; importing it or choosing it in the Clipart tab's folder brings them back together in the
+/// middle of the job. With nothing in the model it refuses.
+#[test]
+fn the_model_goes_out_as_3d_clipart_and_comes_back() {
+    let mut h = job_with_square([2.0, 2.0]);
+    h.state_mut().export_3d_clipart();
+    assert!(h.state_mut().message.take().is_some(), "nothing in the model: refused");
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().selected = vec![id];
+    h.state_mut().open_shape_form(None);
+    let LeftForm::Shape(f) = h.state().left.clone() else { panic!("the shape form") };
+    h.state_mut().add_component(f);
+    h.state_mut().left = LeftForm::None;
+    h.state_mut().add_zero_plane();
+    let cs = h.state().doc.components.clone();
+    assert_eq!(cs.len(), 2);
+    let text = crate::modeltools::clip3d_text(&cs);
+    let back = crate::modeltools::read_clip3d(&text).unwrap();
+    assert_eq!(back.len(), 2, "every component");
+    assert_eq!(back[0].name, "Zero Plane", "in their order");
+    let all: Vec<crate::geom::Path> = back.iter().flat_map(|c| c.paths.clone()).collect();
+    let (lo, _) = crate::geom::bbox(&all).unwrap();
+    assert!(lo[0].abs() < 1e-9 && lo[1].abs() < 1e-9, "kept from their corner");
+    // A file of the first version, with one component, still reads.
+    let old = serde_json::json!({ "burin_3dclip": 1, "component": cs[1] }).to_string();
+    assert_eq!(crate::modeltools::read_clip3d(&old).unwrap().len(), 1);
+    assert!(crate::modeltools::read_clip3d("{}").is_err());
+    let dir = std::env::temp_dir().join(format!("burin-clip3d-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("dome.3dclip"), &text).unwrap();
+    h.state_mut().import_3d_clipart(&dir.join("dome.3dclip")).unwrap();
+    assert_eq!(h.state().doc.components.len(), 4);
+    let (lo, hi) = crate::geom::bbox(&h.state().doc.components[2].paths).unwrap();
+    let j = h.state().doc.job.clone();
+    assert!(((lo[0] + hi[0]) / 2.0 - j.width / 2.0).abs() < 1e-9, "together in the middle of the job");
+    assert_eq!(h.state().selected_comp, Some(3));
+    // In a library folder of the Clipart tab, a click brings it in.
+    h.state_mut().clip_folders = vec![dir.clone()];
+    h.state_mut().clip_folder = 1;
+    h.state_mut().clip_tab = 0;
+    h.state_mut().left_tab = crate::app::LeftTab::Clipart;
+    h.run();
+    h.run();
+    click(&mut h, "dome");
+    assert_eq!(h.state().doc.components.len(), 6);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Create Textured Area Component repeats the chosen component inside the chosen closed shape,
+/// as a new component, and hides the tile.
+#[test]
+fn a_component_repeats_inside_a_shape_as_a_texture() {
+    let mut h = job_with_square([2.0, 2.0]);
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().selected = vec![id];
+    h.state_mut().open_shape_form(None);
+    let LeftForm::Shape(f) = h.state().left.clone() else { panic!("the shape form") };
+    h.state_mut().add_component(f);
+    h.state_mut().left = LeftForm::None;
+    let bound = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(vec![[1.0, 4.0], [9.0, 4.0], [9.0, 9.0], [1.0, 9.0]])], Prim::Free);
+    h.state_mut().selected = vec![bound];
+    h.state_mut().selected_comp = Some(0);
+    h.state_mut().open_texture_area();
+    assert!(h.state().texture_form.is_some());
+    h.run();
+    click(&mut h, "Apply");
+    let cs = &h.state().doc.components;
+    assert_eq!(cs.len(), 2);
+    assert!(!cs[0].visible, "the tile is hidden");
+    assert!(cs[1].name.starts_with("Texture Area"));
+    h.state_mut().refresh_model();
+    let m = h.state().model.clone().unwrap();
+    assert_eq!(m.sample(5.0, 2.0), 0.0, "nothing outside the boundary");
+    assert!((4..9).any(|y| m.sample(5.0, y as f64 + 0.5) > 0.0), "tiles inside it");
+    assert!(h.state().texture_form.is_none());
+    h.state_mut().do_undo();
+    assert_eq!(h.state().doc.components.len(), 1);
+}
+
+/// Joins in the original's saved jobs come through into the imported toolpaths, one for each
+/// stored move of that kind (`BURIN_JOBS` points at a folder of .crv3d jobs).
+#[test]
+fn joins_come_in_from_saved_jobs() {
+    let Ok(dir) = std::env::var("BURIN_JOBS") else { return };
+    let mut files = Vec::new();
+    let mut todo = vec![std::path::PathBuf::from(dir)];
+    while let Some(d) = todo.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() { todo.push(p) } else if p.extension().is_some_and(|x| x == "crv3d") { files.push(p) }
+        }
+    }
+    let (mut stored, mut kept) = (0, 0);
+    for file in files {
+        let bytes = std::fs::read(&file).unwrap();
+        let pattern = [0x20u8, 0, 0, 0, crate::crv3d::JOIN_KIND as u8, 0, 0, 0];
+        stored += bytes.windows(8).filter(|w| *w == pattern).count();
+        let mut app = App::default();
+        if app.open_project(&file).is_err() { continue }
+        kept += app.doc.toolpaths.iter().filter_map(|t| t.kept_moves.as_ref()).map(|m| m.iter().filter(|m| m.join).count()).sum::<usize>();
+    }
+    eprintln!("joins stored {stored}, brought in {kept}");
+    assert!(kept > 0 && kept * 10 >= stored * 9, "{kept} of {stored}");
+}
+
+/// A two-sided job: 1 and 2 choose the side, what's drawn goes on the side in use, only that
+/// side's shapes and toolpaths show and can be chosen, and the rulers turn orange underneath.
+#[test]
+fn a_two_sided_job_keeps_each_side_apart() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let top = h.state().doc.vectors[0].id;
+    h.state_mut().doc.job.two_sided = true;
+    h.run();
+    h.key_press(egui::Key::Num2);
+    h.run();
+    assert_eq!(h.state().doc.active_face, 1);
+    assert!(h.query_by_label("Toggle Top / Bottom Side").is_some(), "the side button shows");
+    let bottom = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle([3.0, 3.0], 1.0))], Prim::Free);
+    assert_eq!(h.state().doc.vectors.iter().find(|v| v.id == bottom).unwrap().face, 1);
+    // Select all takes only the bottom side's shape.
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    assert_eq!(h.state().selected, vec![bottom]);
+    // A toolpath made now is the bottom side's, and is listed only there.
+    h.state_mut().right_open = true;
+    h.state_mut().start_op(crate::toolpath::OpKind::Profile);
+    h.state_mut().calculate_op();
+    h.state_mut().right = RightMode::List;
+    h.run();
+    assert_eq!(h.state().doc.toolpaths[0].face, 1);
+    assert!(h.query_by_label("Toolpaths (Bottom)").is_some());
+    h.key_press(egui::Key::Num1);
+    h.run();
+    assert_eq!(h.state().doc.active_face, 0);
+    assert!(h.state().selected.is_empty(), "changing side drops the selection");
+    assert!(h.query_by_label("Toolpaths (Top)").is_some());
+    assert!(!h.state().doc.toolpaths.iter().any(|t| h.state().doc.toolpath_on_side(t)), "the top side has none");
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    assert_eq!(h.state().selected, vec![top]);
+    // Turning the block the other way puts the bottom side's shapes half a turn round the middle.
+    h.state_mut().change_flip_direction();
+    assert!(h.state().doc.job.flip_around_y);
+    let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors.iter().find(|v| v.id == bottom).unwrap().paths).unwrap();
+    assert!(((lo[0] + hi[0]) / 2.0 - 7.0).abs() < 1e-6 && ((lo[1] + hi[1]) / 2.0 - 7.0).abs() < 1e-6);
+    // One step undoes it, as the original's batch does (`0x1402a75d0`).
+    h.state_mut().do_undo();
+    assert!(!h.state().doc.job.flip_around_y);
+    let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors.iter().find(|v| v.id == bottom).unwrap().paths).unwrap();
+    assert!(((lo[0] + hi[0]) / 2.0 - 3.0).abs() < 1e-6, "back where it was");
+    // A single-sided job shows everything again.
+    h.state_mut().doc.job.two_sided = false;
+    assert!(h.state().doc.vectors.iter().all(|v| h.state().doc.shows(v)));
+}
+
+/// Preview All Sides: the bottom side's toolpaths cut their side of the same block, turned over
+/// the way the job flips, and where the two sides' cuts meet the material is gone.
+#[test]
+fn both_sides_preview_as_one_block() {
+    use crate::toolpath::{Move, OpKind};
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().doc.job.two_sided = true;
+    h.state_mut().right_open = true;
+    let t = h.state().doc.job.thickness;
+    // A slot 0.3 deep from the top along y = 3, and one 0.3 deep from underneath at the same spot
+    // (around X, y on the bottom is H - y).
+    let slot = |y: f64| -> Vec<Move> {
+        let mut m = vec![Move { p: [1.0, y, 0.5], rapid: true, join: false }];
+        m.push(Move { p: [1.0, y, -0.3], rapid: false, join: false });
+        m.push(Move { p: [9.0, y, -0.3], rapid: false, join: false });
+        m.push(Move { p: [9.0, y, 0.5], rapid: true, join: false });
+        m
+    };
+    let mut op = crate::toolpath::blank_op(OpKind::Profile, "p".into(), crate::toolpath::default_tools()[0].clone(), 0.5, Vec::new());
+    op.tool.dia = 0.5;
+    for (face, y) in [(0u8, 3.0), (1u8, 10.0 - 3.0)] {
+        let moves = std::sync::Arc::new(slot(y));
+        h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op: op.clone(), visible: true, color: [0, 0, 0], moves, kept_moves: None, kept_steps: None, face, sheet: 0 });
+    }
+    // A bottom-only slot elsewhere, which doesn't meet anything from the top.
+    h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op: op.clone(), visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(slot(10.0 - 7.0)), kept_moves: None, kept_steps: None, face: 1, sheet: 0 });
+    assert!(t < 0.6 + 1e-9, "0.3 from each side reaches through {t}");
+    h.state_mut().preview_all_sides();
+    h.state_mut().finish_preview();
+    let sim = h.state().sim.clone().unwrap();
+    let at = |x: f64, y: f64| {
+        let g = &sim.grid;
+        sim.is_through((x / g.cell).round() as usize, (y / g.cell).round() as usize)
+    };
+    assert!(at(5.0, 3.0), "the two slots meet: through");
+    assert!(!at(5.0, 7.0), "the bottom slot alone stays hidden underneath");
+    assert!(!at(5.0, 5.0), "uncut");
+    // Previewing one side again starts afresh, without the other side.
+    h.state_mut().sim_floor = None;
+    h.state_mut().sim = None;
+    h.state_mut().preview(vec![0]);
+    h.state_mut().finish_preview();
+    let sim = h.state().sim.clone().unwrap();
+    let g = &sim.grid;
+    assert!(!sim.is_through((5.0 / g.cell).round() as usize, (3.0 / g.cell).round() as usize));
+}
+
+/// With the bottom side active, Preview All Sides carves the bottom as the side looked at, and the
+/// top side's cuts meet it from the other side, as the original does with the active side first.
+#[test]
+fn both_sides_preview_from_the_active_side() {
+    use crate::toolpath::{Move, OpKind};
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().doc.job.two_sided = true;
+    let slot = |y: f64| -> std::sync::Arc<Vec<Move>> {
+        std::sync::Arc::new(vec![
+            Move { p: [1.0, y, 0.5], rapid: true, join: false },
+            Move { p: [1.0, y, -0.3], rapid: false, join: false },
+            Move { p: [9.0, y, -0.3], rapid: false, join: false },
+            Move { p: [9.0, y, 0.5], rapid: true, join: false },
+        ])
+    };
+    let mut op = crate::toolpath::blank_op(OpKind::Profile, "p".into(), crate::toolpath::default_tools()[0].clone(), 0.5, Vec::new());
+    op.tool.dia = 0.5;
+    // From the top at y = 3 (on the bottom that's y = 7), and a top-only slot at y = 8.
+    for (face, y) in [(0u8, 3.0), (1u8, 7.0), (0u8, 8.0)] {
+        h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op: op.clone(), visible: false, color: [0, 0, 0], moves: slot(y), kept_moves: None, kept_steps: None, face, sheet: 0 });
+    }
+    h.state_mut().set_active_face(1);
+    h.state_mut().preview_all_sides();
+    h.state_mut().finish_preview();
+    let sim = h.state().sim.clone().unwrap();
+    let at = |x: f64, y: f64| sim.is_through((x / sim.grid.cell).round() as usize, (y / sim.grid.cell).round() as usize);
+    assert!(at(5.0, 7.0), "seen from the bottom, the slots meet at its y = 7");
+    assert!(!at(5.0, 2.0), "the top-only slot (bottom y = 2) doesn't go through");
+    assert_eq!(h.state().doc.active_face, 1, "the active side stays active");
+}
+
+/// In a narrow window the two-sided buttons stay inside the view's toolbar.
+#[test]
+fn two_sided_buttons_fit_a_narrow_window() {
+    let mut h = Harness::builder().with_size(vec2(943.0, 700.0)).with_accessibility_check(false).build_ui_state(|ui, app: &mut App| app.frame(ui), App::default());
+    crate::ui::setup_style(&h.ctx);
+    click(&mut h, "Create a new file");
+    click(&mut h, "OK");
+    h.state_mut().right_open = true;
+    h.state_mut().doc.job.two_sided = true;
+    h.run();
+    h.run();
+    for name in ["Change flip direction", "Toggle Top / Bottom Side"] {
+        let r = h.get_by_label(name).rect();
+        assert!(r.right() <= 943.0 - 282.0, "{name} ends at {}", r.right());
+    }
+    click(&mut h, "Toggle Top / Bottom Side");
+    assert_eq!(h.state().doc.active_face, 1);
+}
+
+/// `=` turns the Multi-Sided View on and off, only in a two-sided job, and Preview All Sides
+/// leaves it on, as the original does.
+#[test]
+fn equals_toggles_the_multi_sided_view() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.key_press(egui::Key::Equals);
+    h.run();
+    assert!(!h.state().multi_sided, "a one-sided job has no other side");
+    h.state_mut().doc.job.two_sided = true;
+    h.key_press(egui::Key::Equals);
+    h.run();
+    assert!(h.state().multi_sided);
+    h.key_press(egui::Key::Equals);
+    h.run();
+    assert!(!h.state().multi_sided);
+    let mut op = crate::toolpath::blank_op(crate::toolpath::OpKind::Profile, "p".into(), crate::toolpath::default_tools()[0].clone(), 0.5, Vec::new());
+    op.tool.dia = 0.5;
+    h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves: Default::default(), kept_moves: None, kept_steps: None, face: 1, sheet: 0 });
+    h.state_mut().preview_all_sides();
+    assert!(h.state().multi_sided);
+}
+
+/// With a text chosen, a click between two of its letters brings them closer, and Shift moves
+/// them apart, as the original's text spacing clicks do.
+#[test]
+fn a_click_between_letters_moves_them() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let prim = Prim::Text { at: [2.0, 5.0], height: 1.0, text: "WAV".into(), style: crate::fonts::TextStyle::default() };
+    let id = h.state_mut().doc.add_vector(prim.paths(), prim);
+    h.state_mut().selected = vec![id];
+    h.run();
+    let carets = crate::fonts::letter_carets("WAV", 1.0, [2.0, 5.0], &crate::fonts::TextStyle::default());
+    let a = carets[1];
+    let gap = h.state().to_screen([a.x, a.base + 0.5]);
+    assert!(h.state().text_gap_under(gap).is_some());
+    click_at(&mut h, gap);
+    let gaps = |h: &Harness<'static, App>| match &h.state().doc.vectors.iter().find(|v| v.id == id).unwrap().prim {
+        Prim::Text { style, .. } => style.letter_gaps.clone(),
+        _ => Vec::new(),
+    };
+    assert!(gaps(&h).get(1).is_some_and(|g| *g < 0.0), "closer: {:?}", gaps(&h));
+    assert_eq!(h.state().selected, vec![id], "the text stays chosen");
+    h.state_mut().do_undo();
+    assert!(gaps(&h).is_empty(), "one undo step");
+}
+
+/// Sculpt Visible Model: the chosen component becomes heights, a stroke of Deposit raises it in
+/// the model, each stroke is one undo step, and Close finishes.
+#[test]
+fn sculpting_raises_the_model_under_the_brush() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().selected = vec![id];
+    h.state_mut().open_shape_form(None);
+    let LeftForm::Shape(f) = h.state().left.clone() else { panic!("the shape form") };
+    h.state_mut().add_component(f);
+    h.state_mut().left = LeftForm::None;
+    h.state_mut().selected_comp = Some(0);
+    h.state_mut().refresh_model();
+    let before = h.state().model.as_ref().unwrap().sample(5.0, 5.0);
+    h.state_mut().open_sculpt();
+    assert!(h.state().sculpt.is_some() && h.state().view3d);
+    h.state_mut().sculpt.as_mut().unwrap().tool = crate::sculpt::SculptTool::Deposit;
+    h.state_mut().sculpt_at([5.0, 5.0], true, false);
+    h.state_mut().sculpt_at([5.1, 5.0], false, false);
+    h.state_mut().refresh_model();
+    let after = h.state().model.as_ref().unwrap().sample(5.0, 5.0);
+    assert!(after > before + 1e-3, "{before} -> {after}");
+    assert!(h.state().doc.components[0].surface.is_some(), "now heights of its own");
+    h.state_mut().do_undo();
+    h.state_mut().refresh_model();
+    assert!((h.state().model.as_ref().unwrap().sample(5.0, 5.0) - before).abs() < 1e-3, "one undo step for the stroke");
+    h.run();
+    click(&mut h, "Close");
+    assert!(h.state().sculpt.is_none());
+}
+
+/// Emboss Component: the chosen component's heights become the shape of its slopes, at 10% of
+/// its height at first, in one undo step.
+#[test]
+fn emboss_flattens_a_component() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().selected = vec![id];
+    h.state_mut().open_shape_form(None);
+    let LeftForm::Shape(mut f) = h.state().left.clone() else { panic!("the shape form") };
+    f.profile = crate::relief::Profile::Round;
+    h.state_mut().add_component(f);
+    h.state_mut().left = LeftForm::None;
+    h.state_mut().selected_comp = Some(0);
+    h.state_mut().refresh_model();
+    let tall = h.state().model.as_ref().unwrap().max();
+    h.state_mut().open_emboss();
+    h.run();
+    click(&mut h, "Apply");
+    assert!(h.state().emboss_form.is_none());
+    h.state_mut().refresh_model();
+    let flat = h.state().model.as_ref().unwrap().max();
+    assert!(flat < tall * 0.11 && flat > 0.0, "{tall} -> {flat}");
+    h.state_mut().do_undo();
+    h.state_mut().refresh_model();
+    assert!((h.state().model.as_ref().unwrap().max() - tall).abs() < 1e-4);
+}
+
+/// Two Rail Sweep: the first two chosen shapes are the rails, the open ones after them the cross
+/// sections, and Apply makes a component between the rails.
+#[test]
+fn two_rails_and_a_section_make_a_component() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let a = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[1.0, 2.0], [9.0, 2.0]])], Prim::Free);
+    let b = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[1.0, 4.0], [9.0, 4.0]])], Prim::Free);
+    let arch = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[0.0, 0.0], [0.5, 0.3], [1.0, 0.0]])], Prim::Free);
+    h.state_mut().selected = vec![a, b, arch];
+    h.state_mut().open_two_rail_sweep();
+    let form = h.state().sweep_form.clone().unwrap();
+    assert_eq!(form.rails, vec![a, b]);
+    assert_eq!(form.sections, vec![arch]);
+    assert!(form.scale_with_width && form.between_spans && !form.fill_centre && !form.exact_height, "the original's starting choices");
+    h.run();
+    click(&mut h, "Apply");
+    assert_eq!(h.state().doc.components.len(), 1);
+    h.state_mut().refresh_model();
+    let m = h.state().model.clone().unwrap();
+    assert!(m.sample(5.0, 3.0) > 0.4, "the arch scaled to the 2 between the rails: {}", m.sample(5.0, 3.0));
+    assert_eq!(m.sample(5.0, 6.0), 0.0);
+}
+
+/// Extrude and Weave: the rails chosen first, the open cross section last, and Apply makes a
+/// component along the rails, with the original's starting choices.
+#[test]
+fn a_section_extruded_along_a_rail_makes_a_component() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let rail = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[1.0, 2.0], [9.0, 2.0]])], Prim::Free);
+    let bump = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[0.0, 0.0], [0.5, 0.3], [1.0, 0.0]])], Prim::Free);
+    h.state_mut().selected = vec![rail, bump];
+    h.state_mut().open_extrude();
+    let form = h.state().extrude_form.clone().unwrap();
+    assert_eq!((form.rails.clone(), form.sections.clone()), (vec![rail], vec![bump]));
+    assert!(form.sharp_corners && !form.weave && (form.under - 0.7).abs() < 1e-9 && (form.over - 1.3).abs() < 1e-9);
+    h.run();
+    click(&mut h, "Apply");
+    assert_eq!(h.state().doc.components.len(), 1);
+    h.state_mut().refresh_model();
+    assert!(h.state().model.as_ref().unwrap().sample(5.0, 2.0) > 0.25);
+}
+
+/// Extrude and Weave checks the rails first, then the cross section, with the original's
+/// messages (`0x14074a880`, `0x14074b4d0`), and makes one rail of every path of a chosen vector.
+#[test]
+fn extrude_checks_rails_then_section_and_uses_every_path() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().extrude(&crate::sweep::ExtrudeForm::default());
+    assert!(h.state().message.as_deref().unwrap().contains("rails"));
+    let two = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[1.0, 2.0], [9.0, 2.0]]), crate::geom::Path::open(vec![[1.0, 8.0], [9.0, 8.0]])], Prim::Free);
+    let form = crate::sweep::ExtrudeForm { rails: vec![two], ..Default::default() };
+    assert!(!h.state_mut().extrude(&form));
+    assert!(h.state().message.as_deref().unwrap().contains("cross section"));
+    let bump = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[0.0, 0.0], [0.5, 0.3], [1.0, 0.0]])], Prim::Free);
+    assert!(h.state_mut().extrude(&crate::sweep::ExtrudeForm { sections: vec![bump], ..form }));
+    h.state_mut().refresh_model();
+    let m = h.state().model.as_ref().unwrap();
+    assert!(m.sample(5.0, 2.0) > 0.25 && m.sample(5.0, 8.0) > 0.25, "both paths carry the section");
+}
+
+/// Extrude and Weave with no cross section uses the chosen component, repeated along the rail.
+#[test]
+fn the_chosen_component_is_extruded_along_a_rail() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let bead = h.state().doc.components.len();
+    h.state_mut().doc.components.push(crate::relief::Component { name: "Bead".into(), paths: vec![crate::geom::Path::closed(crate::geom::circle([1.0, 9.0], 0.4))], profile: crate::relief::Profile::Round, height: 0.3, base: 0.0, combine: crate::relief::Combine::Add, visible: false, surface: None, whole: false });
+    let rail = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[1.0, 2.0], [9.0, 2.0]])], Prim::Free);
+    h.state_mut().selected = vec![rail];
+    h.state_mut().open_extrude();
+    h.state_mut().selected_comp = Some(bead);
+    h.run();
+    click(&mut h, "Apply");
+    assert_eq!(h.state().doc.components.len(), bead + 2);
+    h.state_mut().refresh_model();
+    let m = h.state().model.as_ref().unwrap();
+    let top = (0..80).map(|k| m.sample(1.0 + k as f64 * 0.1, 2.0)).fold(0.0f32, f32::max);
+    assert!(top > 0.2, "{top}");
+}
+
+/// Two Rail Sweep takes rails in left and right pairs, as the original does, and sweeps each pair
+/// with the same cross section; an odd number of rails is refused.
+#[test]
+fn two_rail_sweep_sweeps_every_pair_of_rails() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let line = |h: &mut Harness<'static, App>, a: [f64; 2], b: [f64; 2]| h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![a, b])], Prim::Free);
+    let (l1, r1) = (line(&mut h, [1.0, 1.0], [9.0, 1.0]), line(&mut h, [1.0, 2.0], [9.0, 2.0]));
+    let (l2, r2) = (line(&mut h, [1.0, 7.0], [9.0, 7.0]), line(&mut h, [1.0, 8.0], [9.0, 8.0]));
+    let section = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[0.0, 0.0], [0.5, 0.3], [1.0, 0.0]])], Prim::Free);
+    let mut form = crate::sweep::SweepForm { rails: vec![l1, r1, l2], sections: vec![section], ..Default::default() };
+    assert!(!h.state_mut().two_rail_sweep(&form));
+    assert!(h.state().message.as_deref().unwrap().contains("pairs"));
+    form.rails.push(r2);
+    assert!(h.state_mut().two_rail_sweep(&form));
+    h.state_mut().refresh_model();
+    let m = h.state().model.as_ref().unwrap();
+    assert!(m.sample(5.0, 1.5) > 0.1 && m.sample(5.0, 7.5) > 0.1, "both pairs swept");
+    assert!(m.sample(5.0, 4.5) < 0.05, "nothing between the pairs");
+}
+
+/// A set grid spacing is what pointer positions snap to, whatever the zoom; 0 goes back to
+/// following the zoom.
+#[test]
+fn a_set_grid_spacing_is_snapped_to() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().snap = true;
+    h.state_mut().snap_shapes = false;
+    h.state_mut().show_guides = false;
+    h.state_mut().grid_spacing = 0.75;
+    let p = h.state().snapped([1.1, 2.0]);
+    let zero = h.state().doc.job.origin();
+    let on = |v: f64, z: f64| (((v - z) / 0.75).round() * 0.75 + z - v).abs() < 1e-9;
+    assert!(on(p[0], zero[0]) && on(p[1], zero[1]), "{p:?}");
+    h.state_mut().grid_spacing = 0.0;
+    assert!(h.state().grid_steps().0 > 0.0);
+}
+
+/// Several sheets: each has its own shapes and toolpaths, only the one showing is seen and cut,
+/// shapes can be sent to another, and deleting a sheet takes its shapes with it.
+#[test]
+fn sheets_keep_their_own_shapes_and_toolpaths() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let first = h.state().doc.vectors[0].id;
+    assert_eq!(h.state().doc.sheet_count(), 1);
+    h.state_mut().add_sheet();
+    assert_eq!((h.state().doc.sheet_count(), h.state().doc.active_sheet), (2, 1));
+    let doc = &h.state().doc;
+    assert!(!doc.shows(&doc.vectors[0]), "the first sheet's square is not on the second");
+    let second = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([3.0, 3.0], 1.0, 1.0, 0.0))], Prim::Free);
+    let on = |h: &Harness<'static, App>, id: u64| h.state().doc.vectors.iter().find(|v| v.id == id).map(|v| v.sheet);
+    assert_eq!(on(&h, second), Some(1));
+    // A toolpath made now belongs to this sheet.
+    h.state_mut().doc.toolpaths.push(crate::app::Toolpath { op: crate::toolpath::blank_op(crate::toolpath::OpKind::Profile, "p".into(), crate::toolpath::default_tools()[0].clone(), 0.1, Vec::new()), visible: true, color: [0, 0, 0], moves: Default::default(), kept_moves: None, kept_steps: None, face: 0, sheet: 1 });
+    assert!(h.state().doc.toolpath_on_side(&h.state().doc.toolpaths[0]));
+    h.state_mut().show_sheet(0);
+    assert!(!h.state().doc.toolpath_on_side(&h.state().doc.toolpaths[0]));
+    // Send the square to sheet 2, then delete sheet 2: both shapes and the toolpath go.
+    h.state_mut().selected = vec![first];
+    h.state_mut().move_selected_to_sheet(1);
+    assert_eq!(on(&h, first), Some(1));
+    h.state_mut().show_sheet(1);
+    h.state_mut().delete_sheet();
+    assert_eq!(h.state().doc.sheet_count(), 1);
+    assert!(h.state().doc.vectors.is_empty() && h.state().doc.toolpaths.is_empty());
+    h.state_mut().do_undo();
+    assert_eq!((h.state().doc.sheet_count(), h.state().doc.vectors.len()), (2, 2));
+}
+
+/// Nesting more parts than fit on the sheet puts the rest on new sheets after the others, laid
+/// out the same way, as the original does.
+#[test]
+fn nesting_more_than_fits_adds_sheets() {
+    let mut h = harness();
+    h.state_mut().new_file();
+    let mut ids = Vec::new();
+    // Twelve 3 inch squares on a 10 inch sheet: nine fit at most.
+    for k in 0..12 {
+        let c = [1.0 + (k % 4) as f64 * 0.5, 1.0 + (k / 4) as f64 * 0.5];
+        ids.push(h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect(c, 3.0, 3.0, 0.0))], Prim::Free));
+    }
+    h.state_mut().selected = ids.clone();
+    h.state_mut().start_xform(Xform::Nest);
+    h.state_mut().apply_xform();
+    h.run();
+    let doc = &h.state().doc;
+    assert!(doc.sheet_count() >= 2, "{}", h.state().status);
+    let on_second = doc.vectors.iter().filter(|v| v.sheet == 1).count();
+    assert!(on_second > 0 && on_second < 12);
+    assert!(h.state().status.contains("sheets"), "{}", h.state().status);
+    // Every part sits inside the sheet, whichever it is on.
+    for v in &doc.vectors {
+        let (lo, hi) = crate::geom::bbox(&v.paths).unwrap();
+        assert!(lo[0] >= -1e-9 && lo[1] >= -1e-9 && hi[0] <= 10.0 + 1e-9 && hi[1] <= 10.0 + 1e-9, "{lo:?} {hi:?}");
+    }
+}
+
+/// With rotation allowed, nesting turns parts too tall for the sheet to lie along the rows, so
+/// they fit; without it they run past the sheet.
+#[test]
+fn nesting_may_turn_parts() {
+    let make = |h: &mut Harness<'static, App>| {
+        h.state_mut().new_file();
+        h.state_mut().doc.job.height = 5.0;
+        let ids: Vec<u64> = (0..3).map(|k| h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([2.0 + k as f64 * 1.5, 2.5], 1.0, 6.0, 0.0))], Prim::Free)).collect();
+        h.state_mut().selected = ids;
+        h.state_mut().start_xform(Xform::Nest);
+    };
+    let inside = |h: &Harness<'static, App>| h.state().doc.vectors.iter().all(|v| {
+        let (lo, hi) = crate::geom::bbox(&v.paths).unwrap();
+        lo[0] >= -1e-9 && hi[0] <= 10.0 + 1e-9 && lo[1] >= -1e-9 && hi[1] <= 5.0 + 1e-9
+    });
+    let mut h = harness();
+    make(&mut h);
+    h.state_mut().apply_xform();
+    assert!(!inside(&h), "upright they run past the sheet");
+    make(&mut h);
+    if let crate::app::LeftForm::Xform(f) = &mut h.state_mut().left {
+        f.nest_turn = true;
+    }
+    h.state_mut().apply_xform();
+    h.run();
+    assert!(inside(&h), "{}", h.state().status);
+    assert_eq!(h.state().doc.sheet_count(), 1);
+    for v in &h.state().doc.vectors {
+        let (lo, hi) = crate::geom::bbox(&v.paths).unwrap();
+        assert!(hi[0] - lo[0] > hi[1] - lo[1], "lying along X: {lo:?} {hi:?}");
     }
 }

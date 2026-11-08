@@ -299,7 +299,7 @@ impl App {
             if f.copy_circles {
                 let id = self.doc.new_id();
                 let (c, r) = (at, f.size / 2.0);
-                self.doc.vectors.push(Vector { id, paths: vec![Path::closed(geom::circle(c, r))], layer, prim: Prim::Circle { c, r }, construction: false, members: Vec::new(), piece: None });
+                self.doc.vectors.push(Vector { id, paths: vec![Path::closed(geom::circle(c, r))], layer, prim: Prim::Circle { c, r }, construction: false, members: Vec::new(), piece: None, face: self.doc.active_face, sheet: self.doc.active_sheet });
                 made.push(id);
                 continue;
             }
@@ -667,7 +667,7 @@ impl App {
     /// Looks for repeated points, duplicated lines and crossings.
     pub fn validate(&mut self) {
         let scope: Vec<&Vector> = if self.selected.is_empty() {
-            self.doc.vectors.iter().filter(|v| self.doc.layers.get(v.layer).is_none_or(|l| l.visible)).collect()
+            self.doc.vectors.iter().filter(|v| self.doc.shows(v)).collect()
         } else {
             self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id)).collect()
         };
@@ -781,22 +781,76 @@ impl App {
             }
         };
         let id = self.doc.new_id();
-        self.doc.vectors.push(Vector { id, paths, layer, prim: Prim::Free, construction: false, members: Vec::new(), piece: None });
+        self.doc.vectors.push(Vector { id, paths, layer, prim: Prim::Free, construction: false, members: Vec::new(), piece: None, face: self.doc.active_face, sheet: self.doc.active_sheet });
         self.selected = vec![id];
     }
 
     /// Packs the selected shapes on the sheet in rows, by their bounding boxes.
+    /// Turns each part, in steps of the form's angle, to the turn that makes its row shallowest
+    /// while it still fits across the sheet (the smallest box when no turn fits).
+    fn turn_parts_to_nest(&mut self, items: &[Vector], f: &XformForm) {
+        let (w, h) = (self.doc.job.width - 2.0 * f.border, self.doc.job.height - 2.0 * f.border);
+        let (primary, secondary) = if f.along_x { (w, h) } else { (h, w) };
+        let step = if f.nest_step > 0.5 { f.nest_step } else { NEST_STEP };
+        let turns: Vec<f64> = (0..).map(|k| k as f64 * step).take_while(|a| *a < 180.0 - 1e-9).collect();
+        for Block { ids, lo, hi } in self.blocks(items, None) {
+            let c = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+            let pts: Vec<P> = self.doc.vectors.iter().filter(|v| ids.contains(&v.id)).flat_map(|v| v.paths.iter().flat_map(|p| p.pts.iter().copied())).collect();
+            let size = |a: f64| {
+                let (s, k) = a.to_radians().sin_cos();
+                let (mut l, mut g) = ([f64::MAX; 2], [f64::MIN; 2]);
+                for p in &pts {
+                    let (x, y) = (p[0] - c[0], p[1] - c[1]);
+                    let q = [x * k - y * s, x * s + y * k];
+                    l = [l[0].min(q[0]), l[1].min(q[1])];
+                    g = [g[0].max(q[0]), g[1].max(q[1])];
+                }
+                let (bw, bh) = (g[0] - l[0], g[1] - l[1]);
+                if f.along_x { (bw, bh) } else { (bh, bw) }
+            };
+            let fits = |a: &f64| {
+                let (run, depth) = size(*a);
+                run <= primary + 1e-9 && depth <= secondary + 1e-9
+            };
+            let best = turns.iter().copied().filter(fits).min_by(|a, b| size(*a).1.total_cmp(&size(*b).1).then(a.total_cmp(b))).or_else(|| {
+                turns.iter().copied().min_by(|a, b| {
+                    let (ra, da) = size(*a);
+                    let (rb, db) = size(*b);
+                    (ra * da).total_cmp(&(rb * db))
+                })
+            });
+            let Some(a) = best.filter(|a| a.abs() > 1e-9) else { continue };
+            let keep = std::mem::replace(&mut self.selected, ids.clone());
+            let (s, k) = a.to_radians().sin_cos();
+            self.map_selected(|p| {
+                let (x, y) = (p[0] - c[0], p[1] - c[1]);
+                [c[0] + x * k - y * s, c[1] + x * s + y * k]
+            });
+            self.selected = keep;
+        }
+    }
+
+    /// Lays the selected parts out in rows from the chosen corner. Parts that don't fit go onto
+    /// new sheets after the others, laid out the same way, as the original's nesting does: it
+    /// offers its nester a sheet up to 999 times (`0x1403be110`, `0x14090dc10`), then moves each part
+    /// to the sheet it landed on (`nestComponentSheet`) and makes the sheets that are needed.
     fn nest_selected(&mut self, f: &XformForm) {
         let items = self.selection_in_click_order();
         if items.is_empty() {
             return;
         }
         self.checkpoint();
+        if f.nest_turn {
+            self.turn_parts_to_nest(&items, f);
+        }
+        let items = self.selection_in_click_order();
         let clear = f.tool_dia + f.clearance;
         let (w, h) = (self.doc.job.width - 2.0 * f.border, self.doc.job.height - 2.0 * f.border);
-        let primary = if f.along_x { w } else { h };
+        let (primary, secondary) = if f.along_x { (w, h) } else { (h, w) };
         let (mut u, mut v, mut row) = (0.0f64, 0.0f64, 0.0f64);
+        let mut sheet = 0usize;
         let mut placed = 0;
+        let mut landed: Vec<(Vec<u64>, usize)> = Vec::new();
         let mut sized = self.blocks(&items, None);
         sized.sort_by(|a, b| {
             let height = |x: &Block| if f.along_x { x.hi[1] - x.lo[1] } else { x.hi[0] - x.lo[0] };
@@ -810,6 +864,13 @@ impl App {
                 v += row + clear;
                 row = 0.0;
             }
+            // No room left on this sheet: start the next one.
+            if v > 0.0 && v + depth > secondary {
+                sheet += 1;
+                u = 0.0;
+                v = 0.0;
+                row = 0.0;
+            }
             let (x, y) = if f.along_x { (u, v) } else { (v, u) };
             // Coordinates from the chosen corner of the sheet.
             let (tx, ty) = match f.anchor {
@@ -819,14 +880,38 @@ impl App {
                 _ => (f.border + x, f.border + y),
             };
             self.translate_ids(&ids, tx - lo[0], ty - lo[1]);
-            if run <= primary {
+            if run <= primary && depth <= secondary {
                 placed += 1;
             }
+            landed.push((ids, sheet));
             u += run + clear;
             row = row.max(depth);
         }
-        let over = v + row > if f.along_x { h } else { w };
-        self.status = if over { tf!("Nested {placed} parts, but they run past the sheet.") } else { tf!("Nested {placed} parts.") };
+        // The first sheet is the one showing; the others are added after the job's last sheet.
+        let first_new = self.doc.sheet_count();
+        let sheets = sheet + 1;
+        if sheets > 1 {
+            let wanted = (first_new + sheets - 1).min(u8::MAX as usize);
+            self.doc.extra_sheets = (wanted - 1) as u8;
+            for (ids, s) in &landed {
+                if *s > 0 {
+                    let target = (first_new + s - 1).min(u8::MAX as usize - 1) as u8;
+                    for v in self.doc.vectors.iter_mut().filter(|v| ids.contains(&v.id)) {
+                        v.sheet = target;
+                    }
+                }
+            }
+            let moved: Vec<u64> = landed.iter().filter(|(_, s)| *s > 0).flat_map(|(ids, _)| ids.iter().copied()).collect();
+            self.selected.retain(|id| !moved.contains(id));
+        }
+        let over = v + row > secondary;
+        self.status = if sheets > 1 {
+            tf!("Nested {placed} parts on {sheets} sheets.")
+        } else if over {
+            tf!("Nested {placed} parts, but they run past the sheet.")
+        } else {
+            tf!("Nested {placed} parts.")
+        };
     }
 
     /// Sets a selected text along the last selected shape, letter by letter.
@@ -884,6 +969,10 @@ impl App {
         }
     }
 }
+
+/// How far nesting turns a part at a time when it may turn: a quarter turn (Burin's choice; the
+/// original's starting value for `RotationStepAngle` wasn't read).
+pub const NEST_STEP: f64 = 90.0;
 
 /// Connects open lines whose ends touch within `tolerance`.
 pub fn join_paths(paths: Vec<Path>, tolerance: f64) -> Vec<Path> {

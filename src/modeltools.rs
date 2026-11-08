@@ -55,6 +55,271 @@ use egui::Align2;
 use std::sync::Arc;
 
 pub const VISIBLE_MODEL_COMMAND: u32 = 33743;
+pub const ZERO_PLANE_COMMAND: u32 = 33643;
+/// Emboss Component (33689, `0x1402c2730`; its form `0x140733530`, one undo step `0x386`).
+pub const EMBOSS_COMMAND: u32 = 33689;
+/// The form starts at a scale of 0.1 and no smoothing (`0x140733847`, `+0x548` and `+0x550`); the
+/// scale goes from 1% to 50% (`slider / 100 × 0.49 + 0.01`, `0x140734d60`).
+pub const EMBOSS_SCALE: f64 = 0.1;
+pub const EMBOSS_SCALE_LEAST: f64 = 0.01;
+pub const EMBOSS_SCALE_MOST: f64 = 0.5;
+/// The smoothness picks between four grids a third apart (`0x1421b9aa8`).
+pub const EMBOSS_SMOOTH_STEP: f64 = 1.0 / 3.0;
+/// Each smoother grid is the one before averaged over 7 by 7 cells, all weighing the same
+/// (`0x140734910`, `0x140999c50`, `0x140999d20`).
+pub const EMBOSS_BOX: usize = 7;
+/// A surface's slope is taken across 2.001 cells, one less for each missing neighbour
+/// (`0x1409df340`, `0x142211814`).
+pub const EMBOSS_SPAN: f64 = 2.001;
+
+/// The Emboss form: the height as a share of the model's, and how much the detail is smoothed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EmbossForm {
+    pub scale: f64,
+    pub smoothness: f64,
+}
+
+impl Default for EmbossForm {
+    fn default() -> Self {
+        EmbossForm { scale: EMBOSS_SCALE, smoothness: 0.0 }
+    }
+}
+
+/// The four grids the original prepares (`0x140734830`): at each place holding something, how
+/// upright the surface is there, the up part of its normal (`0x1409e2130`, the dot product with
+/// (0, 0, 1)), then that averaged three times over 7 by 7 cells. `None` where there's nothing, and
+/// along the grid's edge, where the slope can't be taken.
+pub fn emboss_grids(h: &Grid) -> [Vec<Option<f32>>; 4] {
+    let (nx, ny, cell) = (h.nx, h.ny, h.cell);
+    let held = |ix: usize, iy: usize| h.data[iy * nx + ix] != 0.0;
+    let mut g0 = vec![None; nx * ny];
+    for iy in 1..ny.saturating_sub(1) {
+        for ix in 1..nx.saturating_sub(1) {
+            if !held(ix, iy) {
+                continue;
+            }
+            let here = h.data[iy * nx + ix] as f64;
+            let side = |jx: usize, jy: usize, span: &mut f64| -> f64 {
+                if held(jx, jy) {
+                    h.data[jy * nx + jx] as f64
+                } else {
+                    *span -= cell;
+                    here
+                }
+            };
+            let mut sx = cell * EMBOSS_SPAN;
+            let (l, r) = (side(ix - 1, iy, &mut sx), side(ix + 1, iy, &mut sx));
+            let mut sy = cell * EMBOSS_SPAN;
+            let (d, u) = (side(ix, iy - 1, &mut sy), side(ix, iy + 1, &mut sy));
+            // The normal is the cross product of (sx, 0, r - l) and (0, sy, u - d).
+            let n = [-(r - l) * sy, -sx * (u - d), sx * sy];
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            if len > 0.0 {
+                g0[iy * nx + ix] = Some((n[2] / len) as f32);
+            }
+        }
+    }
+    let smooth = |g: &[Option<f32>]| -> Vec<Option<f32>> {
+        let reach = (EMBOSS_BOX / 2) as isize;
+        let mut out = vec![None; nx * ny];
+        for iy in 0..ny {
+            for ix in 0..nx {
+                if g0[iy * nx + ix].is_none() {
+                    continue;
+                }
+                let (mut sum, mut n) = (0.0f32, 0.0f32);
+                for dy in -reach..=reach {
+                    for dx in -reach..=reach {
+                        let (jx, jy) = (ix as isize + dx, iy as isize + dy);
+                        if jx < 0 || jy < 0 || jx >= nx as isize || jy >= ny as isize {
+                            continue;
+                        }
+                        // Inside the grid, a place with nothing counts as 0.
+                        sum += g[jy as usize * nx + jx as usize].unwrap_or(0.0);
+                        n += 1.0;
+                    }
+                }
+                out[iy * nx + ix] = Some(sum / n);
+            }
+        }
+        out
+    };
+    let g1 = smooth(&g0);
+    let g2 = smooth(&g1);
+    let g3 = smooth(&g2);
+    [g0, g1, g2, g3]
+}
+
+/// The embossed heights (`0x1407344f0`): the two grids either side of the smoothness, mixed,
+/// times the scale and the model's height from its lowest to its highest point.
+pub fn emboss_heights(grids: &[Vec<Option<f32>>; 4], like: &Grid, form: EmbossForm, lowest: f64, highest: f64) -> Grid {
+    let s = form.smoothness.clamp(0.0, 1.0);
+    let k = ((s / EMBOSS_SMOOTH_STEP) as usize).min(2);
+    let frac = ((s - k as f64 * EMBOSS_SMOOTH_STEP) / EMBOSS_SMOOTH_STEP).clamp(0.0, 1.0) as f32;
+    let scale = form.scale.clamp(EMBOSS_SCALE_LEAST, EMBOSS_SCALE_MOST) as f32;
+    let range = (highest - lowest) as f32;
+    let data = (0..like.data.len())
+        .map(|i| match (grids[k][i], grids[k + 1][i]) {
+            (Some(a), Some(b)) => (a + (b - a) * frac) * scale * range,
+            _ => 0.0,
+        })
+        .collect();
+    Grid { data, ..like.clone() }
+}
+/// Create a textured area component (33697, string `0x83a1`; its form `0x140b1c540`).
+pub const TEXTURE_AREA_COMMAND: u32 = 33697;
+/// The texture's settings are percentages of the tile (`0x1420fbc10`: 100). Spacing may go down to
+/// -99.9% (`0x14213ad88`), the tiles then overlapping, and up to 100%; the shift of every other row
+/// or column goes from 0 to 100% (`0x1403f6c70`, the top at `0x142736360`). All start at 0.
+pub const TEXTURE_SPACING_LEAST: f64 = -99.9;
+pub const TEXTURE_MOST: f64 = 100.0;
+/// Burin's own limit: how many overlapping tiles one place looks at each way, so a spacing near
+/// -99.9% (a thousand tiles over each other) stays quick.
+pub const TEXTURE_MOST_OVERLAP: i64 = 16;
+
+/// The Create Texture Area form: spacing and shift each way in percent of the tile, and how each
+/// of the four tiles in a group of two by two is mirrored (0 none, 1 left to right, 2 top to
+/// bottom, 3 both), from the lower left one, the tile itself.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextureForm {
+    pub spacing: [f64; 2],
+    pub shift: [f64; 2],
+    pub mirror: [u8; 4],
+}
+
+impl Default for TextureForm {
+    fn default() -> Self {
+        TextureForm { spacing: [0.0; 2], shift: [0.0; 2], mirror: [0; 4] }
+    }
+}
+
+impl TextureForm {
+    /// Kept within the original's limits (`0x1403f6c70`).
+    pub fn clamped(self) -> TextureForm {
+        TextureForm {
+            spacing: self.spacing.map(|v| v.clamp(TEXTURE_SPACING_LEAST, TEXTURE_MOST)),
+            shift: self.shift.map(|v| v.clamp(0.0, TEXTURE_MOST)),
+            mirror: self.mirror.map(|m| m % 4),
+        }
+    }
+}
+
+/// A tile repeated over a grid like `tile`, inside `mask` (one flag per cell). The tile is the
+/// part of `tile` holding something, cut to its box first (`0x1403f0b10`). Rows go up from `lo`,
+/// each tile `1 + spacing` of its size from the last; every other row moves along by the X shift,
+/// and every other column up by the Y shift. Where tiles overlap the highest wins.
+pub fn texture_grid(tile: &Grid, form: TextureForm, lo: P, mask: &[bool]) -> Option<Grid> {
+    let f = form.clamped();
+    let (nx, ny, cell) = (tile.nx, tile.ny, tile.cell);
+    let held = |ix: usize, iy: usize| tile.data[iy * nx + ix] != 0.0;
+    let cols: Vec<usize> = (0..nx).filter(|&ix| (0..ny).any(|iy| held(ix, iy))).collect();
+    let rows: Vec<usize> = (0..ny).filter(|&iy| (0..nx).any(|ix| held(ix, iy))).collect();
+    let (&x0, &x1, &y0, &y1) = (cols.first()?, cols.last()?, rows.first()?, rows.last()?);
+    let (tw, th) = ((x1 - x0 + 1) as f64 * cell, (y1 - y0 + 1) as f64 * cell);
+    let (sx, sy) = (tw * (1.0 + f.spacing[0] / 100.0), th * (1.0 + f.spacing[1] / 100.0));
+    let (shx, shy) = (tw * f.shift[0] / 100.0, th * f.shift[1] / 100.0);
+    // The tile's own height at a place inside it, mirrored as asked.
+    let at = |u: f64, v: f64, mirror: u8| -> f32 {
+        let u = if mirror & 1 == 1 { tw - u } else { u };
+        let v = if mirror & 2 == 2 { th - v } else { v };
+        let ix = x0 + ((u / cell).floor().max(0.0) as usize).min(x1 - x0);
+        let iy = y0 + ((v / cell).floor().max(0.0) as usize).min(y1 - y0);
+        tile.data[iy * nx + ix]
+    };
+    let mut out = Grid { nx, ny, cell, data: vec![0.0; nx * ny] };
+    for iy in 0..ny {
+        for ix in 0..nx {
+            if !mask[iy * nx + ix] {
+                continue;
+            }
+            let (x, y) = (ix as f64 * cell - lo[0], iy as f64 * cell - lo[1]);
+            let mut best: Option<f32> = None;
+            // Rows that may reach this place; the X shift moves the odd ones along.
+            let r_top = (y / sy).floor() as i64;
+            let reach_r = ((th / sy).ceil() as i64).clamp(1, TEXTURE_MOST_OVERLAP);
+            for r in (r_top - reach_r..=r_top + 1).rev() {
+                let row_x = if r.rem_euclid(2) == 1 { shx } else { 0.0 };
+                let c_top = ((x - row_x) / sx).floor() as i64;
+                let reach_c = ((tw / sx).ceil() as i64).clamp(1, TEXTURE_MOST_OVERLAP);
+                for c in (c_top - reach_c..=c_top + 1).rev() {
+                    let col_y = if c.rem_euclid(2) == 1 { shy } else { 0.0 };
+                    let (u, v) = (x - row_x - c as f64 * sx, y - col_y - r as f64 * sy);
+                    if !(0.0..tw).contains(&u) || !(0.0..th).contains(&v) {
+                        continue;
+                    }
+                    let k = (c.rem_euclid(2) + 2 * r.rem_euclid(2)) as usize;
+                    let h = at(u, v, f.mirror[k]);
+                    if h != 0.0 {
+                        best = Some(best.map_or(h, |b| b.max(h)));
+                    }
+                }
+            }
+            out.data[iy * nx + ix] = best.unwrap_or(0.0);
+        }
+    }
+    Some(out)
+}
+
+/// Export Component as a 3d Clipart File (33605, string `0x8345`; the files' filter, `0x36c`).
+pub const EXPORT_CLIP3D_COMMAND: u32 = 33605;
+/// Burin's own 3D clipart file: one component as it is, in Burin's text form (not Vectric's).
+pub const CLIP3D_EXTENSION: &str = "3dclip";
+pub const CLIP3D_VERSION: u32 = 2;
+
+/// Version 1 held one component; version 2 holds the whole model, as the original's does.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Clip3d {
+    burin_3dclip: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    component: Option<Component>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    components: Vec<Component>,
+}
+
+/// Where a set of components lies, from all their outlines.
+fn components_bbox(cs: &[Component]) -> Option<(P, P)> {
+    let all: Vec<Path> = cs.iter().flat_map(|c| c.paths.iter().cloned()).collect();
+    crate::geom::bbox(&all)
+}
+
+/// Moves a component by `d`: its outline and, if it has one, its height grid.
+pub fn shift_component(c: &mut Component, d: [f64; 2]) {
+    for q in c.paths.iter_mut().flat_map(|p| p.pts.iter_mut()) {
+        q[0] += d[0];
+        q[1] += d[1];
+    }
+    if let Some(s) = c.surface.as_mut() {
+        s.at = [s.at[0] + d[0], s.at[1] + d[1]];
+    }
+}
+
+/// The text of a 3D clipart file for the model's components, in their order, kept with the lower
+/// left corner of them all at 0, 0.
+pub fn clip3d_text(cs: &[Component]) -> String {
+    let mut cs = cs.to_vec();
+    if let Some((lo, _)) = components_bbox(&cs) {
+        for c in &mut cs {
+            shift_component(c, [-lo[0], -lo[1]]);
+        }
+    }
+    serde_json::to_string(&Clip3d { burin_3dclip: CLIP3D_VERSION, component: None, components: cs }).unwrap_or_default()
+}
+
+/// The components in a 3D clipart file, or why it can't be read.
+pub fn read_clip3d(text: &str) -> Result<Vec<Component>, String> {
+    match serde_json::from_str::<Clip3d>(text) {
+        Ok(f) if f.burin_3dclip > CLIP3D_VERSION => Err(tr("This 3D clipart was made by a newer Burin.").into()),
+        Ok(f) => {
+            let cs: Vec<Component> = f.component.into_iter().chain(f.components).collect();
+            if cs.is_empty() {
+                Err(tr("This 3D clipart file has nothing in it.").into())
+            } else {
+                Ok(cs)
+            }
+        }
+        Err(_) => Err(tr("This is not a Burin 3D clipart file.").into()),
+    }
+}
 pub const BOUNDARY_COMMAND: u32 = 33355;
 pub const RESET_INSIDE_COMMAND: u32 = 33196;
 pub const RESET_OUTSIDE_COMMAND: u32 = 33197;
@@ -511,7 +776,7 @@ impl App {
         };
         self.checkpoint();
         let paths = outline_of(&model);
-        self.doc.components.push(Component { name: tr("Copy of Visible Model").into(), paths, profile: Profile::Flat, height: top, base: 0.0, combine: Combine::Add, visible: true, surface: Some(surface) });
+        self.doc.components.push(Component { name: tr("Copy of Visible Model").into(), paths, profile: Profile::Flat, height: top, base: 0.0, combine: Combine::Add, visible: true, surface: Some(surface), whole: false });
         self.selected_comp = Some(self.doc.components.len() - 1);
         self.model_dirty = true;
         self.dirty = true;
@@ -628,6 +893,214 @@ impl App {
         }
     }
 
+    /// Add Zero Plane (33643, `0x1402b8770`): a flat component at height 0 over the whole job,
+    /// called "Zero Plane", combining by Add, so dishes subtracted after it go below zero.
+    /// It goes first in the combine order, under everything, which is where it does its work.
+    pub fn add_zero_plane(&mut self) {
+        self.checkpoint();
+        let (w, h) = (self.doc.job.width, self.doc.job.height);
+        let paths = vec![Path::closed(vec![[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]])];
+        let plane = Component { name: tr("Zero Plane").into(), paths, profile: Profile::Flat, height: 0.0, base: 0.0, combine: Combine::Add, visible: true, surface: None, whole: true };
+        self.doc.components.insert(0, plane);
+        self.selected_comp = Some(0);
+        self.model_dirty = true;
+        self.sim = None;
+        self.status = tr("Added a zero plane under the model: shapes subtracted from it now go below zero.").into();
+    }
+
+    /// Create Texture Area: needs one component, the tile; closed shapes chosen as well bound it,
+    /// or else it fills the job (`0x140b1c540`).
+    pub fn open_texture_area(&mut self) {
+        if self.selected_comp.is_none_or(|i| i >= self.doc.components.len()) {
+            self.message = Some(tr("Choose the component to repeat in the Modeling tab, and closed shapes to bound it if you like.").into());
+            return;
+        }
+        self.texture_form = Some(self.last_texture.unwrap_or_default());
+    }
+
+    /// Makes the textured area: a new component of the tile repeated, inside the chosen closed
+    /// shapes or over the whole job. The tile is hidden then, as in the original.
+    pub fn texture_area(&mut self, form: TextureForm) -> bool {
+        let Some(i) = self.selected_comp.filter(|&i| i < self.doc.components.len()) else { return false };
+        let j = self.doc.job.clone();
+        let tile = self.component_grid(i);
+        let bounds: Vec<Path> = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id)).flat_map(|v| v.paths.iter().filter(|p| p.closed).cloned()).collect();
+        let (bounds, lo) = match crate::geom::bbox(&bounds) {
+            Some((lo, _)) if !bounds.is_empty() => (bounds, lo),
+            _ => (vec![Path::closed(vec![[0.0, 0.0], [j.width, 0.0], [j.width, j.height], [0.0, j.height]])], [0.0, 0.0]),
+        };
+        let mask = relief::raster_mask(&bounds, tile.nx, tile.ny, tile.cell);
+        let Some(grid) = texture_grid(&tile, form, lo, &mask) else {
+            self.message = Some(tr("The chosen component has nothing in it to repeat.").into());
+            return false;
+        };
+        let Some((surface, top)) = surface_from(&grid) else {
+            self.message = Some(tr("After fitting the texture inside its boundary, no areas remained to texture.").into());
+            return false;
+        };
+        self.checkpoint();
+        let combine = self.doc.components[i].combine;
+        self.doc.components[i].visible = false;
+        let n = self.doc.components.iter().filter(|c| c.name.starts_with(tr("Texture Area"))).count() + 1;
+        let name = tf!("Texture Area {n}");
+        self.doc.components.push(Component { name, paths: bounds, profile: Profile::Flat, height: top, base: 0.0, combine, visible: true, surface: Some(surface), whole: false });
+        self.selected_comp = Some(self.doc.components.len() - 1);
+        self.last_texture = Some(form.clamped());
+        self.model_dirty = true;
+        self.sim = None;
+        self.dirty = true;
+        true
+    }
+
+    pub(crate) fn texture_area_window(&mut self, ctx: &egui::Context) {
+        let Some(mut form) = self.texture_form else { return };
+        let mut open = true;
+        let (mut apply, mut cancel) = (false, false);
+        egui::Window::new(tr("Create Texture Area")).id(egui::Id::unique("texture-area")).open(&mut open).collapsible(false).resizable(false).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
+            ui.set_max_width(320.0);
+            ui.label(egui::RichText::new(tr("The chosen component is repeated inside the chosen closed shapes, or over the whole job. Values are percent of its size.")).size(12.0).color(crate::theme::MUTED));
+            for (label, values, least) in [(tr("Spacing"), &mut form.spacing, TEXTURE_SPACING_LEAST), (tr("Shift every other row or column"), &mut form.shift, 0.0)] {
+                ui.label(egui::RichText::new(label).strong());
+                for (k, axis) in ["X", "Y"].into_iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(axis);
+                        ui.add(egui::Slider::new(&mut values[k], least..=TEXTURE_MOST).suffix(" %").fixed_decimals(1));
+                    });
+                }
+            }
+            ui.label(egui::RichText::new(tr("Mirror")).strong());
+            // Two by two, as the tiles lie: the top pair first on screen, the tile itself bottom left.
+            let names = [tr("None"), tr("Left to right"), tr("Top to bottom"), tr("Both")];
+            for row in [[2usize, 3], [0, 1]] {
+                ui.horizontal(|ui| {
+                    for k in row {
+                        let m = form.mirror[k] as usize;
+                        if ui.add(egui::Button::new(names[m]).min_size(egui::vec2(110.0, 22.0))).on_hover_text(tr("Click to change how this tile of each group of four is mirrored")).clicked() {
+                            form.mirror[k] = ((m + 1) % 4) as u8;
+                        }
+                    }
+                });
+            }
+            ui.horizontal(|ui| {
+                apply = ui.button(tr("Apply")).clicked();
+                cancel = ui.button(tr("Cancel")).clicked();
+            });
+        });
+        let done = apply && self.texture_area(form);
+        self.texture_form = if done || cancel || !open { None } else { Some(form) };
+    }
+
+    /// Emboss Component: the chosen component, flattened to the shape of its slopes.
+    pub fn open_emboss(&mut self) {
+        if self.selected_comp.is_none_or(|i| i >= self.doc.components.len()) {
+            self.message = Some(tr("Choose the component to emboss in the Modeling tab.").into());
+            return;
+        }
+        self.emboss_form = Some(EmbossForm::default());
+    }
+
+    pub fn emboss_component(&mut self, form: EmbossForm) -> bool {
+        let Some(i) = self.selected_comp.filter(|&i| i < self.doc.components.len()) else { return false };
+        let grid = self.component_grid(i);
+        let (lo, hi) = grid.data.iter().filter(|h| **h != 0.0).fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(*v), h.max(*v)));
+        if lo > hi {
+            self.message = Some(tr("The chosen component has nothing in it to emboss.").into());
+            return false;
+        }
+        let grids = emboss_grids(&grid);
+        let out = emboss_heights(&grids, &grid, form, lo.min(0.0) as f64, hi as f64);
+        let Some((surface, top)) = surface_from(&out) else {
+            self.message = Some(tr("The chosen component has nothing in it to emboss.").into());
+            return false;
+        };
+        self.checkpoint();
+        let c = &mut self.doc.components[i];
+        c.surface = Some(surface);
+        c.height = top;
+        c.profile = Profile::Flat;
+        c.base = 0.0;
+        self.model_dirty = true;
+        self.sim = None;
+        self.dirty = true;
+        true
+    }
+
+    pub(crate) fn emboss_window(&mut self, ctx: &egui::Context) {
+        let Some(mut form) = self.emboss_form else { return };
+        let mut open = true;
+        let (mut apply, mut cancel) = (false, false);
+        egui::Window::new(tr("Emboss Component")).id(egui::Id::unique("emboss")).open(&mut open).collapsible(false).resizable(false).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
+            ui.set_max_width(320.0);
+            // The original's warning (`0x3f8`), shown in the form rather than before it.
+            ui.label(egui::RichText::new(tr("Embossing is meant for imported components or 3D models, and works best with high relief.")).size(12.0).color(crate::theme::MUTED));
+            let mut scale = form.scale * 100.0;
+            ui.horizontal(|ui| {
+                ui.label(tr("Scale Height"));
+                ui.add(egui::Slider::new(&mut scale, EMBOSS_SCALE_LEAST * 100.0..=EMBOSS_SCALE_MOST * 100.0).suffix(" %").fixed_decimals(0));
+            });
+            form.scale = scale / 100.0;
+            let mut smooth = form.smoothness * 100.0;
+            ui.horizontal(|ui| {
+                ui.label(tr("Detail Smoothness"));
+                ui.add(egui::Slider::new(&mut smooth, 0.0..=100.0).fixed_decimals(0));
+            });
+            form.smoothness = smooth / 100.0;
+            ui.horizontal(|ui| {
+                apply = ui.button(tr("Apply")).clicked();
+                cancel = ui.button(tr("Cancel")).clicked();
+            });
+        });
+        let done = apply && self.emboss_component(form);
+        self.emboss_form = if done || cancel || !open { None } else { Some(form) };
+    }
+
+    /// Export as 3D Clipart (`0x1402c2d90`): the whole model, every component in its order, to a
+    /// file that File > Import, dropping it on the window or the Clipart tab bring into any job.
+    /// The original walks the component tree from its top (`0x1409d5310`), and refuses when the
+    /// composite model is empty (`0x1409e0050`, message `0x28e`). The name offered is the job's.
+    pub fn export_3d_clipart(&mut self) {
+        self.refresh_model();
+        let empty = self.model.as_ref().is_none_or(|m| m.data.iter().all(|v| *v == 0.0)) && !self.doc.components.iter().any(|c| c.whole);
+        if self.doc.components.is_empty() || empty {
+            self.message = Some(tr("There are no visible components. There must be shapes in the model to be able to export it as 3D clipart.").into());
+            return;
+        }
+        let stem = self.path.as_ref().and_then(|p| p.file_stem()).map_or_else(|| tr("model").to_string(), |s| s.to_string_lossy().to_string());
+        let name = format!("{stem}.{CLIP3D_EXTENSION}");
+        let Some(path) = crate::platform::FileDialog::new().add_filter(tr("3D Clipart"), &[CLIP3D_EXTENSION]).set_file_name(&name).save_file() else { return };
+        match crate::platform::write(&path, clip3d_text(&self.doc.components)) {
+            Ok(()) => self.status = tf!("Exported {}", path.display()),
+            Err(e) => self.message = Some(tr("Failed to write clipart data").to_string() + &format!(" ({}: {e})", path.display())),
+        }
+    }
+
+    /// Adds a piece of 3D clipart to the job: its components, together in the middle of the job,
+    /// after the ones already there; the last one is chosen.
+    pub fn insert_3d_clipart(&mut self, mut cs: Vec<Component>) {
+        if cs.is_empty() {
+            return;
+        }
+        if let Some((lo, hi)) = components_bbox(&cs) {
+            let (j, mid) = (&self.doc.job, [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0]);
+            let d = [j.width / 2.0 - mid[0], j.height / 2.0 - mid[1]];
+            for c in &mut cs {
+                shift_component(c, d);
+            }
+        }
+        self.checkpoint();
+        self.doc.components.extend(cs);
+        self.selected_comp = Some(self.doc.components.len() - 1);
+        self.model_dirty = true;
+        self.sim = None;
+    }
+
+    pub fn import_3d_clipart(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let bytes = crate::platform::read(path).map_err(|e| tf!("Could not read {}: {e}", path.display()))?;
+        let cs = read_clip3d(&String::from_utf8_lossy(&bytes))?;
+        self.insert_3d_clipart(cs);
+        Ok(())
+    }
+
     /// The highest point of the model now.
     pub fn model_top(&mut self) -> Option<f64> {
         self.refresh_model();
@@ -718,7 +1191,7 @@ impl App {
             return false;
         };
         self.checkpoint();
-        self.doc.components.push(Component { name: tr("Turned Component").into(), paths: outline_of(&grid), profile: Profile::Flat, height, base: 0.0, combine: Combine::Merge, visible: true, surface: Some(surface) });
+        self.doc.components.push(Component { name: tr("Turned Component").into(), paths: outline_of(&grid), profile: Profile::Flat, height, base: 0.0, combine: Combine::Merge, visible: true, surface: Some(surface), whole: false });
         self.selected_comp = Some(self.doc.components.len() - 1);
         self.turn_mode = Some(form.turn);
         self.turn_height = Some(form.height);
@@ -779,7 +1252,7 @@ impl App {
         let Some((surface, top)) = surface_from(&drafted) else { return false };
         self.checkpoint();
         let name = tf!("Model With {}° Draft", format!("{angle:.1}"));
-        self.doc.components.push(Component { name, paths: outline_of(&drafted), profile: Profile::Flat, height: top, base: 0.0, combine: Combine::Merge, visible: true, surface: Some(surface) });
+        self.doc.components.push(Component { name, paths: outline_of(&drafted), profile: Profile::Flat, height: top, base: 0.0, combine: Combine::Merge, visible: true, surface: Some(surface), whole: false });
         self.selected_comp = Some(self.doc.components.len() - 1);
         self.last_draft_angle = Some(angle);
         self.model_dirty = true;
@@ -835,7 +1308,7 @@ impl App {
             return false;
         };
         self.checkpoint();
-        self.doc.components.push(Component { name: tr("Toolpath Preview").into(), paths: outline_of(&out), profile: Profile::Flat, height: top, base: 0.0, combine: Combine::Add, visible: true, surface: Some(surface) });
+        self.doc.components.push(Component { name: tr("Toolpath Preview").into(), paths: outline_of(&out), profile: Profile::Flat, height: top, base: 0.0, combine: Combine::Add, visible: true, surface: Some(surface), whole: false });
         self.selected_comp = Some(self.doc.components.len() - 1);
         self.model_dirty = true;
         self.dirty = true;
@@ -876,7 +1349,7 @@ impl App {
             let slice = slice_of(&model, bottom, top);
             if let Some((surface, height)) = surface_from(&slice) {
                 // Burin has no levels: the slices start hidden, so the model looks as it did.
-                self.doc.components.push(Component { name: name.clone(), paths: outline_of(&slice), profile: Profile::Flat, height, base: 0.0, combine: Combine::Add, visible: false, surface: Some(surface) });
+                self.doc.components.push(Component { name: name.clone(), paths: outline_of(&slice), profile: Profile::Flat, height, base: 0.0, combine: Combine::Add, visible: false, surface: Some(surface), whole: false });
             }
             if form.boundaries {
                 let above = |z: f64| Grid { data: model.data.iter().map(|h| if *h > 0.0 && *h as f64 >= z { 1.0 } else { 0.0 }).collect(), ..model.clone() };
@@ -893,7 +1366,7 @@ impl App {
                         }
                     };
                     let id = self.doc.new_id();
-                    self.doc.vectors.push(crate::app::Vector { id, paths, layer, prim: crate::app::Prim::Free, construction: false, members: Vec::new(), piece: None });
+                    self.doc.vectors.push(crate::app::Vector { id, paths, layer, prim: crate::app::Prim::Free, construction: false, members: Vec::new(), piece: None, face: self.doc.active_face, sheet: self.doc.active_sheet });
                 }
             }
         }
@@ -984,7 +1457,7 @@ impl App {
         self.checkpoint();
         let combine = if d > 0.0 { Combine::Merge } else { Combine::Low };
         let name = tf!("Model With {} Offset", format!("{d:.3}"));
-        self.doc.components.push(Component { name, paths: outline_of(&moved), profile: Profile::Flat, height: top, base: 0.0, combine, visible: true, surface: Some(surface) });
+        self.doc.components.push(Component { name, paths: outline_of(&moved), profile: Profile::Flat, height: top, base: 0.0, combine, visible: true, surface: Some(surface), whole: false });
         self.selected_comp = Some(self.doc.components.len() - 1);
         self.offset_distance = Some(d);
         self.model_dirty = true;
@@ -1006,7 +1479,7 @@ impl App {
                 ui.label(unit);
             });
             let mut clip = true;
-            ui.add_enabled(false, egui::Checkbox::new(&mut clip, tr("Clip Z values to Zero Plane"))).on_disabled_hover_text(tr("Burin's model doesn't go below zero yet, so it is always clipped there."));
+            ui.add_enabled(false, egui::Checkbox::new(&mut clip, tr("Clip Z values to Zero Plane"))).on_disabled_hover_text(tr("Burin's offset keeps only what is above zero, so it is always clipped there."));
             ui.horizontal(|ui| {
                 apply = ui.add_enabled(form.distance != 0.0, egui::Button::new(tr("OK"))).clicked();
                 cancel = ui.button(tr("Cancel")).clicked();
@@ -1027,6 +1500,83 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Emboss: flat tops come out at the full scaled height, slopes lower, nothing stays nothing,
+    /// and smoothing blurs the detail by averaging over 7 by 7 cells.
+    #[test]
+    fn emboss_follows_the_slopes() {
+        let mut g = Grid::new(10.0, 10.0, 10_000, 0.0);
+        for iy in 0..g.ny {
+            for ix in 0..g.nx {
+                let (x, y) = (ix as f64 * g.cell, iy as f64 * g.cell);
+                // A flat-topped plateau 1 high from x = 3 to 7, with ramps on both sides down to 0.2.
+                if (2.0..8.0).contains(&x) && (2.0..8.0).contains(&y) {
+                    let ramp = ((x - 2.0).min(8.0 - x)).min(1.0);
+                    g.data[iy * g.nx + ix] = (0.2 + 0.8 * ramp) as f32;
+                }
+            }
+        }
+        let grids = emboss_grids(&g);
+        let flat = grids[0][(50.0 / g.cell * 0.1) as usize * g.nx + (5.0 / g.cell) as usize];
+        assert!((flat.unwrap() - 1.0).abs() < 1e-5, "flat: upright normal");
+        let out = emboss_heights(&grids, &g, EmbossForm::default(), 0.0, 1.0);
+        let top = out.sample(5.0, 5.0);
+        assert!((top - EMBOSS_SCALE as f32).abs() < 1e-4, "{top}");
+        assert!(out.sample(2.5, 5.0) < top, "a slope comes out lower");
+        assert_eq!(out.sample(0.5, 0.5), 0.0, "nothing stays nothing");
+        // Fully smoothed, the sharp change at the ramp's foot is spread out.
+        let soft = emboss_heights(&grids, &g, EmbossForm { scale: EMBOSS_SCALE, smoothness: 1.0 }, 0.0, 1.0);
+        let step = |o: &Grid| (o.sample(2.95, 5.0) - o.sample(3.05, 5.0)).abs();
+        assert!(step(&soft) < step(&out));
+        // Halfway between two grids mixes them evenly.
+        let half = emboss_heights(&grids, &g, EmbossForm { scale: 0.5, smoothness: 0.5 }, 0.0, 1.0);
+        let i = (5.0 / g.cell) as usize * g.nx + (2.6 / g.cell) as usize;
+        let want = (grids[1][i].unwrap() + grids[2][i].unwrap()) / 2.0 * 0.5;
+        assert!((half.data[i] - want).abs() < 1e-5);
+    }
+
+    /// A tile 1 wide and 2 tall at the job's corner, climbing from left to right, on a 10 by 10 job.
+    fn ramp_tile() -> Grid {
+        let mut g = Grid::new(10.0, 10.0, 40_000, 0.0);
+        for iy in 0..g.ny {
+            for ix in 0..g.nx {
+                let (x, y) = (ix as f64 * g.cell, iy as f64 * g.cell);
+                if x < 1.0 && y < 2.0 {
+                    g.data[iy * g.nx + ix] = (0.1 + x) as f32;
+                }
+            }
+        }
+        g
+    }
+
+    #[test]
+    fn a_texture_repeats_the_tile_with_spacing_shift_and_mirrors() {
+        let tile = ramp_tile();
+        let all = vec![true; tile.nx * tile.ny];
+        let plain = texture_grid(&tile, TextureForm::default(), [0.0, 0.0], &all).unwrap();
+        // Touching tiles: the same climb every 1 across and every 2 up.
+        assert!((plain.sample(3.5, 5.0) - plain.sample(0.5, 1.0)).abs() < 0.03);
+        assert!(plain.sample(3.95, 0.5) > plain.sample(3.05, 0.5) + 0.5, "each tile climbs left to right");
+        // 100% spacing leaves a gap as wide as the tile.
+        let spaced = texture_grid(&tile, TextureForm { spacing: [100.0, 0.0], ..Default::default() }, [0.0, 0.0], &all).unwrap();
+        assert_eq!(spaced.sample(1.5, 1.0), 0.0, "a gap");
+        assert!(spaced.sample(2.5, 1.0) > 0.0, "the next tile");
+        // A 50% X shift moves every other row along by half the tile.
+        let shifted = texture_grid(&tile, TextureForm { shift: [50.0, 0.0], ..Default::default() }, [0.0, 0.0], &all).unwrap();
+        assert!((shifted.sample(0.75, 3.0) - plain.sample(0.25, 3.0)).abs() < 0.03, "{} {}", shifted.sample(0.75, 3.0), plain.sample(0.25, 3.0));
+        // The lower right tile of each group mirrored left to right climbs the other way.
+        let mirrored = texture_grid(&tile, TextureForm { mirror: [0, 1, 0, 0], ..Default::default() }, [0.0, 0.0], &all).unwrap();
+        assert!(mirrored.sample(1.05, 0.5) > mirrored.sample(1.95, 0.5) + 0.5);
+        assert!(mirrored.sample(2.95, 0.5) > mirrored.sample(2.05, 0.5) + 0.5, "the next group is as the tile");
+        // Overlapping tiles keep the highest.
+        let packed = texture_grid(&tile, TextureForm { spacing: [-50.0, 0.0], ..Default::default() }, [0.0, 0.0], &all).unwrap();
+        assert!(packed.sample(0.9, 0.5) >= plain.sample(0.9, 0.5) - 0.03);
+        // Out of range values are kept within the original's limits.
+        let f = TextureForm { spacing: [-500.0, 300.0], shift: [-5.0, 140.0], mirror: [4, 5, 6, 7] }.clamped();
+        assert_eq!(f.spacing, [TEXTURE_SPACING_LEAST, TEXTURE_MOST]);
+        assert_eq!(f.shift, [0.0, TEXTURE_MOST]);
+        assert_eq!(f.mirror, [0, 1, 2, 3]);
+    }
 
     #[test]
     fn spinning_and_turning_a_triangle() {

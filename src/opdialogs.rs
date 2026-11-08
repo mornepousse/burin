@@ -53,7 +53,7 @@ impl App {
             .iter()
             .filter(|v| !v.construction)
             .filter(|v| {
-                let layer_ok = if f.visible_layers { self.doc.layers.get(v.layer).is_none_or(|l| l.visible) } else { f.layers.contains(&v.layer) };
+                let layer_ok = if f.visible_layers { self.doc.shows(v) } else { f.layers.contains(&v.layer) };
                 if !layer_ok {
                     return false;
                 }

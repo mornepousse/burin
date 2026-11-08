@@ -57,6 +57,8 @@ mod svg;
 mod theme;
 mod relief;
 mod relief_import;
+mod sculpt;
+mod sweep;
 mod toolpath;
 mod ui;
 mod view3d;
@@ -280,6 +282,252 @@ fn open_state(app: &mut App, state: &str) {
             app.boundary_around_component();
             app.view3d = false;
         }
+        "extrude" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            // Two loops crossing each other, woven, with a rounded cross section.
+            let a = app.doc.add_vector(vec![geom::Path::closed(geom::circle([4.0, 5.0], 2.5))], Prim::Free);
+            let b = app.doc.add_vector(vec![geom::Path::closed(geom::circle([6.0, 5.0], 2.5))], Prim::Free);
+            let section = app.doc.add_vector(vec![geom::Path::open((0..=16).map(|k| { let u = k as f64 / 16.0; [1.0 + u * 0.6, 9.0 + 0.2 * (std::f64::consts::PI * u).sin()] }).collect())], Prim::Free);
+            app.selected = vec![a, b, section];
+            app.open_extrude();
+            if let Some(mut f) = app.extrude_form.clone() {
+                f.weave = true;
+                app.extrude(&f);
+                app.extrude_form = Some(f);
+            }
+            app.selected.clear();
+            app.left_tab = app::LeftTab::Modeling;
+            app.view3d = true;
+            app.cam = view3d::Camera { yaw: 25f32.to_radians(), tilt: 45f32.to_radians(), zoom: 1.4, pan: egui::Vec2::ZERO };
+        }
+        "extrudecomp" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            // A rounded bead, used as the cross section and repeated along a wave.
+            app.doc.components.push(relief::Component { name: "Bead".into(), paths: vec![geom::Path::closed(geom::circle([1.0, 9.0], 0.45))], profile: relief::Profile::Round, height: 0.35, base: 0.0, combine: relief::Combine::Add, visible: false, surface: None, whole: false });
+            let wave = app.doc.add_vector(vec![geom::Path::open((0..=60).map(|k| { let u = k as f64 / 60.0; [1.5 + u * 7.0, 5.0 + 1.6 * (std::f64::consts::TAU * u).sin()] }).collect())], Prim::Free);
+            app.selected = vec![wave];
+            app.open_extrude();
+            app.selected_comp = Some(0);
+            if let Some(f) = app.extrude_form.clone() {
+                app.extrude(&f);
+                app.extrude_form = Some(f);
+            }
+            app.selected.clear();
+            app.left_tab = app::LeftTab::Modeling;
+            app.view3d = true;
+            app.cam = view3d::Camera { yaw: 25f32.to_radians(), tilt: 45f32.to_radians(), zoom: 1.4, pan: egui::Vec2::ZERO };
+        }
+        "adaptive" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            // An L-shaped pocket cleared adaptively with a quarter inch cutter.
+            let shape = geom::Path::closed(vec![[2.0, 2.0], [8.0, 2.0], [8.0, 4.5], [4.5, 4.5], [4.5, 8.0], [2.0, 8.0]]);
+            app.doc.add_vector(vec![shape.clone()], Prim::Free);
+            let machine = app.doc.machine_on_job();
+            let size = toolpath::JobSize { width: app.doc.job.width, height: app.doc.job.height, thickness: app.doc.job.thickness };
+            let tool = toolpath::default_tools().into_iter().find(|t| !t.metric && t.kind == relief::ToolKind::EndMill).expect("an end mill in inches");
+            let mut op = toolpath::blank_op(toolpath::OpKind::Pocket, "Adaptive Pocket".into(), tool, 0.25, vec![shape]);
+            op.adaptive = true;
+            op.ramp = true;
+            op.ramp_kind = toolpath::RampKind::Spiral;
+            let moves = toolpath::generate(&op, machine, &size, None).expect("the demo's toolpath");
+            app.keep_calculated(vec![(op, std::sync::Arc::new(moves))], None);
+            app.message = None;
+            app.selected.clear();
+        }
+        "restpocket" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            // A room with a narrow slot: a 1 inch tool clears the room, a 1/8 inch one the rest.
+            let shape = geom::Path::closed(vec![[2.0, 2.0], [7.0, 2.0], [7.0, 6.0], [4.8, 6.0], [4.8, 8.5], [4.2, 8.5], [4.2, 6.0], [2.0, 6.0]]);
+            app.doc.add_vector(vec![shape.clone()], Prim::Free);
+            let machine = app.doc.machine_on_job();
+            let size = toolpath::JobSize { width: app.doc.job.width, height: app.doc.job.height, thickness: app.doc.job.thickness };
+            let mut small = toolpath::default_tools().into_iter().find(|t| !t.metric && t.kind == relief::ToolKind::EndMill).expect("an end mill in inches");
+            small.dia = 0.125;
+            small.name = "End Mill (1/8 inch)".into();
+            let mut big = small.clone();
+            big.dia = 1.0;
+            big.name = "End Mill (1 inch)".into();
+            let mut clear = toolpath::blank_op(toolpath::OpKind::Pocket, "Pocket [Clear]".into(), big.clone(), 0.25, vec![shape.clone()]);
+            clear.clearance_tool = None;
+            let mut rest = toolpath::blank_op(toolpath::OpKind::Pocket, "Pocket".into(), small, 0.25, vec![shape]);
+            rest.clearance_tool = Some(big);
+            rest.rest_only = true;
+            let a = toolpath::generate(&clear, machine, &size, None).expect("the demo's toolpath");
+            let b = toolpath::generate(&rest, machine, &size, None).expect("the demo's toolpath");
+            app.keep_calculated(vec![(clear, std::sync::Arc::new(a)), (rest, std::sync::Arc::new(b))], None);
+            app.message = None;
+            app.view3d = true;
+            app.preview(vec![0, 1]);
+            app.finish_preview();
+            app.cam = view3d::Camera { yaw: 0f32.to_radians(), tilt: 70f32.to_radians(), zoom: 1.6, pan: egui::Vec2::ZERO };
+        }
+        "nestturn" => {
+            app.new_file();
+            app.doc.job.height = 5.0;
+            // Parts taller than the sheet, turned to lie along the rows.
+            let ids: Vec<u64> = (0..3).map(|k| app.doc.add_vector(vec![geom::Path::closed(geom::rect([2.0 + k as f64 * 1.5, 2.5], 1.0, 6.0, 0.0))], Prim::Free)).collect();
+            app.selected = ids;
+            app.start_xform(app::Xform::Nest);
+            if let LeftForm::Xform(f) = &mut app.left {
+                f.nest_turn = true;
+            }
+            app.apply_xform();
+        }
+        "nestsheets" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            // Twelve 3 inch squares nested on a 10 inch sheet: the ones that don't fit go on sheet 2.
+            let mut ids = Vec::new();
+            for k in 0..12 {
+                let c = [1.0 + (k % 4) as f64 * 0.5, 1.0 + (k / 4) as f64 * 0.5];
+                ids.push(app.doc.add_vector(vec![geom::Path::closed(geom::rect(c, 3.0, 3.0, 0.0))], Prim::Free));
+            }
+            app.selected = ids;
+            app.start_xform(app::Xform::Nest);
+            app.apply_xform();
+            app.left = LeftForm::None;
+            app.show_sheet(1);
+            app.left_tab = app::LeftTab::Layers;
+        }
+        "sheets" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            // Two sheets: a circle on the first, a row of squares on the second, which shows.
+            circle(app);
+            app.add_sheet();
+            for k in 0..3 {
+                app.doc.add_vector(vec![geom::Path::closed(geom::rect([2.5 + 2.5 * k as f64, 5.0], 1.5, 1.5, 0.0))], Prim::Free);
+            }
+            app.selected.clear();
+            app.left_tab = app::LeftTab::Layers;
+        }
+        "gridspacing" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            circle(app);
+            app.grid = true;
+            app.snap = true;
+            app.grid_spacing = 0.5;
+        }
+        "railpairs" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            // Two frames swept at once: two pairs of closed rails, one moulding.
+            let rect = |c: [f64; 2], w: f64, h: f64| geom::Path::closed(geom::rect(c, w, h, 0.0));
+            let o1 = app.doc.add_vector(vec![rect([3.0, 5.0], 4.0, 6.0)], Prim::Free);
+            let i1 = app.doc.add_vector(vec![rect([3.0, 5.0], 2.6, 4.6)], Prim::Free);
+            let o2 = app.doc.add_vector(vec![rect([7.5, 5.0], 4.0, 4.0)], Prim::Free);
+            let i2 = app.doc.add_vector(vec![rect([7.5, 5.0], 2.6, 2.6)], Prim::Free);
+            let moulding = app.doc.add_vector(vec![geom::Path::open(vec![[1.0, 9.6], [1.2, 9.75], [1.5, 9.8], [1.7, 9.95], [2.0, 9.98], [2.4, 9.9], [2.6, 9.6]])], Prim::Free);
+            app.selected = vec![o1, i1, moulding];
+            app.open_two_rail_sweep();
+            if let Some(mut f) = app.sweep_form.clone() {
+                f.rails.extend([o2, i2]);
+                app.two_rail_sweep(&f);
+                app.sweep_form = Some(f);
+            }
+            app.selected.clear();
+            app.left_tab = app::LeftTab::Modeling;
+            app.view3d = true;
+            app.cam = view3d::Camera { yaw: 25f32.to_radians(), tilt: 45f32.to_radians(), zoom: 1.3, pan: egui::Vec2::ZERO };
+        }
+        "railsweep" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            // A frame: two closed rails, a moulding's cross section, the middle filled.
+            let outer = app.doc.add_vector(vec![geom::Path::closed(geom::rect([5.0, 5.0], 8.0, 6.0, 0.0))], Prim::Free);
+            let inner = app.doc.add_vector(vec![geom::Path::closed(geom::rect([5.0, 5.0], 6.0, 4.0, 0.0))], Prim::Free);
+            let moulding = app.doc.add_vector(vec![geom::Path::open(vec![[1.0, 8.6], [1.2, 8.75], [1.5, 8.8], [1.7, 9.05], [2.0, 9.1], [2.4, 8.95], [2.6, 8.6]])], Prim::Free);
+            app.selected = vec![outer, inner, moulding];
+            app.open_two_rail_sweep();
+            if let Some(mut f) = app.sweep_form.clone() {
+                f.fill_centre = true;
+                app.two_rail_sweep(&f);
+                app.sweep_form = Some(f);
+            }
+            app.left_tab = app::LeftTab::Modeling;
+            app.view3d = true;
+            app.cam = view3d::Camera { yaw: 25f32.to_radians(), tilt: 45f32.to_radians(), zoom: 1.3, pan: egui::Vec2::ZERO };
+        }
+        "emboss" => {
+            app.load_sample();
+            app.left = LeftForm::None;
+            app.selected.clear();
+            let n = app.doc.components.len();
+            for i in 0..n {
+                app.selected_comp = Some(i);
+                app.emboss_component(modeltools::EmbossForm { scale: 0.3, smoothness: 0.2 });
+            }
+            app.left_tab = app::LeftTab::Modeling;
+            app.reset_preview();
+            app.show_toolpaths = false;
+            app.view3d = true;
+            app.right_open = false;
+            app.cam = view3d::Camera { yaw: 25f32.to_radians(), tilt: 50f32.to_radians(), zoom: 1.3, pan: egui::Vec2::ZERO };
+        }
+        "sculpt" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            let disc = app.doc.add_vector(vec![geom::Path::closed(geom::circle([5.0, 5.0], 3.5))], Prim::Free);
+            app.selected = vec![disc];
+            app.open_shape_form(None);
+            if let LeftForm::Shape(mut f) = app.left.clone() {
+                f.profile = relief::Profile::Round;
+                f.height = 0.3;
+                app.add_component(f);
+            }
+            app.left = LeftForm::None;
+            app.selected.clear();
+            app.selected_comp = Some(0);
+            app.open_sculpt();
+            // A ridge deposited across, and a dent removed beside it.
+            if let Some(s) = app.sculpt.as_mut() {
+                s.tool = sculpt::SculptTool::Deposit;
+                s.strength = 1.0;
+                s.diameter = 1.0;
+            }
+            for k in 0..30 {
+                app.sculpt_at([3.0 + k as f64 * 0.13, 5.6], k == 0, false);
+            }
+            if let Some(s) = app.sculpt.as_mut() {
+                s.tool = sculpt::SculptTool::Remove;
+            }
+            for _ in 0..8 {
+                app.sculpt_at([5.5, 3.8], true, false);
+            }
+            if let Some(s) = app.sculpt.as_mut() {
+                s.tool = sculpt::SculptTool::Smooth;
+            }
+            app.cam = view3d::Camera { yaw: 25f32.to_radians(), tilt: 45f32.to_radians(), zoom: 1.4, pan: egui::Vec2::ZERO };
+        }
+        "kerning" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            let mut style = fonts::TextStyle::default();
+            let text = "WAVE\nWOOD";
+            // A few clicks between the letters, as one would: W and A closer, A and V closer, the lines closer.
+            for gap in [fonts::TextGap::Letter(1), fonts::TextGap::Letter(1), fonts::TextGap::Letter(2), fonts::TextGap::Line(1)] {
+                fonts::adjust_gap(text, 1.4, [2.0, 6.0], &mut style, gap, false, true);
+            }
+            let plain = Prim::Text { at: [2.0, 9.0], height: 1.4, text: "WAVE".into(), style: fonts::TextStyle::default() };
+            app.doc.add_vector(plain.paths(), plain);
+            let prim = Prim::Text { at: [2.0, 6.0], height: 1.4, text: text.into(), style };
+            let id = app.doc.add_vector(prim.paths(), prim);
+            app.selected = vec![id];
+        }
+        "upright" => {
+            app.new_file();
+            let prim = Prim::Text { at: [5.0, 8.5], height: 1.0, text: "BOIS\nFER".into(), style: fonts::TextStyle { vertical: true, ..Default::default() } };
+            app.doc.add_vector(prim.paths(), prim);
+            let mut f = DrawForm::new(DrawKind::Text, &app.doc.job);
+            f.text = "BOIS\nFER".into();
+            f.text_style = fonts::TextStyle { vertical: true, ..Default::default() };
+            app.left = LeftForm::Draw(f);
+        }
         "textfit" => {
             app.new_file();
             let plate = app.doc.add_vector(vec![geom::Path::closed(geom::rect([5.0, 5.0], 8.0, 3.0, 0.4))], Prim::Rect { c: [5.0, 5.0], w: 8.0, h: 3.0, corner: 0.4 });
@@ -339,6 +587,19 @@ fn open_state(app: &mut App, state: &str) {
             app.right_open = true;
             app.start_op(toolpath::OpKind::Profile);
             app.open_tool_list(Some(0));
+        }
+        "toolgroups" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            app.right_open = true;
+            app.start_op(toolpath::OpKind::Profile);
+            app.open_tool_list(Some(0));
+            app.tool_groups_edit = vec!["Roughing/Big".into(), "Finishing".into()];
+            if let Some(tools) = app.tool_edit.as_mut() {
+                tools[2].group = "Roughing/Big".into();
+                tools[1].group = "Roughing".into();
+            }
+            app.tool_group_picked = Some("Roughing/Big".into());
         }
         "modeling" | "clipart" | "layers" | "material" | "pocket" | "vcarve" | "rough" | "finish" | "drill" | "engrave" | "save" => {
             app.new_file();
@@ -872,6 +1133,104 @@ fn open_state(app: &mut App, state: &str) {
             app.view3d = false;
             app.doc.variables = vec![formula::Variable { name: "thick".into(), value: 0.75 }, formula::Variable { name: "tab_len".into(), value: 0.5 }];
             app.open_variables();
+        }
+        "allsides" | "multisided" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            app.doc.job.two_sided = true;
+            app.right_open = true;
+            // The same circle from each side, each cut a little past half way: it comes out whole.
+            for (face, y) in [(0u8, 6.0), (1u8, 4.0)] {
+                app.doc.active_face = face;
+                let c = app.doc.add_vector(vec![geom::Path::closed(geom::circle([4.5, y], 2.0))], Prim::Free);
+                app.selected = vec![c];
+                app.start_op(toolpath::OpKind::Profile);
+                if let RightMode::Op { op, .. } = &mut app.right {
+                    op.cut_depth = app.doc.job.thickness * 0.55;
+                }
+                app.calculate_op();
+            }
+            app.doc.active_face = 0;
+            app.selected.clear();
+            app.right = RightMode::Preview;
+            app.preview_all_sides();
+            app.message = None;
+            app.finish_preview();
+            app.cam = view3d::Camera { yaw: 25f32.to_radians(), tilt: 40f32.to_radians(), zoom: 1.3, pan: egui::Vec2::ZERO };
+            if state == "multisided" {
+                app.reset_preview();
+                app.view3d = true;
+                app.cam = view3d::Camera { yaw: 25f32.to_radians(), tilt: 75f32.to_radians(), zoom: 1.3, pan: egui::Vec2::ZERO };
+            }
+        }
+        "bottomside" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            circle(app);
+            app.doc.job.two_sided = true;
+            app.doc.active_face = 1;
+            app.doc.add_vector(vec![geom::Path::closed(vec![[5.5, 2.0], [8.5, 2.0], [8.5, 4.5], [5.5, 4.5]])], Prim::Free);
+            app.selected.clear();
+        }
+        "joins" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            let r = app.doc.add_vector(vec![geom::Path::closed(vec![[2.0, 2.0], [8.0, 2.0], [8.0, 8.0], [2.0, 8.0]])], Prim::Free);
+            app.selected = vec![r];
+            app.right_open = true;
+            app.start_op(toolpath::OpKind::Pocket);
+            if let RightMode::Op { op, .. } = &mut app.right {
+                op.raster = true;
+                op.cut_depth = 0.1;
+                op.profile_pass = toolpath::ProfilePass::None;
+            }
+            app.calculate_op();
+            app.selected.clear();
+            app.view3d = true;
+            app.cam = view3d::Camera { yaw: 20f32.to_radians(), tilt: 50f32.to_radians(), zoom: 6.0, pan: egui::vec2(-900.0, 300.0) };
+        }
+        "texture" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            let star = app.doc.add_vector(vec![geom::Path::closed(geom::circle([1.0, 1.0], 0.8))], Prim::Free);
+            app.selected = vec![star];
+            app.open_shape_form(None);
+            if let LeftForm::Shape(mut f) = app.left.clone() {
+                f.profile = relief::Profile::Round;
+                f.height = 0.2;
+                app.add_component(f);
+            }
+            app.left = LeftForm::None;
+            let bound = app.doc.add_vector(vec![geom::Path::closed(geom::circle([5.0, 5.0], 4.5))], Prim::Free);
+            app.selected = vec![bound];
+            app.selected_comp = Some(0);
+            app.texture_area(modeltools::TextureForm { spacing: [10.0, 10.0], shift: [50.0, 0.0], mirror: [0; 4] });
+            app.selected.clear();
+            app.left_tab = app::LeftTab::Modeling;
+            app.view3d = true;
+        }
+        "zeroplane" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            circle(app);
+            app.open_shape_form(None);
+            if let LeftForm::Shape(mut f) = app.left.clone() {
+                f.combine = relief::Combine::Subtract;
+                f.profile = relief::Profile::Round;
+                f.height = 0.3;
+                app.add_component(f);
+            }
+            app.left = LeftForm::None;
+            app.add_zero_plane();
+            app.left_tab = app::LeftTab::Modeling;
+            app.selected.clear();
+            app.view3d = true;
+        }
+        "tiled" | "stacked" => {
+            app.load_sample();
+            app.selected.clear();
+            app.view3d = false;
+            app.tiled = Some(if state == "tiled" { app::Tiling::SideBySide } else { app::Tiling::Stacked });
         }
         "turnspin" => {
             app.new_file();

@@ -161,7 +161,7 @@ impl App {
             });
         }
         let skips = self.snap_skips();
-        let shapes = || self.doc.vectors.iter().filter(|v| !skips.contains(&v.id) && self.doc.layers.get(v.layer).is_none_or(|l| l.visible));
+        let shapes = || self.doc.vectors.iter().filter(|v| !skips.contains(&v.id) && self.doc.shows(v));
         let long_enough = 16.0 * px;
         // The sheet itself has points worth catching.
         let (jw, jh) = (self.doc.job.width, self.doc.job.height);

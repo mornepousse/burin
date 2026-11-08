@@ -926,7 +926,7 @@ fn write_back(doc: &mut Doc, x: &Vars, rules: &[Constraint]) -> bool {
 }
 
 fn arc_fit_path(path: &Path) -> Option<(P, f64)> {
-    let probe = Vector { id: 0, paths: vec![path.clone()], layer: 0, prim: Prim::Free, construction: false, members: Vec::new(), piece: None };
+    let probe = Vector { id: 0, paths: vec![path.clone()], layer: 0, prim: Prim::Free, construction: false, members: Vec::new(), piece: None, face: 0, sheet: 0 };
     arc_fit(&probe)
 }
 
@@ -1555,7 +1555,7 @@ impl App {
         let points = matches!(want, Want::Point | Want::PointOrLine | Want::Any);
         let lines = matches!(want, Want::Line | Want::LineOrCircle | Want::PointOrLine | Want::Any);
         let circles = matches!(want, Want::Circle | Want::LineOrCircle | Want::Any);
-        for v in self.doc.vectors.iter().filter(|v| self.doc.layers.get(v.layer).is_none_or(|l| l.visible && !l.locked)) {
+        for v in self.doc.vectors.iter().filter(|v| self.doc.can_pick(v)) {
             match body_of(v) {
                 Body::Round => {
                     let (c, r) = as_circle(&v.paths[0]).unwrap();

@@ -261,6 +261,7 @@ impl App {
             combine: f.combine,
             visible: true,
             surface: Some(HeightMap { w: f.w, h: f.h, data: Arc::new(heights), at: f.at, width: f.width }),
+            whole: false,
         });
         self.selected_comp = Some(self.doc.components.len() - 1);
         self.model_dirty = true;
@@ -522,7 +523,7 @@ mod tests {
     #[test]
     fn older_projects_without_reliefs_still_open() {
         let mut a = app();
-        a.doc.components.push(Component { name: "old".into(), paths: Vec::new(), profile: Profile::Flat, height: 1.0, base: 0.0, combine: Combine::Add, visible: true, surface: None });
+        a.doc.components.push(Component { name: "old".into(), paths: Vec::new(), profile: Profile::Flat, height: 1.0, base: 0.0, combine: Combine::Add, visible: true, surface: None, whole: false });
         let text = serde_json::to_string(&a.doc).unwrap();
         assert!(!text.contains("surface"), "nothing extra is written for ordinary shapes");
         let back: Doc = serde_json::from_str(&text).unwrap();

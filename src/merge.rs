@@ -42,7 +42,7 @@ impl App {
 
     /// The toolpaths that would be merged have different rates: only the first's are kept.
     fn merge_rates_differ(&self) -> Option<String> {
-        let mut seen = self.doc.toolpaths.iter().filter(|t| t.visible).map(|t| &t.op.tool);
+        let mut seen = self.doc.toolpaths.iter().filter(|t| t.visible && self.doc.toolpath_on_side(t)).map(|t| &t.op.tool);
         let first = seen.next()?;
         seen.any(|t| t.feed != first.feed || t.plunge != first.plunge || t.rpm != first.rpm).then(|| first.name.clone())
     }
@@ -91,7 +91,7 @@ impl App {
         }
         let color = TOOLPATH_COLOURS[self.doc.toolpaths.len() % TOOLPATH_COLOURS.len()];
         self.status = tf!("{} toolpaths merged into {}. They are now hidden, so the file won't cut them twice.", chosen.len(), op.name);
-        self.doc.toolpaths.push(Toolpath { op, visible: true, color, kept_moves: Some(moves.clone()), kept_steps: None, moves });
+        self.doc.toolpaths.push(Toolpath { op, visible: true, color, kept_moves: Some(moves.clone()), kept_steps: None, moves, face: self.doc.active_face, sheet: self.doc.active_sheet });
         self.selected_tp = Some(self.doc.toolpaths.len() - 1);
         self.reset_preview();
         Ok(())
