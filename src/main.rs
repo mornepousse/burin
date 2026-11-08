@@ -365,6 +365,36 @@ fn open_state(app: &mut App, state: &str) {
             app.finish_preview();
             app.cam = view3d::Camera { yaw: 0f32.to_radians(), tilt: 70f32.to_radians(), zoom: 1.6, pan: egui::Vec2::ZERO };
         }
+        "nestoutline" => {
+            app.new_file();
+            // Parts nested inside a round outline chosen last.
+            let mut ids: Vec<u64> = (0..14).map(|k| app.doc.add_vector(vec![geom::Path::closed(geom::rect([0.8 + (k % 7) as f64 * 1.3, 9.0 - (k / 7) as f64 * 0.6], 1.0, 0.5 + 0.1 * (k % 3) as f64, 0.0))], Prim::Free)).collect();
+            ids.push(app.doc.add_vector(vec![geom::Path::closed(geom::circle([5.0, 4.0], 3.6))], Prim::Free));
+            app.selected = ids;
+            app.start_xform(app::Xform::Nest);
+            if let LeftForm::Xform(f) = &mut app.left {
+                f.into_boundary = true;
+            }
+            app.apply_xform();
+        }
+        "partinpart" => {
+            app.new_file();
+            // Two frames and a handful of small squares: the squares go in the frames' holes.
+            let mut ids = Vec::new();
+            for k in 0..2 {
+                let c = [3.0 + k as f64 * 4.0, 7.0];
+                ids.push(app.doc.add_vector(vec![geom::Path::closed(geom::rect(c, 4.0, 4.0, 0.0)), geom::Path::closed(geom::rect(c, 3.0, 3.0, 0.0))], Prim::Free));
+            }
+            for k in 0..9 {
+                ids.push(app.doc.add_vector(vec![geom::Path::closed(geom::circle([1.0 + k as f64 * 1.0, 2.0], 0.45))], Prim::Free));
+            }
+            app.selected = ids;
+            app.start_xform(app::Xform::Nest);
+            if let LeftForm::Xform(f) = &mut app.left {
+                f.part_in_part = true;
+            }
+            app.apply_xform();
+        }
         "nestturn" => {
             app.new_file();
             app.doc.job.height = 5.0;

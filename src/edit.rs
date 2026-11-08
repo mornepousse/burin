@@ -786,10 +786,79 @@ impl App {
     }
 
     /// Packs the selected shapes on the sheet in rows, by their bounding boxes.
+    /// Fills a chosen outline instead of the sheet: biggest parts first, each at the first place
+    /// from the chosen corner where its box, kept the border gap from the outline and the tool's
+    /// gap from the parts already in, fits wholly inside. Places are tried at the nester's
+    /// resolution, coarser only for a very big outline. Parts that don't fit stay where they were.
+    fn nest_in_outline(&mut self, outline: &Path, mut sized: Vec<Block>, guests: &[(Vec<u64>, usize)], f: &XformForm, border: f64, clear: f64) {
+        let Some((ol, oh)) = geom::bbox(std::slice::from_ref(outline)) else { return };
+        let resolution = if self.doc.job.units == Units::Mm { NEST_RESOLUTION_MM } else { NEST_RESOLUTION_MM * INCH_PER_MM };
+        let cells = ((oh[0] - ol[0]) / resolution) * ((oh[1] - ol[1]) / resolution);
+        let step = resolution * (cells / 40_000.0).sqrt().max(1.0);
+        let order: Vec<usize> = (0..sized.len()).collect();
+        let mut by_area = order.clone();
+        by_area.sort_by(|a, b| {
+            let area = |x: &Block| (x.hi[0] - x.lo[0]) * (x.hi[1] - x.lo[1]);
+            area(&sized[*b]).total_cmp(&area(&sized[*a]))
+        });
+        let (from_right, from_top) = match f.anchor {
+            Datum::BottomRight => (true, false),
+            Datum::TopLeft => (false, true),
+            Datum::TopRight => (true, true),
+            _ => (false, false),
+        };
+        let mut taken: Vec<(P, P)> = Vec::new();
+        let (mut placed, mut left) = (0, 0);
+        for i in by_area {
+            let Block { ids, lo, hi } = std::mem::replace(&mut sized[i], Block { ids: Vec::new(), lo: [0.0; 2], hi: [0.0; 2] });
+            let (bw, bh) = (hi[0] - lo[0], hi[1] - lo[1]);
+            let (nx, ny) = (((oh[0] - ol[0] - bw) / step).floor().max(-1.0) as i64, ((oh[1] - ol[1] - bh) / step).floor().max(-1.0) as i64);
+            let at = |ix: i64, iy: i64| {
+                let x = if from_right { oh[0] - bw - ix as f64 * step } else { ol[0] + ix as f64 * step };
+                let y = if from_top { oh[1] - bh - iy as f64 * step } else { ol[1] + iy as f64 * step };
+                [x, y]
+            };
+            let fits = |p: P, taken: &[(P, P)]| {
+                let (a, b) = (p, [p[0] + bw, p[1] + bh]);
+                taken.iter().all(|(c, d)| b[0] + clear <= c[0] || a[0] >= d[0] + clear || b[1] + clear <= c[1] || a[1] >= d[1] + clear) && box_fits_in(outline, a, b, border)
+            };
+            let mut spot = None;
+            // Rows along the nesting direction, from the chosen corner.
+            'search: for outer in 0..=(if f.along_x { ny } else { nx }).max(-1) {
+                for inner in 0..=(if f.along_x { nx } else { ny }).max(-1) {
+                    let p = if f.along_x { at(inner, outer) } else { at(outer, inner) };
+                    if fits(p, &taken) {
+                        spot = Some(p);
+                        break 'search;
+                    }
+                }
+            }
+            match spot {
+                Some(p) => {
+                    let (dx, dy) = (p[0] - lo[0], p[1] - lo[1]);
+                    self.translate_ids(&ids, dx, dy);
+                    for (gids, _) in guests.iter().filter(|(_, h)| *h == i) {
+                        self.translate_ids(gids, dx, dy);
+                        placed += 1;
+                    }
+                    taken.push((p, [p[0] + bw, p[1] + bh]));
+                    placed += 1;
+                }
+                None => left += 1,
+            }
+        }
+        self.status = if left > 0 {
+            tf!("Nested {placed} parts in the outline; {left} didn't fit.")
+        } else {
+            tf!("Nested {placed} parts in the outline.")
+        };
+    }
+
     /// Turns each part, in steps of the form's angle, to the turn that makes its row shallowest
     /// while it still fits across the sheet (the smallest box when no turn fits).
     fn turn_parts_to_nest(&mut self, items: &[Vector], f: &XformForm) {
-        let (w, h) = (self.doc.job.width - 2.0 * f.border, self.doc.job.height - 2.0 * f.border);
+        let border = nest_value(f.border);
+        let (w, h) = (self.doc.job.width - 2.0 * border, self.doc.job.height - 2.0 * border);
         let (primary, secondary) = if f.along_x { (w, h) } else { (h, w) };
         let step = if f.nest_step > 0.5 { f.nest_step } else { NEST_STEP };
         let turns: Vec<f64> = (0..).map(|k| k as f64 * step).take_while(|a| *a < 180.0 - 1e-9).collect();
@@ -839,13 +908,32 @@ impl App {
         if items.is_empty() {
             return;
         }
+        // With "Last vector is nest boundary", the last shape chosen is the outline to fill.
+        let boundary = if f.into_boundary {
+            match items.last().and_then(|v| v.paths.iter().find(|p| p.closed).cloned().map(|p| (v.id, p))) {
+                Some(b) if items.len() > 1 => Some(b),
+                _ => {
+                    self.status = crate::i18n::tr("Select the parts, then the closed outline to nest them in, last.").into();
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         self.checkpoint();
+        let keep_selection = self.selected.clone();
+        if let Some((bid, _)) = &boundary {
+            self.selected.retain(|id| id != bid);
+        }
+        let items = self.selection_in_click_order();
         if f.nest_turn {
             self.turn_parts_to_nest(&items, f);
         }
         let items = self.selection_in_click_order();
-        let clear = f.tool_dia + f.clearance;
-        let (w, h) = (self.doc.job.width - 2.0 * f.border, self.doc.job.height - 2.0 * f.border);
+        self.selected = keep_selection;
+        let nv = nest_value;
+        let (border, clear) = (nv(f.border), nv(f.tool_dia) + nv(f.clearance));
+        let (w, h) = (self.doc.job.width - 2.0 * border, self.doc.job.height - 2.0 * border);
         let (primary, secondary) = if f.along_x { (w, h) } else { (h, w) };
         let (mut u, mut v, mut row) = (0.0f64, 0.0f64, 0.0f64);
         let mut sheet = 0usize;
@@ -856,7 +944,90 @@ impl App {
             let height = |x: &Block| if f.along_x { x.hi[1] - x.lo[1] } else { x.hi[0] - x.lo[0] };
             height(b).total_cmp(&height(a))
         });
-        for Block { ids, lo, hi } in sized {
+        // Part in part: smaller parts go into the holes of bigger ones first, where they stay as
+        // their host moves (the original's `PartInPart`).
+        let mut guests: Vec<(Vec<u64>, usize)> = Vec::new();
+        if f.part_in_part {
+            sized.sort_by(|a, b| {
+                let area = |x: &Block| (x.hi[0] - x.lo[0]) * (x.hi[1] - x.lo[1]);
+                area(b).total_cmp(&area(a))
+            });
+            let mut taken: Vec<Vec<(P, P)>> = Vec::new();
+            let holes_of = |ids: &[u64]| -> Vec<Path> {
+                let paths: Vec<Path> = self.doc.vectors.iter().filter(|v| ids.contains(&v.id)).flat_map(|v| v.paths.iter().filter(|p| p.closed).cloned()).collect();
+                let size = |p: &Path| geom::bbox(std::slice::from_ref(p)).map_or(0.0, |(l, h)| (h[0] - l[0]) * (h[1] - l[1]));
+                let Some(outer) = paths.iter().map(size).fold(None, |m: Option<f64>, s| Some(m.map_or(s, |m| m.max(s)))) else { return Vec::new() };
+                paths.into_iter().filter(|p| size(p) < outer).collect()
+            };
+            let hole_lists: Vec<Vec<Path>> = sized.iter().map(|b| holes_of(&b.ids)).collect();
+            for _ in 0..sized.len() {
+                taken.push(Vec::new());
+            }
+            let mut is_guest = vec![false; sized.len()];
+            for g in 1..sized.len() {
+                let (glo, ghi) = (sized[g].lo, sized[g].hi);
+                let (gw, gh) = (ghi[0] - glo[0], ghi[1] - glo[1]);
+                // The original's nester works at a resolution of 0.5 mm (`Nesting/ResolutionMM`,
+                // `0x14090b910`); positions in a hole are tried that far apart, coarser only for a
+                // very big hole.
+                let resolution = if self.doc.job.units == Units::Mm { NEST_RESOLUTION_MM } else { NEST_RESOLUTION_MM * INCH_PER_MM };
+                let step_for = |hole: &Path| {
+                    let (hl, hh) = geom::bbox(std::slice::from_ref(hole)).unwrap_or(([0.0; 2], [1.0; 2]));
+                    let cells = ((hh[0] - hl[0]) / resolution) * ((hh[1] - hl[1]) / resolution);
+                    resolution * (cells / 40_000.0).sqrt().max(1.0)
+                };
+                'hosts: for h in 0..g {
+                    if is_guest[h] {
+                        continue;
+                    }
+                    for hole in &hole_lists[h] {
+                        let Some((hl, hh)) = geom::bbox(std::slice::from_ref(hole)) else { continue };
+                        let step = step_for(hole);
+                        let mut y = hl[1] + clear;
+                        while y + gh + clear <= hh[1] + 1e-9 {
+                            let mut x = hl[0] + clear;
+                            while x + gw + clear <= hh[0] + 1e-9 {
+                                let (lo, hi) = ([x, y], [x + gw, y + gh]);
+                                let free = taken[h].iter().all(|(a, b)| hi[0] + clear <= a[0] || lo[0] >= b[0] + clear || hi[1] + clear <= a[1] || lo[1] >= b[1] + clear);
+                                if free && box_fits_in(hole, lo, hi, clear) {
+                                    let ids = sized[g].ids.clone();
+                                    self.translate_ids(&ids, x - glo[0], y - glo[1]);
+                                    taken[h].push((lo, hi));
+                                    is_guest[g] = true;
+                                    guests.push((ids, h));
+                                    break 'hosts;
+                                }
+                                x += step;
+                            }
+                            y += step;
+                        }
+                    }
+                }
+            }
+            // The hosts keep their place in the order; guests leave it.
+            let host_ids: Vec<Vec<u64>> = sized.iter().map(|b| b.ids.clone()).collect();
+            let mut kept = Vec::new();
+            for (i, b) in sized.into_iter().enumerate() {
+                if !is_guest[i] {
+                    kept.push(b);
+                }
+            }
+            sized = kept;
+            sized.sort_by(|a, b| {
+                let height = |x: &Block| if f.along_x { x.hi[1] - x.lo[1] } else { x.hi[0] - x.lo[0] };
+                height(b).total_cmp(&height(a))
+            });
+            // Guests named by their host's shapes, to follow it.
+            for (_, h) in guests.iter_mut() {
+                let host = &host_ids[*h];
+                *h = sized.iter().position(|b| b.ids == *host).unwrap_or(usize::MAX);
+            }
+        }
+        if let Some((_, outline)) = &boundary {
+            self.nest_in_outline(outline, sized, &guests, f, border, clear);
+            return;
+        }
+        for (bi, Block { ids, lo, hi }) in sized.into_iter().enumerate() {
             let (bw, bh) = (hi[0] - lo[0], hi[1] - lo[1]);
             let (run, depth) = if f.along_x { (bw, bh) } else { (bh, bw) };
             if u > 0.0 && u + run > primary {
@@ -874,14 +1045,20 @@ impl App {
             let (x, y) = if f.along_x { (u, v) } else { (v, u) };
             // Coordinates from the chosen corner of the sheet.
             let (tx, ty) = match f.anchor {
-                Datum::BottomRight => (self.doc.job.width - f.border - x - bw, f.border + y),
-                Datum::TopLeft => (f.border + x, self.doc.job.height - f.border - y - bh),
-                Datum::TopRight => (self.doc.job.width - f.border - x - bw, self.doc.job.height - f.border - y - bh),
-                _ => (f.border + x, f.border + y),
+                Datum::BottomRight => (self.doc.job.width - border - x - bw, border + y),
+                Datum::TopLeft => (border + x, self.doc.job.height - border - y - bh),
+                Datum::TopRight => (self.doc.job.width - border - x - bw, self.doc.job.height - border - y - bh),
+                _ => (border + x, border + y),
             };
             self.translate_ids(&ids, tx - lo[0], ty - lo[1]);
             if run <= primary && depth <= secondary {
                 placed += 1;
+            }
+            // The parts in its holes come along, onto its sheet.
+            for (gids, _) in guests.iter().filter(|(_, h)| *h == bi) {
+                self.translate_ids(gids, tx - lo[0], ty - lo[1]);
+                placed += 1;
+                landed.push((gids.clone(), sheet));
             }
             landed.push((ids, sheet));
             u += run + clear;
@@ -968,6 +1145,39 @@ impl App {
             v.prim = Prim::Free;
         }
     }
+}
+
+/// Whether a box, grown by `clear` all round, lies wholly inside a hole: its corners are in, none
+/// of the hole's corners is in it, and no side of the hole crosses it.
+fn box_fits_in(hole: &Path, lo: P, hi: P, clear: f64) -> bool {
+    // A hair inside, so a box exactly touching the hole's side still counts as in.
+    let e = 1e-7;
+    let (a, b) = ([lo[0] - clear + e, lo[1] - clear + e], [hi[0] + clear - e, hi[1] + clear - e]);
+    let corners = [a, [b[0], a[1]], b, [a[0], b[1]]];
+    if !corners.iter().all(|c| geom::inside_even_odd(std::iter::once(hole), *c)) {
+        return false;
+    }
+    if hole.pts.iter().any(|p| p[0] > a[0] && p[0] < b[0] && p[1] > a[1] && p[1] < b[1]) {
+        return false;
+    }
+    let cross = |p: P, q: P, r: P, s: P| {
+        let d = |a: P, b: P, c: P| (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+        let (d1, d2, d3, d4) = (d(r, s, p), d(r, s, q), d(p, q, r), d(p, q, s));
+        (d1 > 0.0) != (d2 > 0.0) && (d3 > 0.0) != (d4 > 0.0)
+    };
+    let sides = [(corners[0], corners[1]), (corners[1], corners[2]), (corners[2], corners[3]), (corners[3], corners[0])];
+    !hole.segments().any(|(p, q)| sides.iter().any(|(r, t)| cross(p, q, *r, *t)))
+}
+
+/// The original nester's resolution at first, in millimetres (`ResolutionMM`, `0x14090b910`,
+/// default `0x1420e8d28`), and its inches per millimetre (`0x1420e8d08`).
+pub const NEST_RESOLUTION_MM: f64 = 0.5;
+pub const INCH_PER_MM: f64 = 0.03937007874;
+
+/// A nesting setting as the original's form reads it back (`0x1403bd2c0`): anything at or below 0
+/// becomes 0.
+pub fn nest_value(v: f64) -> f64 {
+    if v > 0.0 { v } else { 0.0 }
 }
 
 /// How far nesting turns a part at a time when it may turn: a quarter turn (Burin's choice; the

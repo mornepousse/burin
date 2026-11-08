@@ -1,0 +1,68 @@
+:root {
+  --bg: #0e1014;
+  --panel: #181b20;
+  --line: #2a2f37;
+  --text: #eceef1;
+  --muted: #a5abb5;
+  --accent: #13a67f;
+  --accent-soft: #102e28;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.55; }
+a { color: var(--accent); }
+img { max-width: 100%; }
+
+.top { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 10px 24px; background: rgba(14, 16, 20, 0.92); border-bottom: 1px solid var(--line); backdrop-filter: blur(6px); }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 600; text-decoration: none; font-size: 1.1rem; }
+.brand img { width: 30px; height: 30px; border-radius: 7px; }
+nav { display: flex; align-items: center; gap: 18px; }
+nav a { color: var(--muted); text-decoration: none; }
+nav a:hover { color: var(--text); }
+#lang { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; }
+
+.hero { text-align: center; padding: 56px 24px 24px; max-width: 1100px; margin: 0 auto; }
+.hero .logo { width: 120px; height: 120px; border-radius: 26px; }
+.hero h1 { font-size: 3rem; margin: 12px 0 0; font-weight: 600; letter-spacing: 0.01em; }
+.tagline { font-size: 1.35rem; color: var(--accent); margin: 4px 0 14px; }
+.lead { max-width: 40em; margin: 0 auto 28px; color: var(--muted); font-size: 1.1rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; margin-bottom: 36px; }
+.button { display: inline-flex; flex-direction: column; align-items: center; min-width: 230px; padding: 14px 24px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); text-decoration: none; font-weight: 600; font-size: 1.05rem; }
+.button small { font-weight: 400; color: var(--muted); font-size: 0.85rem; margin-top: 2px; }
+.button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.button.primary small { color: #dff5ee; }
+.button:hover { filter: brightness(1.1); }
+.shot { border-radius: 10px; border: 1px solid var(--line); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5); }
+
+.warning { max-width: 860px; margin: 8px auto 0; padding: 0 24px; }
+.warning p { background: #2b2214; border: 1px solid #5c4520; color: #f1dcb4; border-radius: 10px; padding: 14px 18px; margin: 0; }
+
+section h2 { text-align: center; font-size: 2rem; font-weight: 600; margin: 0 0 24px; }
+.features { max-width: 1100px; margin: 0 auto; padding: 64px 24px 24px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.grid article { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+.grid h3 { margin: 0 0 6px; color: var(--accent); font-size: 1.1rem; }
+.grid p { margin: 0; color: var(--muted); }
+.gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 16px; margin-top: 32px; }
+.gallery figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.gallery img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: center 60%; }
+.gallery figcaption { padding: 10px 14px; color: var(--muted); }
+
+.download { max-width: 1100px; margin: 0 auto; padding: 64px 24px; text-align: center; }
+.download > p { color: var(--muted); margin-top: -12px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 24px; text-align: left; }
+.card { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; color: var(--text); text-decoration: none; }
+.card:hover { border-color: var(--accent); }
+.card h3 { margin: 0 0 8px; }
+.card p { color: var(--muted); flex: 1; margin: 0 0 16px; }
+.get { align-self: flex-start; background: var(--accent); color: #fff; border-radius: 8px; padding: 8px 14px; font-weight: 600; }
+.small { margin-top: 20px; }
+
+footer { border-top: 1px solid var(--line); text-align: center; color: var(--muted); padding: 24px; font-size: 0.92rem; }
+footer p { margin: 4px 0; }
+
+@media (max-width: 640px) {
+  nav a:not(:last-of-type) { display: none; }
+  .hero h1 { font-size: 2.3rem; }
+  .gallery { grid-template-columns: 1fr; }
+}
