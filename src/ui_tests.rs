@@ -6597,3 +6597,84 @@ fn nesting_may_turn_parts() {
         assert!(hi[0] - lo[0] > hi[1] - lo[1], "lying along X: {lo:?} {hi:?}");
     }
 }
+
+/// A negative border, clearance or tool size counts as 0 when nesting, as in the original's form.
+#[test]
+fn nesting_settings_below_zero_count_as_zero() {
+    assert_eq!(crate::edit::nest_value(-2.0), 0.0);
+    assert_eq!(crate::edit::nest_value(0.3), 0.3);
+    let mut h = harness();
+    h.state_mut().new_file();
+    let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 2.0, 2.0, 0.0))], Prim::Free);
+    h.state_mut().selected = vec![id];
+    h.state_mut().start_xform(Xform::Nest);
+    if let crate::app::LeftForm::Xform(f) = &mut h.state_mut().left {
+        f.border = -1.0;
+    }
+    h.state_mut().apply_xform();
+    let (lo, _) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    assert!(lo[0].abs() < 1e-9 && lo[1].abs() < 1e-9, "from the corner itself: {lo:?}");
+}
+
+/// Part in part: small parts land in the hole of a frame and move with it.
+#[test]
+fn nesting_puts_small_parts_in_holes() {
+    let mut h = harness();
+    h.state_mut().new_file();
+    let frame = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 6.0, 6.0, 0.0)), crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 4.0, 4.0, 0.0))], Prim::Free);
+    let smalls: Vec<u64> = (0..3).map(|k| h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([1.0 + k as f64 * 1.5, 9.0], 1.0, 1.0, 0.0))], Prim::Free)).collect();
+    let mut all = vec![frame];
+    all.extend(&smalls);
+    h.state_mut().selected = all;
+    h.state_mut().start_xform(Xform::Nest);
+    if let crate::app::LeftForm::Xform(f) = &mut h.state_mut().left {
+        f.part_in_part = true;
+    }
+    h.state_mut().apply_xform();
+    h.run();
+    let doc = &h.state().doc;
+    let fr = doc.vectors.iter().find(|v| v.id == frame).unwrap();
+    let (flo, fhi) = crate::geom::bbox(&fr.paths[1..]).unwrap();
+    for id in &smalls {
+        let v = doc.vectors.iter().find(|v| v.id == *id).unwrap();
+        let (lo, hi) = crate::geom::bbox(&v.paths).unwrap();
+        assert!(lo[0] >= flo[0] && lo[1] >= flo[1] && hi[0] <= fhi[0] && hi[1] <= fhi[1], "in the hole: {lo:?} {hi:?} vs {flo:?} {fhi:?}");
+    }
+    // Apart from each other.
+    let boxes: Vec<_> = smalls.iter().map(|id| crate::geom::bbox(&doc.vectors.iter().find(|v| v.id == *id).unwrap().paths).unwrap()).collect();
+    for i in 0..3 {
+        for j in i + 1..3 {
+            let (a, b) = (boxes[i], boxes[j]);
+            assert!(a.1[0] <= b.0[0] || b.1[0] <= a.0[0] || a.1[1] <= b.0[1] || b.1[1] <= a.0[1], "overlap");
+        }
+    }
+    assert!(h.state().status.contains('4'), "{}", h.state().status);
+}
+
+/// "Last vector is nest boundary": the parts go inside the last shape chosen, which stays put.
+#[test]
+fn nesting_fills_a_chosen_outline() {
+    let mut h = harness();
+    h.state_mut().new_file();
+    let parts: Vec<u64> = (0..6).map(|k| h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([1.0 + k as f64 * 1.4, 9.3], 1.0, 1.0, 0.0))], Prim::Free)).collect();
+    let circle = crate::geom::circle([5.0, 4.5], 3.5);
+    let ring = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(circle.clone())], Prim::Free);
+    let mut chosen = parts.clone();
+    chosen.push(ring);
+    h.state_mut().selected = chosen;
+    h.state_mut().start_xform(Xform::Nest);
+    if let crate::app::LeftForm::Xform(f) = &mut h.state_mut().left {
+        f.into_boundary = true;
+    }
+    h.state_mut().apply_xform();
+    h.run();
+    let doc = &h.state().doc;
+    assert_eq!(doc.vectors.iter().find(|v| v.id == ring).unwrap().paths[0].pts, circle, "the outline stays put");
+    for id in &parts {
+        let (lo, hi) = crate::geom::bbox(&doc.vectors.iter().find(|v| v.id == *id).unwrap().paths).unwrap();
+        for c in [lo, hi, [lo[0], hi[1]], [hi[0], lo[1]]] {
+            assert!((c[0] - 5.0).hypot(c[1] - 4.5) <= 3.5, "inside the circle: {c:?}");
+        }
+    }
+    assert!(h.state().status.contains("outline"), "{}", h.state().status);
+}

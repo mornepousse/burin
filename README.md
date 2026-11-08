@@ -1,59 +1,77 @@
 <div align="center">
 
-<img src="release/burin.png" width="150" alt="Le logo de Burin : un marteau frappe une fraise plantée dans un bloc de bois">
+<img src="release/burin.png" width="150" alt="The Burin logo: a hammer driving a router bit into a block of wood">
 
 # Burin
 
-**Dessinez, puis usinez.**
+**Design it, then carve it.**
 
-Un logiciel de bureau pour dessiner des pièces, préparer des parcours d'outil
-et écrire les fichiers de commande d'une machine CNC.
+A desktop program to draw parts, prepare toolpaths and write the control files of a CNC machine.
 
-Linux · Windows · Navigateur · Français · English
+Linux · Windows · Browser · English · Français
 
-**[Essayer dans le navigateur](https://mornepousse.github.io/burin/)** : rien à installer, tout se calcule dans la page.
+**[Website](https://mornepousse.github.io/burin/)** ·
+**[Download](https://github.com/mornepousse/burin/releases/latest)** ·
+**[Try it in your browser](https://mornepousse.github.io/burin/app/)** ·
+[Version française](README.fr.md)
 
 </div>
 
-![Une pièce usinée dans l'aperçu 3D de Burin, dans une planche de hêtre](docs/apercu-3d.png)
+![A part carved in Burin's 3D preview, in a beech board](docs/apercu-3d.png)
 
 > [!WARNING]
-> **Burin n'a encore jamais piloté de vraie machine.** Une erreur dans un fichier de coupe peut casser
-> une fraise ou abîmer une pièce. Vérifiez chaque fichier dans un simulateur, puis faites-le tourner à
-> vide, fraise bien au-dessus de la matière, avant de couper.
+> **Burin has never driven a real machine yet.** A mistake in a cutting file can break a bit or spoil
+> a part. Check every file in a simulator, then run it in the air, with the bit well above the material,
+> before you cut.
 
-## Ce qu'il sait faire
+## What it does
 
 | | |
 |---|---|
-| **Dessiner** | Lignes, courbes, arcs, cercles, ellipses, rectangles, polygones, étoiles, spirales, texte (polices de l'ordinateur, gras, italique, alignement, et polices à trait unique pour la gravure), cotes, contraintes d'esquisse |
-| **Modifier** | Déplacer, tourner et redimensionner à la souris (avec une valeur exacte tapée au clavier), décaler, souder, couper, aligner, copier en série, lisser les tracés |
-| **Organiser** | Calques, groupes, **pièces** (on sélectionne un seul trou sans rien dégrouper, mais la pièce se déplace d'un bloc), **plusieurs plaques** par travail, imbrication qui ajoute des plaques et peut tourner les pièces |
-| **Modeler** | Composants 3D, reliefs importés, cliparts, sculpture, estampage, balayage à deux rails, extrusion et tissage, copie du modèle visible, contour d'un composant, découpe à l'intérieur ou à l'extérieur de formes, échelle Z du modèle |
-| **Usiner** | Contour, poche, perçage, gravure, gravure en V, ébauche et finition 3D, prisme, texture, moulure, cannelure, chanfrein |
-| **Préparer** | Rampes, entrées et sorties, attaches, ordre de coupe, fusion de parcours, modèles de parcours réutilisables, poche à deux outils qui vide ce que le grand ne peut pas atteindre, **vidage adaptatif** (l'outil ne mord jamais plus que sa passe), ralentissement dans les coins serrés |
-| **Calculer** | Un calcul dans n'importe quel champ (`W/2`, `T-0.1`…), et des **variables du document** (`{epaisseur}`) : les profondeurs des parcours les suivent quand elles changent |
-| **Vérifier** | Aperçu 3D de la coupe (rapides, plongées et remontées de couleurs différentes), estimation du temps, **vérification avant coupe** (vitesses à 0, outil trop court, rapides dans la matière, attaches trop fines…), fiche de travail |
-| **Reprendre** | Après un arrêt, un fichier qui repart d'un passage choisi d'un parcours |
-| **Écrire** | G-code générique, GRBL, Mach3, PlanetCNC, et vos post-processeurs `.pp` |
-| **Échanger** | Lit les projets `.crv3d` et les fichiers G-code d'autres logiciels, importe SVG, DXF, STL et images, exporte SVG, EPS, AI, PDF, STL, imprime via un PDF (format du papier, taille réelle sur plusieurs pages ou réduit à une page) |
+| **Draw** | Lines, curves, arcs, circles, ellipses, rectangles, polygons, stars, spirals, text (the computer's fonts, bold, italic, alignment, and single-line fonts for engraving), dimensions, sketch constraints |
+| **Edit** | Move, rotate and resize with the mouse (or type an exact value), offset, weld, trim, align, array copies, smooth outlines |
+| **Organise** | Layers, groups, **pieces** (pick one hole without ungrouping, yet the piece moves as one), **several sheets** per job, nesting that adds sheets, turns parts, puts small parts in the holes of big ones, or fills an outline you choose |
+| **Model** | 3D components, imported reliefs, clipart, sculpting, emboss, two-rail sweep, extrude and weave, copy of the visible model, a component's outline, cutting inside or outside shapes, model Z scale |
+| **Machine** | Profile, pocket, drilling, engraving, V-carving, 3D roughing and finishing, prism, texture, moulding, fluting, chamfer |
+| **Prepare** | Ramps, leads in and out, tabs, cutting order, merged toolpaths, reusable toolpath templates, two-tool pockets where the small tool clears what the big one can't reach, **adaptive clearing** (the bit never takes more than its stepover), slowing down in tight corners |
+| **Compute** | A sum in any box (`W/2`, `T-0.1`…), and **document variables** (`{thickness}`): toolpath depths follow them when they change |
+| **Check** | 3D preview of the cut (rapids, plunges and lifts in their own colours), time estimate, **check before cutting** (zero speeds, tool too short, rapids in the material, tabs too thin…), job sheet |
+| **Resume** | After a stop, a file that starts again from a chosen pass of a toolpath |
+| **Write** | Generic G-code, GRBL, Mach3, PlanetCNC, and your own `.pp` post processors |
+| **Exchange** | Reads `.crv3d` projects (shapes, toolpaths, guides, grid, notes) and other programs' G-code, imports SVG, DXF, STL and pictures, exports SVG, EPS, AI, PDF, STL, prints through a PDF (paper size, real size over several pages or shrunk to one) |
 
-Le détail de ce qui manque est à la fin de cette page.
+What's still missing is listed at the end of this page.
 
-## En images
+## In pictures
 
 <table>
 <tr>
-<td width="50%"><img src="docs/poignees.png" alt="Une forme sélectionnée, avec ses poignées de taille et de rotation"><br><b>Poignées</b> : un clic sur la sélection les affiche. <kbd>Alt</kbd> tourne par pas de 15°, <kbd>Maj</kbd> agrandit depuis le centre.</td>
-<td width="50%"><img src="docs/pieces.png" alt="Une pièce et sa liste dans l'onglet Couches"><br><b>Pièces</b> : nommées, listées, et enregistrables seules dans leur propre fichier machine.</td>
+<td width="50%"><img src="docs/poignees.png" alt="A selected shape with its size and rotation handles"><br><b>Handles</b>: click the selection to show them. <kbd>Alt</kbd> turns by 15°, <kbd>Shift</kbd> grows from the middle.</td>
+<td width="50%"><img src="docs/pieces.png" alt="A piece and its list in the Layers tab"><br><b>Pieces</b>: named, listed, and each can be saved to its own machine file.</td>
 </tr>
 <tr>
-<td><img src="docs/preferences.png" alt="La fenêtre des préférences, avec la langue et les raccourcis"><br><b>Préférences</b> : anglais ou français, et toutes les touches modifiables.</td>
-<td><img src="docs/fiche-de-travail.png" alt="Une fiche de travail avec le dessin et le réglage de la matière"><br><b>Fiche de travail</b> : le dessin, le réglage de la matière et chaque parcours, sur une seule page.</td>
+<td><img src="docs/weave.png" alt="Two rings extruded along their outline and woven over and under"><br><b>Extrude and weave</b>: a cross section along one or more rails, over and under where they cross.</td>
+<td><img src="docs/sweep.png" alt="Two moulded frames made by a two-rail sweep"><br><b>Two-rail sweep</b>: a moulding swept between pairs of rails.</td>
+</tr>
+<tr>
+<td><img src="docs/adaptive.png" alt="An L-shaped pocket cleared adaptively"><br><b>Adaptive clearing</b>: small steps that never bury the bit, coming down in a helix.</td>
+<td><img src="docs/nesting.png" alt="Small circles nested in the holes of two frames"><br><b>Nesting</b>: rows, turns, part in part, extra sheets when one is full.</td>
+</tr>
+<tr>
+<td><img src="docs/preferences.png" alt="The preferences window, with the language and the keys"><br><b>Preferences</b>: English or French, and every key can be changed.</td>
+<td><img src="docs/fiche-de-travail.png" alt="A job sheet with the drawing and the material setup"><br><b>Job sheet</b>: the drawing, the material setup and every toolpath on one page.</td>
 </tr>
 </table>
 
-## Installer
+## Install
+
+Download the file for your computer from the
+**[latest release](https://github.com/mornepousse/burin/releases/latest)**. Nothing else is needed.
+
+### Windows
+
+Run `Burin-*-windows-x86_64.exe`; there is nothing to install. It isn't signed, so Windows may ask for
+confirmation (`More info > Run anyway`). It has only been tried under Wine and on one Windows 11 PC.
 
 ### Linux
 
@@ -62,87 +80,81 @@ chmod +x Burin-*-x86_64.AppImage
 ./Burin-*-x86_64.AppImage
 ```
 
-Ensuite, `Aide > Ajouter au menu des applications` place Burin dans le menu de votre bureau et lui
-fait ouvrir les fichiers `.burin`. Un projet peut aussi être donné en argument, ou glissé sur la fenêtre.
+Then `Help > Add to Applications Menu` puts Burin in your desktop's menu and lets it open `.burin`
+files. A project can also be given as an argument, or dropped on the window.
 
-### Windows
+### In a browser
 
-Lancez `Burin-*-windows-x86_64.exe`, sans installation. Il n'est pas signé : Windows peut demander une
-confirmation (`Informations complémentaires > Exécuter quand même`). Il n'a été essayé que sous Wine et
-sur un PC Windows 11.
+**[mornepousse.github.io/burin/app](https://mornepousse.github.io/burin/app/)** runs Burin in the page.
+Nothing is installed and nothing leaves the computer: everything is computed in the page.
 
-### Depuis le code
+What changes compared with the program:
 
-Il faut [Rust](https://rustup.rs).
+- **Open** goes through the browser's file picker, or by dropping the file on the page.
+- **Save** downloads the file: project, machine file, job sheet, picture.
+- No automatic copy of unsaved work, no project backups and no crash reports: a browser doesn't let a
+  page write to the disk. Save often.
+- Long computations (the 3D preview of a big job) freeze the page while they run.
+- Settings (language, keys, 3D view) are kept by the browser for this site. On the first visit, the
+  language follows the browser's.
+- **Print** downloads the PDF, to print from a PDF reader.
+
+`release/web.sh` builds this version into `dist-web/`: a page and its files, to put as they are on any
+web host.
+
+### From the source
+
+You need [Rust](https://rustup.rs).
 
 ```sh
 cargo run --release
 cargo test
 ```
 
-`release/build.sh` fabrique l'AppImage et le `.exe` dans `dist/`. Il ne demande que Nix.
+`release/build.sh` builds the Linux and Windows programs, and `release/site.sh` the website.
 
-### Dans un navigateur
+## If something goes wrong
 
-La version web est en ligne sur [mornepousse.github.io/burin](https://mornepousse.github.io/burin/).
-`release/web.sh` la fabrique dans `dist-web/` : une page et ses fichiers, à déposer tels quels
-sur n'importe quel hébergement de pages (GitHub Pages, par exemple). Rien n'est installé et rien ne part de
-l'ordinateur : tout se calcule dans la page.
+Unsaved work is copied every two minutes and offered at the next start if Burin didn't close properly.
 
-Ce qui change par rapport au programme :
-
-- **Ouvrir** passe par le sélecteur de fichiers du navigateur, ou en déposant le fichier sur la page.
-- **Enregistrer** télécharge le fichier : projet, fichier machine, fiche de travail, image.
-- Pas de copie automatique du travail non enregistré, ni de sauvegardes de projet, ni de rapports de
-  plantage : un navigateur ne laisse pas une page écrire sur le disque. Enregistrez souvent.
-- Les longs calculs (aperçu 3D d'un gros travail) bloquent la page le temps qu'ils durent.
-- Les réglages (langue, raccourcis, vue 3D) sont gardés par le navigateur pour ce site. Au premier
-  passage, la langue suit celle du navigateur.
-- **Imprimer** télécharge le PDF, à imprimer depuis le lecteur de PDF.
-
-## Si quelque chose ne va pas
-
-Votre travail non enregistré est copié toutes les deux minutes et vous est proposé au lancement suivant
-si Burin s'est mal fermé.
-
-| Dans le menu Aide | |
+| In the Help menu | |
 |---|---|
-| **Sommaire de l'aide** | Neuf courtes pages sur chaque partie du programme, sans connexion |
-| **Envoyer un retour** | Un problème, une idée ou une question |
-| **Rapports de plantage** | Ce que Burin a noté quand il s'est arrêté |
-| **Détails pour l'assistance** | La version, le système, la carte graphique et le dernier démarrage, à copier |
+| **Help Contents** | Nine short pages on each part of the program, offline |
+| **Send Feedback** | A problem, an idea or a question |
+| **Crash Reports** | What Burin noted when it stopped |
+| **Support Details** | The version, the system, the graphics card and the last start, to copy |
 
-**Burin n'envoie rien tout seul.** Les rapports restent sur votre ordinateur. Si vous choisissez d'en
-signaler un, un brouillon s'ouvre dans votre navigateur : vous voyez tout ce qu'il contient, et il ne part
-que si vous le validez. Votre travail, ses noms de fichiers et le nom de votre dossier personnel n'y
-figurent jamais.
+**Burin sends nothing on its own.** Reports stay on your computer. If you choose to report one, a draft
+opens in your browser: you see everything in it, and it only goes if you confirm it. Your work, its file
+names and the name of your home folder are never in it.
 
-<img src="docs/retour.png" alt="La fenêtre pour envoyer un retour" width="640">
+<img src="docs/retour.png" alt="The window to send feedback" width="640">
 
-## Ce qui manque encore
+## Still missing
 
-- **Essais réels :** rien n'a été vérifié sur une machine.
-- **Menus :** une trentaine d'entrées restent grisées, surtout des outils de modélisation 3D et des vues
-  (multi-faces, enroulée, vue colorée).
-- **Calculs :** les parcours ne sont pas toujours identiques à ceux enregistrés dans les projets `.crv3d`, notamment l'ordre de coupe et les
-  poches, qui lèvent l'outil plus souvent.
+- **Real tests:** nothing has been checked on a machine.
+- **Menus:** some entries are still greyed out, mostly 3D modelling tools and views (coloured shaded
+  view, wrapped rotary view).
+- **Results:** toolpaths are not always the same as those saved in `.crv3d` projects, notably the cutting order and pockets,
+  which lift the tool more often.
 
-Les règles de calcul, avec ce qui a été vérifié et ce qui reste estimé, sont dans
+The calculation rules, with what was checked and what is still estimated, are in
 [`MECHANICS.md`](MECHANICS.md).
 
-## Le dépôt
+## The repository
 
 | | |
 |---|---|
-| `src/` | Le programme, en Rust avec [egui](https://github.com/emilk/egui) |
-| `release/` | Le logo et ce qui fabrique les versions à distribuer |
-| `docs/` | Les images de cette page |
-| `MECHANICS.md`, `mechanics.json` | Les règles de calcul et leurs valeurs |
+| `src/` | The program, in Rust with [egui](https://github.com/emilk/egui) |
+| `release/` | The logo and the scripts that build the programs, the web version and the website |
+| `site/` | The website's page |
+| `docs/` | The pictures on this page |
+| `MECHANICS.md`, `mechanics.json` | The calculation rules and their values |
 
-Aucun fichier de travail réel n'est inclus : `.gitignore` écarte les projets et les fichiers machine.
+No real job file is included: `.gitignore` keeps projects and machine files out.
 
 
 ## Licence
 
-Aucune pour l'instant : tous droits réservés. La liste des bibliothèques utilisées et de leurs licences
-accompagne chaque version, dans `THIRD-PARTY.txt`.
+None yet: all rights reserved. The list of the libraries used and their licences comes with every
+release, in `THIRD-PARTY.txt`.

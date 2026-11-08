@@ -931,6 +931,11 @@ pub struct XformForm {
     /// (`RotationStepAngle`).
     pub nest_turn: bool,
     pub nest_step: f64,
+    /// Small parts may go in the holes of bigger ones (the original's `PartInPart`).
+    pub part_in_part: bool,
+    /// The last shape chosen is the outline to nest in, instead of the sheet ("Last vector is
+    /// nest boundary").
+    pub into_boundary: bool,
     /// Set Size and Rotate: treat each selected shape on its own.
     pub each: bool,
     pub constraint: Option<crate::constraints::Kind>,
@@ -999,6 +1004,8 @@ impl XformForm {
             border: 0.25 * unit,
             along_x: true,
             nest_turn: false,
+            part_in_part: false,
+            into_boundary: false,
             nest_step: crate::edit::NEST_STEP,
             each: false,
             constraint: None,

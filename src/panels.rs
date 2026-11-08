@@ -17,6 +17,12 @@ fn note(ui: &mut Ui, text: &str) {
 
 /// Picks one of the four corners or the middle of a box.
 pub fn anchor_grid(ui: &mut Ui, value: &mut Datum, name: &str) {
+    anchor_grid_with(ui, value, name, true);
+}
+
+/// The same, with or without the middle: nesting starts from one of the four corners only, as
+/// the original's form has four buttons for it (`0x5aa` to `0x5ad`, `CornerToNestFrom`).
+pub fn anchor_grid_with(ui: &mut Ui, value: &mut Datum, name: &str, centre: bool) {
     let (square, _) = ui.allocate_exact_size(vec2(58.0, 54.0), Sense::hover());
     let inner = square.shrink(7.0);
     ui.painter().rect_stroke(inner, 0.0, Stroke::new(1.0, theme::LINE), StrokeKind::Inside);
@@ -27,6 +33,9 @@ pub fn anchor_grid(ui: &mut Ui, value: &mut Datum, name: &str) {
         (inner.left_bottom(), Datum::BottomLeft),
         (inner.right_bottom(), Datum::BottomRight),
     ] {
+        if datum == Datum::Centre && !centre {
+            continue;
+        }
         let hit = Rect::from_center_size(spot, vec2(14.0, 14.0));
         let resp = ui.interact(hit, ui.make_persistent_id((name, format!("{datum:?}"))), Sense::click());
         ui.painter().circle(spot, 5.5, theme::INPUT, Stroke::new(1.0, theme::MUTED));
@@ -1243,7 +1252,10 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label(crate::i18n::tr("Nest from"));
                         ui.add_space(14.0);
-                        anchor_grid(ui, &mut f.anchor, crate::i18n::tr("Nest from"));
+                        anchor_grid_with(ui, &mut f.anchor, crate::i18n::tr("Nest from"), false);
+                        if f.anchor == Datum::Centre {
+                            f.anchor = Datum::BottomLeft;
+                        }
                     });
                     ui.label(crate::i18n::tr("Nest Direction"));
                     ui.horizontal(|ui| {
@@ -1258,7 +1270,13 @@ impl App {
                             ui.label("°");
                         });
                     });
+                    ui.checkbox(&mut f.part_in_part, crate::i18n::tr("Part in part")).on_hover_text(crate::i18n::tr("Small parts go in the holes of bigger ones."));
+                    ui.checkbox(&mut f.into_boundary, crate::i18n::tr("Last vector is nest boundary")).on_hover_text(crate::i18n::tr("Select the parts, then the closed outline to nest them in, last."));
                     note(ui, crate::i18n::tr("Parts are packed in rows by their outer box. Those that don't fit go on new sheets."));
+                    // As the original's form takes them (`0x1403bd2c0`): none of these below 0.
+                    for v in [&mut f.tool_dia, &mut f.clearance, &mut f.border, &mut f.nest_step] {
+                        *v = crate::edit::nest_value(*v);
+                    }
                 });
             }
             Xform::Bulk => {
