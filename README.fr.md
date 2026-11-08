@@ -130,9 +130,6 @@ figurent jamais.
 - **Calculs :** les parcours ne sont pas toujours identiques à ceux enregistrés dans les projets `.crv3d`, notamment l'ordre de coupe et les
   poches, qui lèvent l'outil plus souvent.
 
-Les règles de calcul, avec ce qui a été vérifié et ce qui reste estimé, sont dans
-[`MECHANICS.md`](MECHANICS.md).
-
 ## Le dépôt
 
 | | |
@@ -140,12 +137,13 @@ Les règles de calcul, avec ce qui a été vérifié et ce qui reste estimé, so
 | `src/` | Le programme, en Rust avec [egui](https://github.com/emilk/egui) |
 | `release/` | Le logo et ce qui fabrique les versions à distribuer |
 | `docs/` | Les images de cette page |
-| `MECHANICS.md`, `mechanics.json` | Les règles de calcul et leurs valeurs |
 
 Aucun fichier de travail réel n'est inclus : `.gitignore` écarte les projets et les fichiers machine.
 
 
 ## Licence
 
-Aucune pour l'instant : tous droits réservés. La liste des bibliothèques utilisées et de leurs licences
-accompagne chaque version, dans `THIRD-PARTY.txt`.
+Burin est un logiciel libre, sous [licence publique générale GNU, version 3 ou ultérieure](LICENSE)
+(GPL-3.0-or-later). Vous pouvez l'utiliser, l'étudier, le partager et le modifier ; si vous partagez une
+version modifiée, vous en partagez le code sous la même licence. La liste des bibliothèques utilisées et
+de leurs licences accompagne chaque version, dans `THIRD-PARTY.txt`.
