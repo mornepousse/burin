@@ -365,6 +365,31 @@ fn open_state(app: &mut App, state: &str) {
             app.finish_preview();
             app.cam = view3d::Camera { yaw: 0f32.to_radians(), tilt: 70f32.to_radians(), zoom: 1.6, pan: egui::Vec2::ZERO };
         }
+        "nestshape" => {
+            app.new_file();
+            // Triangles, L shapes and rings nested by their true shape, turning and mirroring.
+            let mut ids = Vec::new();
+            for k in 0..6 {
+                let (x, y) = (0.3 + k as f64 * 1.6, 9.5);
+                ids.push(app.doc.add_vector(vec![geom::Path::closed(vec![[x, y - 3.0], [x + 3.0, y - 3.0], [x, y]])], Prim::Free));
+            }
+            for k in 0..4 {
+                let (x, y) = (0.3 + k as f64 * 2.4, 5.5);
+                ids.push(app.doc.add_vector(vec![geom::Path::closed(vec![[x, y - 2.5], [x + 2.0, y - 2.5], [x + 2.0, y - 1.7], [x + 0.8, y - 1.7], [x + 0.8, y], [x, y]])], Prim::Free));
+            }
+            for k in 0..3 {
+                let c = [1.5 + k as f64 * 3.0, 1.2];
+                ids.push(app.doc.add_vector(vec![geom::Path::closed(geom::circle(c, 1.0)), geom::Path::closed(geom::circle(c, 0.6))], Prim::Free));
+            }
+            app.selected = ids;
+            app.start_xform(app::Xform::Nest);
+            if let LeftForm::Xform(f) = &mut app.left {
+                f.by_shape = true;
+                f.nest_turn = true;
+                f.nest_mirror = true;
+            }
+            app.apply_xform();
+        }
         "nestoutline" => {
             app.new_file();
             // Parts nested inside a round outline chosen last.

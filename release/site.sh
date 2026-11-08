@@ -17,6 +17,7 @@ for picture in apercu-3d weave sweep adaptive nesting; do
     cp "docs/$picture.png" "$OUT/docs/"
 done
 cp dist-web/* "$OUT/app/"
-# GitHub Pages serves the files as they are.
+# GitHub Pages serves the files as they are, at the project's own address.
 touch "$OUT/.nojekyll"
+echo "burin.cc" > "$OUT/CNAME"
 echo "dist-site/ is ready for Burin $VERSION"

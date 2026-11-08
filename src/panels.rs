@@ -1270,7 +1270,37 @@ impl App {
                             ui.label("°");
                         });
                     });
+                    // Copies of the chosen parts, kept with each shape (`nestNumCopies`).
+                    // As the original fills the box (`0x1403bdebd`): each chosen shape's count, 1 when it
+                    // has none; the box shows it when they all agree and stays empty when they don't.
+                    let first = self.selected.first().copied();
+                    let counts: Vec<u16> = self.selected.iter().map(|id| self.doc.nest_copies.get(id).copied().unwrap_or(1)).collect();
+                    let agreed = counts.windows(2).all(|w| w[0] == w[1]);
+                    let shown = counts.first().copied().unwrap_or(1);
+                    let mut text = if agreed { shown.to_string() } else { String::new() };
+                    let before = text.clone();
+                    ui.add_enabled_ui(first.is_some(), |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(crate::i18n::tr("Copies of the selected parts"));
+                            ui.add(egui::TextEdit::singleline(&mut text).desired_width(44.0).hint_text(if agreed { "" } else { "–" }));
+                        });
+                    });
+                    let wanted = if text != before { text.trim().parse::<f64>().ok().map(|v| v.round().clamp(1.0, 999.0) as u16) } else { None };
+                    if let (Some(copies), Some(_)) = (wanted, first) {
+                        for id in self.selected.clone() {
+                            if copies > 1 {
+                                self.doc.nest_copies.insert(id, copies);
+                            } else {
+                                self.doc.nest_copies.remove(&id);
+                            }
+                        }
+                        self.dirty = true;
+                    }
                     ui.checkbox(&mut f.part_in_part, crate::i18n::tr("Part in part")).on_hover_text(crate::i18n::tr("Small parts go in the holes of bigger ones."));
+                    ui.checkbox(&mut f.by_shape, crate::i18n::tr("Nest by true shape")).on_hover_text(crate::i18n::tr("Parts fit together by their real outline, not their box. Slower."));
+                    ui.add_enabled_ui(f.by_shape, |ui| {
+                        ui.checkbox(&mut f.nest_mirror, crate::i18n::tr("Mirror parts to find best fit"));
+                    });
                     ui.checkbox(&mut f.into_boundary, crate::i18n::tr("Last vector is nest boundary")).on_hover_text(crate::i18n::tr("Select the parts, then the closed outline to nest them in, last."));
                     note(ui, crate::i18n::tr("Parts are packed in rows by their outer box. Those that don't fit go on new sheets."));
                     // As the original's form takes them (`0x1403bd2c0`): none of these below 0.

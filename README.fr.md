@@ -11,9 +11,9 @@ et écrire les fichiers de commande d'une machine CNC.
 
 Linux · Windows · Navigateur · Français · English
 
-**[Site](https://mornepousse.github.io/burin/)** ·
+**[Site](https://burin.cc/)** ·
 **[Télécharger](https://github.com/mornepousse/burin/releases/latest)** ·
-**[Essayer dans le navigateur](https://mornepousse.github.io/burin/app/)** ·
+**[Essayer dans le navigateur](https://burin.cc/app/)** ·
 [English version](README.md)
 
 </div>
@@ -87,7 +87,7 @@ cargo test
 
 ### Dans un navigateur
 
-La version web est en ligne sur [mornepousse.github.io/burin/app](https://mornepousse.github.io/burin/app/).
+La version web est en ligne sur [burin.cc/app](https://burin.cc/app/).
 `release/web.sh` la fabrique dans `dist-web/` : une page et ses fichiers, à déposer tels quels
 sur n'importe quel hébergement de pages (GitHub Pages, par exemple). Rien n'est installé et rien ne part de
 l'ordinateur : tout se calcule dans la page.
