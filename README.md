@@ -138,9 +138,6 @@ names and the name of your home folder are never in it.
 - **Results:** toolpaths are not always the same as those saved in `.crv3d` projects, notably the cutting order and pockets,
   which lift the tool more often.
 
-The calculation rules, with what was checked and what is still estimated, are in
-[`MECHANICS.md`](MECHANICS.md).
-
 ## The repository
 
 | | |
@@ -149,12 +146,13 @@ The calculation rules, with what was checked and what is still estimated, are in
 | `release/` | The logo and the scripts that build the programs, the web version and the website |
 | `site/` | The website's page |
 | `docs/` | The pictures on this page |
-| `MECHANICS.md`, `mechanics.json` | The calculation rules and their values |
 
 No real job file is included: `.gitignore` keeps projects and machine files out.
 
 
 ## Licence
 
-None yet: all rights reserved. The list of the libraries used and their licences comes with every
+Burin is free software, under the [GNU General Public License, version 3 or later](LICENSE)
+(GPL-3.0-or-later). You may use, study, share and change it; if you share a changed version, you share
+its source under the same licence. The list of the libraries used and their licences comes with every
 release, in `THIRD-PARTY.txt`.

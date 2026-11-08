@@ -2,6 +2,7 @@
 name = "burin"
 version = "0.9.1"
 edition = "2021"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 eframe = { version = "0.37", features = ["glow"] }

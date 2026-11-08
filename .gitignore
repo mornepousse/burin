@@ -18,3 +18,8 @@ dist
 /demo/
 dist-web
 dist-site
+
+# Working notes, kept on this computer only
+/MECHANICS.md
+/mechanics.json
+/.backup/

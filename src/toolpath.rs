@@ -495,7 +495,7 @@ pub fn pass_count(start: f64, cut: f64, pass_depth: f64) -> usize {
     passes_for(cut - start, pass_depth, false).len()
 }
 
-/// A single pass does if the tool's pass depth reaches this far past the depth (MECHANICS.md).
+/// A single pass does if the tool's pass depth reaches this far past the depth.
 const ONE_PASS_MARGIN: f64 = 1.01;
 /// Keeping exactly to the pass depth only adds a shorter pass if what's left is over this share of it.
 const EXACT_LEFT_OVER: f64 = 0.01;
