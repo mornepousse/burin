@@ -3,7 +3,7 @@
 use crate::app::{App, DrawKind, LeftForm, Prim, Tool2, Xform};
 use crate::theme;
 use crate::geom::{self, Path, P};
-use egui::{pos2, vec2, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind};
+use egui::{pos2, vec2, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Vec2};
 
 pub const MAGENTA: Color32 = crate::theme::PICK;
 
@@ -23,7 +23,8 @@ pub enum Drag {
     Box(Pos2),
     Move { last: P, start: P },
     /// `corner` by which handle it is, as the original tells corners by their type (6 to 9, `0x140a72f00`).
-    Scale { anchor: P, middle: P, start: P, corner: bool, orig: Vec<(u64, Vec<Path>)> },
+    /// `out`: how far the handle is drawn from its own place, taken off the pointer while dragging.
+    Scale { anchor: P, middle: P, start: P, corner: bool, out: Vec2, orig: Vec<(u64, Vec<Path>)> },
     Rotate { centre: P, start: P, orig: Vec<(u64, Vec<Path>)> },
     RotateCentre,
     /// `start`: where the point was when the drag began, for values typed during it.
@@ -220,16 +221,29 @@ impl App {
 
     /// The grid's fine and bold spacings at this zoom, in job units.
     pub fn grid_steps(&self) -> (f64, f64) {
+        if self.grid_spacing > 0.0 {
+            return (self.grid_spacing, self.grid_spacing * 5.0);
+        }
         let fine = nice_step(16.0 / self.scale as f64);
         (fine, fine * 5.0)
     }
 
+    /// The spacing the grid is drawn at: a set spacing, five times over as often as needed so the
+    /// lines stay at least 6 pixels apart when zoomed out.
+    fn grid_drawn_steps(&self) -> (f64, f64) {
+        let (mut fine, _) = self.grid_steps();
+        while fine * (self.scale as f64) < 6.0 && fine > 0.0 {
+            fine *= 5.0;
+        }
+        (fine, fine * 5.0)
+    }
+
     fn visible_vectors(&self) -> impl Iterator<Item = &crate::app::Vector> {
-        self.doc.vectors.iter().filter(|v| self.doc.layers.get(v.layer).is_none_or(|l| l.visible))
+        self.doc.vectors.iter().filter(|v| self.doc.shows(v))
     }
 
     fn pickable(&self, v: &crate::app::Vector) -> bool {
-        self.doc.layers.get(v.layer).is_none_or(|l| l.visible && !l.locked)
+        self.doc.can_pick(v)
     }
 
     /// The shape whose outline is under the pointer.
@@ -288,7 +302,7 @@ impl App {
     /// The handles for resizing, each with the point that stays put: the corners, then the middles
     /// of the sides. Only once a click on the selection has asked for them.
     pub(crate) fn handle_rects(&self) -> Vec<(Pos2, P)> {
-        self.handle_points().into_iter().map(|(corner, anchor)| (self.to_screen(corner), anchor)).collect()
+        self.handle_points().into_iter().enumerate().map(|(i, (corner, anchor))| (self.to_screen(corner) + HANDLE_OUT[i], anchor)).collect()
     }
 
     /// The same handles in the drawing's own units: each one's place and the point that stays put.
@@ -309,6 +323,33 @@ impl App {
             ([lo[0], my], [hi[0], my]),
         ]
         .into()
+    }
+
+    /// With one text chosen, the gap between its letters or lines under the pointer.
+    pub(crate) fn text_gap_under(&self, p: Pos2) -> Option<(u64, crate::fonts::TextGap)> {
+        let [only] = self.selected.as_slice() else { return None };
+        let v = self.doc.vectors.iter().find(|v| v.id == *only)?;
+        let Prim::Text { at, height, text, style } = &v.prim else { return None };
+        if style.vertical {
+            return None;
+        }
+        let reach = (TEXT_GAP_REACH / self.scale) as f64;
+        crate::fonts::gap_at(text, *height, *at, style, self.to_world(p), reach).map(|g| (v.id, g))
+    }
+
+    /// The original's text spacing clicks (`0x140a84a90`): letters or lines closer, apart with
+    /// Shift, by a bigger step with Ctrl. One undo step each.
+    pub(crate) fn move_text_gap(&mut self, id: u64, gap: crate::fonts::TextGap, apart: bool, coarse: bool) {
+        let Some(i) = self.doc.vectors.iter().position(|v| v.id == id) else { return };
+        let Prim::Text { at, height, text, mut style } = self.doc.vectors[i].prim.clone() else { return };
+        if !crate::fonts::adjust_gap(&text, height, at, &mut style, gap, apart, coarse) {
+            return;
+        }
+        self.checkpoint();
+        let prim = Prim::Text { at, height, text, style };
+        self.doc.vectors[i].paths = prim.paths();
+        self.doc.vectors[i].prim = prim;
+        self.dirty = true;
     }
 
     /// The handles for turning, a little beyond the corners (`0x140a6f810`).
@@ -792,6 +833,9 @@ impl App {
                 response.ctx.set_cursor_icon(egui::CursorIcon::Alias);
             } else if !self.rotate_handles().is_empty() && self.rotation_centre().is_some_and(|c| (self.to_screen(c) - p).length() < 7.0) {
                 response.ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+            } else if let Some((_, gap)) = self.text_gap_under(p) {
+                // Between letters or lines of the chosen text: a click there moves them (`0x140a84e50`).
+                response.ctx.set_cursor_icon(if matches!(gap, crate::fonts::TextGap::Letter(_)) { ResizeHorizontal } else { ResizeVertical });
             }
         }
         // A double click takes in the whole of a piece, without choosing it from the buttons.
@@ -805,6 +849,11 @@ impl App {
             }
         }
         if response.clicked() {
+            if let Some((id, gap)) = pointer.and_then(|p| self.text_gap_under(p)) {
+                let coarse = response.ctx.input(|i| i.modifiers.command);
+                self.move_text_gap(id, gap, shift, coarse);
+                return;
+            }
             let hit = pointer.and_then(|p| self.pick(p));
             match (hit, shift) {
                 (Some(id), true) => {
@@ -836,13 +885,13 @@ impl App {
         if let Some(p) = press {
             // The handle's own place, not its place on screen turned back: the screen rounds it, and a side
             // handle a hair off its anchor would be taken for a corner and stretch the shape a million times.
-            let handle = self.handle_points().into_iter().enumerate().find(|(_, (corner, _))| (self.to_screen(*corner) - p).length() < 7.0);
+            let handle = self.handle_points().into_iter().enumerate().find(|(i, (corner, _))| (self.to_screen(*corner) + HANDLE_OUT[*i] - p).length() < 7.0);
             if let Some((index, (start, anchor))) = handle {
                 self.checkpoint();
                 let orig = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id)).map(|v| (v.id, v.paths.clone())).collect();
                 let middle = self.selected_bbox().map_or(anchor, |(lo, hi)| [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0]);
                 // The first four handles are the corners.
-                self.drag = Drag::Scale { anchor, middle, start, corner: index < 4, orig };
+                self.drag = Drag::Scale { anchor, middle, start, corner: index < 4, out: HANDLE_OUT[index], orig };
             } else if let (Some(centre), true) = (self.rotation_centre(), self.rotate_handles().iter().any(|h| (*h - p).length() < 7.0)) {
                 self.checkpoint();
                 let moving = self.moving_ids();
@@ -877,11 +926,11 @@ impl App {
                 self.translate_selected(now[0] - last[0], now[1] - last[1]);
                 self.drag = Drag::Move { last: now, start };
             }
-            Drag::Scale { anchor, middle, start, corner, orig } => {
+            Drag::Scale { anchor, middle, start, corner, out, orig } => {
                 let alt = response.ctx.input(|i| i.modifiers.alt);
                 // With Shift it grows from its middle (`0x140a72f00`).
                 let anchor = if shift { middle } else { anchor };
-                let now = self.snapped(self.to_world(p));
+                let now = self.snapped(self.to_world(p - out));
                 let now = if corner && !alt { keep_proportions(start, now, anchor) } else { now };
                 // Each way stretches by how far the handle has gone from what stays put; a handle level with it
                 // (exactly: both are the drawing's own numbers) leaves that way alone (`0x140a73262`).
@@ -1164,7 +1213,7 @@ impl App {
 
     /// Fine and bold grid lines across the whole view, tuned to read on the sheet and around it.
     fn paint_grid(&self, painter: &egui::Painter, rect: Rect, sheet: Rect) {
-        let (fine, _) = self.grid_steps();
+        let (fine, _) = self.grid_drawn_steps();
         let (lo, hi) = (self.to_world(rect.left_bottom()), self.to_world(rect.right_top()));
         // The grid counts from the X/Y zero, like the rulers.
         let zero = self.doc.job.origin();
@@ -1207,7 +1256,7 @@ impl App {
         let view = painter.clip_rect().expand(12.0);
         // Filled: each cut as wide as its tool, to see what will be taken away.
         if self.solid_previews {
-            for tp in self.doc.toolpaths.iter().filter(|t| t.visible) {
+            for tp in self.doc.toolpaths.iter().filter(|t| t.visible && self.doc.toolpath_on_side(t)) {
                 let width = (tp.op.tool.dia as f32 * self.scale).max(1.0);
                 let fill = Color32::from_rgba_unmultiplied(196, 96, 96, 70);
                 let mut run: Vec<Pos2> = Vec::new();
@@ -1228,7 +1277,7 @@ impl App {
                 }
             }
         }
-        for tp in self.doc.toolpaths.iter().filter(|t| t.visible) {
+        for tp in self.doc.toolpaths.iter().filter(|t| t.visible && self.doc.toolpath_on_side(t)) {
             let mut drawn = std::collections::HashSet::new();
             let mut line_points: Vec<Pos2> = Vec::new();
             let mut at_screen: Option<Pos2> = None;
@@ -1306,7 +1355,10 @@ impl App {
 
     fn paint_rulers(&self, ui: &egui::Ui, full: Rect, sheet: Rect) {
         let painter = ui.painter_at(full);
-        let bg = theme::CHROME;
+        // On the bottom side of a two-sided job the rulers turn orange, as the original's do
+        // (its Bottom Side Ruler Colour, `secondaryRulerColour`, `0x64C2ED` at `0x142e6100c`).
+        let bottom = self.doc.job.two_sided && self.doc.active_face == 1;
+        let bg = if bottom { theme::BOTTOM_RULER } else { theme::CHROME };
         let top = Rect::from_min_max(pos2(sheet.left(), full.top()), pos2(sheet.right(), sheet.top()));
         let left = Rect::from_min_max(pos2(full.left(), sheet.top()), pos2(sheet.left(), sheet.bottom()));
         painter.rect_filled(top, 0.0, bg);
@@ -1320,9 +1372,9 @@ impl App {
 
         let major = nice_step(170.0 / self.scale as f64);
         let minor = major / 16.0;
-        let tick = Stroke::new(1.0, theme::FAINT);
+        let tick = Stroke::new(1.0, if bottom { theme::SHEET_INK } else { theme::FAINT });
         let font = FontId::proportional(12.0);
-        let text_c = theme::MUTED;
+        let text_c = if bottom { theme::SHEET_INK } else { theme::MUTED };
         let tick_len = |i: i64| -> f32 {
             if i % 16 == 0 { 10.0 } else if i % 8 == 0 { 8.0 } else if i % 4 == 0 { 6.0 } else if i % 2 == 0 { 4.0 } else { 2.5 }
         };
@@ -1575,3 +1627,21 @@ impl App {
         true
     }
 }
+
+/// How far each resizing handle sits out from the selection's box on screen, in the order of
+/// `handle_points` (the sheet's Y goes up, the screen's down): the original draws them
+/// `HANDLE_GAP` pixels out from the box.
+const HANDLE_GAP: f32 = 8.0;
+const HANDLE_OUT: [Vec2; 8] = [
+    Vec2::new(-HANDLE_GAP, HANDLE_GAP),
+    Vec2::new(HANDLE_GAP, HANDLE_GAP),
+    Vec2::new(HANDLE_GAP, -HANDLE_GAP),
+    Vec2::new(-HANDLE_GAP, -HANDLE_GAP),
+    Vec2::new(0.0, HANDLE_GAP),
+    Vec2::new(HANDLE_GAP, 0.0),
+    Vec2::new(0.0, -HANDLE_GAP),
+    Vec2::new(-HANDLE_GAP, 0.0),
+];
+
+/// How near a gap between letters a click has to be, in pixels on screen.
+const TEXT_GAP_REACH: f32 = 4.0;

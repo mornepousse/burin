@@ -147,6 +147,11 @@ pub enum Action {
     ZoomBox,
     View2d,
     View3d,
+    TileSideBySide,
+    TileStacked,
+    TopSide,
+    BottomSide,
+    MultiSided,
     DrawingOrModeling,
     DrawingTab,
     LayersTab,
@@ -178,7 +183,7 @@ pub enum Action {
     ReleasePiece,
 }
 
-const COUNT: usize = 64;
+const COUNT: usize = 69;
 
 /// Each action: its name in the file, what it's called, and its key to begin with.
 const ACTIONS: [(Action, &str, &str, Option<Shortcut>); COUNT] = [
@@ -218,6 +223,14 @@ const ACTIONS: [(Action, &str, &str, Option<Shortcut>); COUNT] = [
     (Action::ZoomBox, "zoom_box", "Zoom to box", Some(plain(Key::Z))),
     (Action::View2d, "view_2d", "2D View", Some(plain(Key::F2))),
     (Action::View3d, "view_3d", "3D View", Some(plain(Key::F3))),
+    // `0x1403ba694`: Page Down sends Tile Horizontal (57651), Page Up Tile Vertical (57652).
+    (Action::TileSideBySide, "tile_side_by_side", "2D and 3D side by side", Some(plain(Key::PageUp))),
+    (Action::TileStacked, "tile_stacked", "2D and 3D one above the other", Some(plain(Key::PageDown))),
+    // The original's guide to two-sided machining: 1 makes the top side active, 2 the bottom.
+    (Action::TopSide, "top_side", "Top side of a two-sided job", Some(plain(Key::Num1))),
+    (Action::BottomSide, "bottom_side", "Bottom side of a two-sided job", Some(plain(Key::Num2))),
+    // The manual's Shortcut Keys page: "= Toggle Multi-Sided View on".
+    (Action::MultiSided, "multi_sided", "Multi-Sided View", Some(plain(Key::Equals))),
     (Action::DrawingOrModeling, "drawing_or_modeling", "Drawing or Modeling tab", Some(plain(Key::F8))),
     (Action::DrawingTab, "drawing_tab", "Drawing tab", Some(ctrl(Key::D))),
     (Action::LayersTab, "layers_tab", "Layers tab", Some(ctrl(Key::L))),
@@ -258,7 +271,7 @@ pub const SECTIONS: [(&str, &[Action]); 8] = [
     ("Pieces", &[Action::MakePiece, Action::SelectPiece, Action::AdjustPiece, Action::ReleasePiece]),
     ("Mirror and turn", &[Action::MirrorX, Action::MirrorXJob, Action::MirrorXCopy, Action::MirrorXJobCopy, Action::MirrorY, Action::MirrorYJob, Action::MirrorYCopy, Action::MirrorYJobCopy, Action::TurnLeft, Action::TurnRight]),
     ("Tools", &[Action::NodesOrSelect, Action::MoveForm, Action::SizeForm, Action::RotateForm, Action::JoinForm, Action::AlignForm, Action::CentreOnMaterial, Action::Measure]),
-    ("Views and panels", &[Action::View2d, Action::View3d, Action::Refresh, Action::ZoomFit, Action::ZoomFitAgain, Action::ZoomBox, Action::DrawingOrModeling, Action::DrawingTab, Action::LayersTab, Action::LeftPanel, Action::RightPanel]),
+    ("Views and panels", &[Action::View2d, Action::View3d, Action::TileSideBySide, Action::TileStacked, Action::TopSide, Action::BottomSide, Action::MultiSided, Action::Refresh, Action::ZoomFit, Action::ZoomFitAgain, Action::ZoomBox, Action::DrawingOrModeling, Action::DrawingTab, Action::LayersTab, Action::LeftPanel, Action::RightPanel]),
 ];
 
 pub fn action_name(action: Action) -> &'static str {

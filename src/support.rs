@@ -67,6 +67,13 @@ impl App {
             return;
         }
         let path = file.path().to_path_buf();
+        // 3D clipart goes into the job open now, as in the original.
+        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case(crate::modeltools::CLIP3D_EXTENSION)) {
+            if let Err(why) = self.import_3d_clipart(&path) {
+                self.message = Some(why);
+            }
+            return;
+        }
         if !path.extension().is_some_and(|e| ["burin", "crv3d", "crv"].iter().any(|k| e.eq_ignore_ascii_case(k))) {
             self.message = Some(tf!("Burin can open .burin, .crv3d and .crv files, not {}.", path.file_name().map_or(String::new(), |n| n.to_string_lossy().to_string())));
             return;
@@ -104,6 +111,7 @@ impl App {
                 Ok(())
             }
             "svg" | "dxf" => self.import_drawing(&path),
+            crate::modeltools::CLIP3D_EXTENSION => self.import_3d_clipart(&path),
             "stl" => self.open_model_file(&path),
             "png" | "jpg" | "jpeg" | "bmp" => match crate::bitmap::Image::load(&path) {
                 // Tracing has its bitmap in the drawing; otherwise a picture becomes a relief.

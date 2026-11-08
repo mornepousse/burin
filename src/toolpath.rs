@@ -30,6 +30,10 @@ pub struct Tool {
     /// How deep the tool can cut before its shank or holder would rub. 0 when not given.
     #[serde(default)]
     pub flute_length: f64,
+    /// The group it's kept in in the tool list, if any (the original's Tool Database groups: "New Group", then tools
+    /// dragged onto it).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group: String,
 }
 
 impl ToolKind {
@@ -97,6 +101,7 @@ pub fn default_tools() -> Vec<Tool> {
             notes: String::new(),
             number,
             flute_length: 0.0,
+            group: String::new(),
         };
         tool.name = tool.label();
         tool
@@ -377,6 +382,10 @@ pub struct Op {
     /// Only cut around the wall: a larger tool has already cleared the rest.
     #[serde(default)]
     pub rest_only: bool,
+    /// Clear the pocket adaptively: the cutter never takes more than its stepover's width
+    /// (`adaptive_paths`). Not in the original; from other CAM programs.
+    #[serde(default)]
+    pub adaptive: bool,
     #[serde(default)]
     pub raster_angle: f64,
     #[serde(default)]
@@ -445,6 +454,11 @@ pub struct Op {
 pub struct Move {
     pub p: [f64; 3],
     pub rapid: bool,
+    /// A join: cutting speed from one cut to the next without lifting, as the original marks
+    /// them (its move type 14, from element kind 18; every one in the saved jobs goes across at
+    /// one depth between two cuts).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub join: bool,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -591,11 +605,18 @@ impl Emit<'_> {
         self.moves.last().map_or(self.m.home, |m| m.p)
     }
     fn rapid(&mut self, p: [f64; 3]) {
-        self.moves.push(Move { p, rapid: true });
+        self.moves.push(Move { p, rapid: true, join: false });
     }
     fn feed(&mut self, x: f64, y: f64, z: f64) {
         let z = self.z_at(x, y, z);
-        self.moves.push(Move { p: [x, y, z], rapid: false });
+        self.moves.push(Move { p: [x, y, z], rapid: false, join: false });
+    }
+    /// From one cut to the next at cutting speed without lifting: a join, as the original marks it.
+    fn join(&mut self, x: f64, y: f64, z: f64) {
+        self.feed(x, y, z);
+        if let Some(m) = self.moves.last_mut() {
+            m.join = true;
+        }
     }
     fn retract(&mut self) {
         let l = self.last();
@@ -1648,7 +1669,7 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                     e.feed(pts[0][0], pts[0][1], if ramp_on_lead { *z } else { plunge_z });
                 } else if i == 0 && stage == (Stage::Finish { linked: true }) {
                     // Across from the rough loop at the height it finished at, then down.
-                    e.feed(pts[0][0], pts[0][1], e.last()[2]);
+                    e.join(pts[0][0], pts[0][1], e.last()[2]);
                     e.feed(pts[0][0], pts[0][1], plunge_z);
                 } else if i == 0 || !closed {
                     // Stay down between passes on a closed loop.
@@ -1828,7 +1849,7 @@ fn cut_rows(e: &mut Emit, rows: Vec<(P, P, f64)>, sample: f64, z: f64, reach: f6
                 })
             };
             if clear {
-                e.feed(from[0], from[1], z);
+                e.join(from[0], from[1], z);
             } else {
                 e.go_to(from[0], from[1], z);
             }
@@ -1922,9 +1943,38 @@ fn pocket_set(e: &mut Emit, op: &Op) {
     let mut previous = -op.start_depth;
     let cut_from = e.moves.len();
     let mut spots: Option<Vec<P>> = None;
+    let mut adaptive: Option<Vec<(Vec<P>, bool)>> = None;
     for z in &zs {
         if op.rest_only {
             ring(e, radius, *z, previous);
+            // Then what the larger tool couldn't reach: corners and slots too narrow for it, as
+            // other CAM programs' rest machining does. The original works both tools out in one go
+            // (`0x1405467b0` hands both to `0x1405680a0`).
+            if let Some(big) = &op.clearance_tool {
+                let big_r = big.dia / 2.0;
+                let rest = spots.get_or_insert_with(|| leftovers_after(&field, op.tool.dia / 2.0, radius, op.allowance, &e.moves[cut_from..], Some((big_r, big_r + op.allowance))));
+                e.retract();
+                cut_spots(e, rest, *z, &field, radius);
+            }
+        } else if op.adaptive {
+            let helix = if op.ramp { adaptive_helix(&field, op.tool.dia / 2.0, radius) } else { 0.0 };
+            let paths = adaptive.get_or_insert_with(|| adaptive_paths(&field, op.tool.dia / 2.0, radius, step, op.climb, helix));
+            for (k, (pts, stay_down)) in paths.iter().enumerate() {
+                let Some(first) = pts.first() else { continue };
+                if k == 0 && helix > field.cell {
+                    // With ramping on, the first cut comes down in a helix rather than straight.
+                    helix_down(e, op, *first, helix, previous, *z);
+                } else if *stay_down && k > 0 && (e.last()[2] - *z).abs() < 1e-9 {
+                    e.join(first[0], first[1], *z);
+                } else {
+                    e.go_to(first[0], first[1], *z);
+                }
+                for p in &pts[1..] {
+                    e.feed(p[0], p[1], *z);
+                }
+            }
+            // A last pass round the wall leaves it clean.
+            ring(e, radius, *z, *z);
         } else if op.raster {
             if op.profile_pass == ProfilePass::First {
                 ring(e, radius, *z, previous);
@@ -1971,6 +2021,300 @@ fn pocket_set(e: &mut Emit, op: &Op) {
 /// a point, say, too far from any pass. A spot the tool can't reach without cutting into a wall is
 /// left: a round tool can't get into a sharp corner.
 fn leftovers(field: &Field, tool: f64, centre_at: f64, allowance: f64, moves: &[Move]) -> Vec<P> {
+    leftovers_after(field, tool, centre_at, allowance, moves, None)
+}
+
+/// The radius of the helix an adaptive pocket comes down in: half the cutter's radius, less where
+/// the pocket is too tight round its deepest point. Burin's choice.
+pub const ADAPTIVE_HELIX_SHARE: f64 = 0.5;
+
+fn adaptive_helix(field: &Field, tool: f64, centre_at: f64) -> f64 {
+    // The deepest point: the most room, and where the adaptive paths start.
+    let deepest = field.d.iter().copied().fold(0.0f32, f32::max) as f64;
+    (tool * ADAPTIVE_HELIX_SHARE).min(deepest - centre_at).max(0.0)
+}
+
+/// Comes down round a circle from `from` to `z`, over the ramp's length (once round when it has
+/// none, as a spiral ramp goes the whole way round), then goes once round at depth and back to
+/// the middle.
+fn helix_down(e: &mut Emit, op: &Op, centre: P, r: f64, from: f64, z: f64) {
+    let round = std::f64::consts::TAU * r;
+    let length = ramp_distance(op, from, z).min(round * 50.0).max(round);
+    let turns = length / round;
+    let n = ((turns * 48.0).ceil() as usize).max(12);
+    e.go_to(centre[0] + r, centre[1], from);
+    for k in 1..=n {
+        let t = k as f64 / n as f64;
+        let a = std::f64::consts::TAU * turns * t;
+        e.feed(centre[0] + r * a.cos(), centre[1] + r * a.sin(), from + (z - from) * t);
+    }
+    let a0 = std::f64::consts::TAU * turns;
+    for k in 1..=48 {
+        let a = a0 + std::f64::consts::TAU * k as f64 / 48.0;
+        e.feed(centre[0] + r * a.cos(), centre[1] + r * a.sin(), z);
+    }
+    e.feed(centre[0], centre[1], z);
+}
+
+/// How much of the stepover's width an adaptive step may bite, at most: the angle search stops at
+/// the first direction that would take more.
+pub const ADAPTIVE_STEP_SHARE: f64 = 0.5;
+
+/// Adaptive clearing, as other CAM programs do it (FreeCAD's Adaptive, Fusion 360's adaptive
+/// clearing): the material left is kept on a grid, and the cutter moves on in small steps, each
+/// time turning to the direction where it removes no more than `load` across its path, keeping the
+/// material on its right for climb cutting (left for conventional). When nothing is left within
+/// reach it goes on to the nearest place where material starts. Returns the paths in order, each
+/// with whether the way to it from the end of the one before stays in cleared ground.
+fn adaptive_paths(field: &Field, tool: f64, centre_at: f64, load: f64, climb: bool, helix: f64) -> Vec<(Vec<P>, bool)> {
+    let (width, height) = ((field.nx - 1) as f64 * field.cell, (field.ny - 1) as f64 * field.cell);
+    let mut cell = field.cell.max(tool / 6.0);
+    while (width / cell) * (height / cell) > 3.0e6 {
+        cell *= 1.25;
+    }
+    let (nx, ny) = ((width / cell) as usize + 1, (height / cell) as usize + 1);
+    let at = |ix: usize, iy: usize| [field.x0 + ix as f64 * cell, field.y0 + iy as f64 * cell];
+    let allowed = |p: P| field.sample(p[0], p[1]) >= centre_at;
+    // Material: whatever a centre the cutter may reach can touch.
+    let reach: Vec<bool> = (0..nx * ny).map(|i| allowed(at(i % nx, i / nx))).collect();
+    if !reach.iter().any(|r| *r) {
+        return Vec::new();
+    }
+    let near = squared_distances(&reach, nx, ny);
+    let r_cells = tool / cell;
+    let mut material: Vec<bool> = near.iter().map(|d| *d <= r_cells * r_cells).collect();
+    let mut left = material.iter().filter(|m| **m).count();
+    let disc: Vec<(i64, i64)> = {
+        let c = r_cells.ceil() as i64;
+        (-c..=c).flat_map(|y| (-c..=c).map(move |x| (x, y))).filter(|(x, y)| ((x * x + y * y) as f64) <= r_cells * r_cells).collect()
+    };
+    let index = |p: P| {
+        let (fx, fy) = (((p[0] - field.x0) / cell).round() as i64, ((p[1] - field.y0) / cell).round() as i64);
+        (fx, fy)
+    };
+    let bite = |material: &Vec<bool>, p: P| -> usize {
+        let (fx, fy) = index(p);
+        disc.iter().filter(|(dx, dy)| {
+            let (x, y) = (fx + dx, fy + dy);
+            x >= 0 && y >= 0 && (x as usize) < nx && (y as usize) < ny && material[y as usize * nx + x as usize]
+        }).count()
+    };
+    let clear = |material: &mut Vec<bool>, left: &mut usize, p: P| {
+        let (fx, fy) = index(p);
+        for (dx, dy) in &disc {
+            let (x, y) = (fx + dx, fy + dy);
+            if x >= 0 && y >= 0 && (x as usize) < nx && (y as usize) < ny && material[y as usize * nx + x as usize] {
+                material[y as usize * nx + x as usize] = false;
+                *left -= 1;
+            }
+        }
+    };
+    let step = (tool / 4.0).max(cell);
+    // Cells a step may take: the load across the step's length, plus the front of the cutter.
+    let target = ((load.min(tool * 2.0) * step) / (cell * cell)).max(1.0) * (1.0 + ADAPTIVE_STEP_SHARE);
+    let side = if climb { -1.0 } else { 1.0 };
+    let mut out: Vec<(Vec<P>, bool)> = Vec::new();
+    // Start where the pocket is deepest: the most room around the first cut.
+    let (mut best, mut start) = (f64::MIN, [0.0, 0.0]);
+    for iy in 0..ny {
+        for ix in 0..nx {
+            let p = at(ix, iy);
+            let f = field.sample(p[0], p[1]);
+            if f > best {
+                best = f;
+                start = p;
+            }
+        }
+    }
+    let mut p = start;
+    let mut heading = 0.0f64;
+    clear(&mut material, &mut left, p);
+    // A helix down has already cleared the ring round the start.
+    if helix > 0.0 {
+        let n = ((std::f64::consts::TAU * helix / cell).ceil() as usize).max(8);
+        for k in 0..n {
+            let a = std::f64::consts::TAU * k as f64 / n as f64;
+            clear(&mut material, &mut left, [p[0] + helix * a.cos(), p[1] + helix * a.sin()]);
+        }
+    }
+    let mut path = vec![p];
+    let mut stay_down = false;
+    let floor = (disc.len() as f64 * 0.01).max(1.0) as usize;
+    let mut guard = 0usize;
+    while guard < 400_000 {
+        guard += 1;
+        // Turn from the cleared side towards the material until the bite reaches the load.
+        let mut chosen: Option<(f64, P, usize)> = None;
+        let mut fallback: Option<(f64, P, usize)> = None;
+        for k in 0..=48 {
+            let a = heading - side * 2.4 + side * 4.8 * k as f64 / 48.0;
+            let q = [p[0] + step * a.cos(), p[1] + step * a.sin()];
+            if !allowed(q) {
+                continue;
+            }
+            let b = bite(&material, q);
+            if (b as f64) <= target {
+                if b >= floor {
+                    chosen = Some((a, q, b));
+                }
+            } else {
+                if fallback.is_none() {
+                    fallback = Some((a, q, b));
+                }
+                break;
+            }
+        }
+        if chosen.is_none() {
+            // Hemmed in (all bites too big) only right at the start: take the smallest bite.
+            if path.len() < 3 {
+                chosen = fallback;
+            }
+        }
+        if let Some((a, q, _)) = chosen {
+            // Clear along the step, not only at its end.
+            let n = ((step / cell).ceil() as usize).max(1);
+            for k in 1..=n {
+                let t = k as f64 / n as f64;
+                clear(&mut material, &mut left, [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+            }
+            p = q;
+            heading = a;
+            path.push(p);
+            continue;
+        }
+        // Nothing to take here: on to the nearest place where material starts.
+        if !path.is_empty() {
+            out.push((std::mem::take(&mut path), stay_down));
+        }
+        path.clear();
+        if left < floor {
+            break;
+        }
+        // Places where material starts, nearest first; of the nearest few, the first the cutter can
+        // reach without lifting, else the nearest.
+        let mut starts: Vec<(f64, P)> = Vec::new();
+        for iy in (0..ny).step_by(2) {
+            for ix in (0..nx).step_by(2) {
+                let q = at(ix, iy);
+                if !allowed(q) || material[iy * nx + ix] {
+                    continue;
+                }
+                let b = bite(&material, q);
+                if b >= floor && (b as f64) <= target * 2.0 {
+                    starts.push(((q[0] - p[0]).hypot(q[1] - p[1]), q));
+                }
+            }
+        }
+        if starts.is_empty() {
+            break;
+        }
+        starts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let way_clear = |q: P| {
+            let d = (q[0] - p[0]).hypot(q[1] - p[1]);
+            let n = ((d / cell).ceil() as usize).max(1);
+            (0..=n).all(|k| {
+                let t = k as f64 / n as f64;
+                let m = [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+                allowed(m) && (bite(&material, m) as f64) <= target
+            })
+        };
+        let nearest = starts[0];
+        let found = starts.iter().take(40).take_while(|s| s.0 <= nearest.0 * 4.0 + tool * 2.0).find(|s| way_clear(s.1)).copied();
+        let (d, q) = found.unwrap_or(nearest);
+        stay_down = found.is_some();
+        let n = ((d / cell).ceil() as usize).max(1);
+        if stay_down {
+            for k in 0..=n {
+                let t = k as f64 / n as f64;
+                clear(&mut material, &mut left, [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+            }
+        }
+        // Head along the edge of the material, with it on the cutting side.
+        let (fx, fy) = index(q);
+        let (mut sx, mut sy) = (0.0, 0.0);
+        for (dx, dy) in &disc {
+            let (x, y) = (fx + dx, fy + dy);
+            if x >= 0 && y >= 0 && (x as usize) < nx && (y as usize) < ny && material[y as usize * nx + x as usize] {
+                sx += *dx as f64;
+                sy += *dy as f64;
+            }
+        }
+        heading = sy.atan2(sx) - side * std::f64::consts::FRAC_PI_2;
+        p = q;
+        // Coming down here takes what's in reach, so the search always moves on.
+        clear(&mut material, &mut left, p);
+        path = vec![p];
+    }
+    if !path.is_empty() {
+        out.push((path, stay_down));
+    }
+    out
+}
+
+/// Squared distances to the nearest marked cell, in cells (an exact Euclidean distance transform,
+/// one pass along rows then one along columns).
+fn squared_distances(marked: &[bool], nx: usize, ny: usize) -> Vec<f64> {
+    const FAR: f64 = 1e20;
+    // The lower envelope of parabolas along one line.
+    fn line(f: &[f64], out: &mut [f64]) {
+        let n = f.len();
+        let (mut v, mut z) = (vec![0usize; n], vec![0f64; n + 1]);
+        let mut k = 0usize;
+        z[0] = f64::NEG_INFINITY;
+        z[1] = f64::INFINITY;
+        for q in 1..n {
+            loop {
+                let p = v[k];
+                let s = ((f[q] + (q * q) as f64) - (f[p] + (p * p) as f64)) / (2.0 * q as f64 - 2.0 * p as f64);
+                if s <= z[k] && k > 0 {
+                    k -= 1;
+                    continue;
+                }
+                if s <= z[k] {
+                    v[0] = q;
+                    z[1] = f64::INFINITY;
+                    break;
+                }
+                k += 1;
+                v[k] = q;
+                z[k] = s;
+                z[k + 1] = f64::INFINITY;
+                break;
+            }
+        }
+        k = 0;
+        for (q, o) in out.iter_mut().enumerate() {
+            while z[k + 1] < q as f64 {
+                k += 1;
+            }
+            let d = q as f64 - v[k] as f64;
+            *o = d * d + f[v[k]];
+        }
+    }
+    let mut d: Vec<f64> = marked.iter().map(|m| if *m { 0.0 } else { FAR }).collect();
+    let mut buf = vec![0.0; nx.max(ny)];
+    for y in 0..ny {
+        let row = d[y * nx..(y + 1) * nx].to_vec();
+        line(&row, &mut buf[..nx]);
+        d[y * nx..(y + 1) * nx].copy_from_slice(&buf[..nx]);
+    }
+    let mut col = vec![0.0; ny];
+    for x in 0..nx {
+        for y in 0..ny {
+            col[y] = d[y * nx + x];
+        }
+        line(&col, &mut buf[..ny]);
+        for y in 0..ny {
+            d[y * nx + x] = buf[y];
+        }
+    }
+    d
+}
+
+/// The same, after a larger tool has cleared all it could: `cleared` is its radius and how far
+/// from the walls its centre may go. Whatever lies within its radius of a place its centre reaches
+/// is taken as gone; what's left (corners and slots too narrow for it) is what this tool clears.
+fn leftovers_after(field: &Field, tool: f64, centre_at: f64, allowance: f64, moves: &[Move], cleared: Option<(f64, f64)>) -> Vec<P> {
     let cell = field.cell.max(tool / 24.0);
     let (width, height) = ((field.nx - 1) as f64 * field.cell, (field.ny - 1) as f64 * field.cell);
     let (nx, ny) = ((width / cell) as usize + 1, (height / cell) as usize + 1);
@@ -1980,6 +2324,19 @@ fn leftovers(field: &Field, tool: f64, centre_at: f64, allowance: f64, moves: &[
     let cells = (reach / cell).ceil() as i64 + 1;
     let disc: Vec<(i64, i64)> = (-cells..=cells).flat_map(|y| (-cells..=cells).map(move |x| (x, y))).filter(|(x, y)| ((x * x + y * y) as f64).sqrt() * cell <= reach + cell * 1.5).collect();
     let mut covered = vec![false; nx * ny];
+    if let Some((big, big_at)) = cleared {
+        let reached: Vec<bool> = (0..nx * ny).map(|i| {
+            let p = at(i % nx, i / nx);
+            field.sample(p[0], p[1]) >= big_at
+        }).collect();
+        if reached.iter().any(|r| *r) {
+            let d = squared_distances(&reached, nx, ny);
+            let limit = (big / cell) * (big / cell);
+            for (c, dist) in covered.iter_mut().zip(&d) {
+                *c = *dist <= limit;
+            }
+        }
+    }
     let stamp = |covered: &mut Vec<bool>, p: P| {
         // Measured from where the tool really is, not the nearest cell: slivers are smaller than cells.
         let (ox, oy) = ((p[0] - field.x0) / cell, (p[1] - field.y0) / cell);
@@ -2068,7 +2425,7 @@ fn cut_spots(e: &mut Emit, spots: &[P], z: f64, field: &Field, centre_at: f64) {
             field.sample(at[0] + (next[0] - at[0]) * t, at[1] + (next[1] - at[1]) * t) >= centre_at - field.cell * 0.1
         });
         if clear {
-            e.feed(next[0], next[1], z);
+            e.join(next[0], next[1], z);
         } else {
             e.go_to(next[0], next[1], z);
         }
@@ -2560,7 +2917,7 @@ pub fn working_steps(steps: &[Step]) -> &[Step] {
 /// A toolpath as a machine file runs it: from the home position only if it's the first in the file,
 /// and back to it only if it's the last. Between them the tool goes straight on to the next cut.
 pub fn route_in_file(moves: &[Move], steps: Option<&[Step]>, home: [f64; 3], first: bool, last: bool) -> (Vec<Move>, Option<Vec<Step>>) {
-    let stop = Move { p: home, rapid: true };
+    let stop = Move { p: home, rapid: true, join: false };
     let mut route = Vec::with_capacity(moves.len() + 2);
     if first {
         route.push(stop);
@@ -2587,6 +2944,8 @@ pub fn route_in_file(moves: &[Move], steps: Option<&[Step]>, home: [f64; 3], fir
 /// (handlers `0x1408ad5c0` and `0x1408ad630`).
 pub const DRAW_PLUNGES_COMMAND: u32 = 32907;
 pub const DRAW_RETRACTS_COMMAND: u32 = 32908;
+/// Draw join moves (33776), purple in the original (`0x14051faf0`: type 14, colour `0x800080`).
+pub const DRAW_JOINS_COMMAND: u32 = 33776;
 
 /// The sums a toolpath's depths were typed as; empty for a plain number.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -2649,10 +3008,15 @@ pub enum MoveKind {
     Plunge = 2,
     /// Fast, straight up.
     Retract = 3,
+    /// At cutting speed from one cut to the next without lifting.
+    Join = 4,
 }
 
 pub fn move_kind(from: [f64; 3], m: &Move) -> MoveKind {
     let still = (m.p[0] - from[0]).hypot(m.p[1] - from[1]) < 1e-9;
+    if m.join && !m.rapid {
+        return MoveKind::Join;
+    }
     match (m.rapid, still) {
         (true, true) if m.p[2] > from[2] => MoveKind::Retract,
         (true, _) => MoveKind::Rapid,
@@ -2680,7 +3044,7 @@ pub fn cuts_of(moves: &[Move], toolpath: usize) -> Vec<Cut> {
         } else {
             if !open {
                 let number = cuts.len();
-                cuts.push(Cut { toolpath, number, moves: vec![Move { p: last.unwrap_or(m.p), rapid: true }] });
+                cuts.push(Cut { toolpath, number, moves: vec![Move { p: last.unwrap_or(m.p), rapid: true, join: false }] });
                 open = true;
             }
             if let Some(cut) = cuts.last_mut() {
@@ -2800,21 +3164,21 @@ pub fn moves_from_cut(moves: &[Move], first: usize, machine: Machine, metric: bo
 /// Cuts one after another, from home and back, with the usual way between them.
 pub fn join_cuts<'a>(cuts: impl IntoIterator<Item = &'a Cut>, machine: Machine, same_spot: f64) -> Vec<Move> {
     let safe = machine.safe_z;
-    let mut out = vec![Move { p: machine.home, rapid: true }];
+    let mut out = vec![Move { p: machine.home, rapid: true, join: false }];
     let mut at = machine.home;
     for cut in cuts {
         let entry = cut.moves[0].p;
         let apart = (at[0] - entry[0]).powi(2) + (at[1] - entry[1]).powi(2) + (at[2] - entry[2]).powi(2);
         if apart >= 0.00000001 {
             if at[2] < safe && (at[0] - entry[0]).hypot(at[1] - entry[1]) < same_spot {
-                out.push(Move { p: entry, rapid: false });
+                out.push(Move { p: entry, rapid: false, join: false });
             } else {
                 if at[2] < safe {
-                    out.push(Move { p: [at[0], at[1], safe], rapid: true });
+                    out.push(Move { p: [at[0], at[1], safe], rapid: true, join: false });
                 }
-                out.push(Move { p: [entry[0], entry[1], safe], rapid: true });
+                out.push(Move { p: [entry[0], entry[1], safe], rapid: true, join: false });
                 if entry[2] != safe {
-                    out.push(Move { p: entry, rapid: true });
+                    out.push(Move { p: entry, rapid: true, join: false });
                 }
             }
         }
@@ -2822,9 +3186,9 @@ pub fn join_cuts<'a>(cuts: impl IntoIterator<Item = &'a Cut>, machine: Machine, 
         at = cut.moves[cut.moves.len() - 1].p;
     }
     if at[2] < safe {
-        out.push(Move { p: [at[0], at[1], safe], rapid: true });
+        out.push(Move { p: [at[0], at[1], safe], rapid: true, join: false });
     }
-    out.push(Move { p: machine.home, rapid: true });
+    out.push(Move { p: machine.home, rapid: true, join: false });
     out
 }
 
@@ -2836,6 +3200,11 @@ pub const RAPID_RATE_MM: f64 = 6000.0;
 /// Estimated machining time, in seconds: cuts, plunges and lifts with the allowance, then fast moves
 /// and pauses as they are. Lifts go at the fast rate.
 pub fn estimate_seconds(moves: &[Move], tool: &Tool, rapid_rate: f64, dwell: f64) -> f64 {
+    estimate_with(moves, tool, rapid_rate, dwell, None)
+}
+
+/// The same, with the moves near tight corners at their lower rate (`slow_corners`).
+pub fn estimate_with(moves: &[Move], tool: &Tool, rapid_rate: f64, dwell: f64, slow: Option<&SlowMoves>) -> f64 {
     let (mut working, mut fast, mut paused) = (0.0, 0.0, 0.0);
     for (i, w) in moves.windows(2).enumerate() {
         let (a, b) = (w[0].p, w[1].p);
@@ -2850,7 +3219,7 @@ pub fn estimate_seconds(moves: &[Move], tool: &Tool, rapid_rate: f64, dwell: f64
                 fast += minutes(rapid_rate);
             }
         } else {
-            working += minutes(if flat < 1e-9 && rise < 0.0 { tool.plunge } else { tool.feed });
+            working += minutes(if flat < 1e-9 && rise < 0.0 { tool.plunge } else { tool.feed * SlowMoves::share_at(slow, b) });
             if flat < 1e-9 && moves.get(i + 2).is_some_and(|n| n.rapid) {
                 paused += dwell;
             }
@@ -2882,6 +3251,114 @@ pub struct PostPath<'a> {
     pub steps: Option<&'a [Step]>,
     /// The toolpath's own notes, for `[TOOLPATH_NOTES]`.
     pub notes: &'a str,
+    /// Moves near a tight corner to cut more slowly, and the share of the cutting rate they get.
+    pub slow: Option<&'a SlowMoves>,
+}
+
+/// Slowing down in tight corners, a practice of other CAM programs (feed optimisation in Fusion 360
+/// and HSM, for one): where the path turns sharply the cutter takes a wider bite, so the rate
+/// drops near the corner. Not something the original does; off unless asked for.
+pub const CORNER_TURN_DEGREES: f64 = 45.0;
+/// The share of the cutting rate near a tight corner, at first.
+pub const CORNER_RATE_SHARE: f64 = 0.5;
+/// How far before and after the corner the rate stays down, in tool diameters.
+pub const CORNER_REACH: f64 = 1.0;
+
+/// The end points of the moves that cut slowly, and their share of the cutting rate.
+#[derive(Clone, Debug, Default)]
+pub struct SlowMoves {
+    pub share: f64,
+    pub ends: std::collections::HashSet<[u64; 3]>,
+}
+
+impl SlowMoves {
+    fn key(p: [f64; 3]) -> [u64; 3] {
+        [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()]
+    }
+
+    /// The cutting rate's share for a move ending here.
+    pub fn share_at(slow: Option<&SlowMoves>, p: [f64; 3]) -> f64 {
+        slow.filter(|s| s.ends.contains(&Self::key(p))).map_or(1.0, |s| s.share)
+    }
+}
+
+/// Splits the cutting moves near each tight corner so they can go slower. A corner is tight where
+/// the way in over one tool radius and the way out over one tool radius differ by more than
+/// `CORNER_TURN_DEGREES`, which also catches small curves drawn as many short moves. Only level
+/// cuts count; ramps and plunges keep their own rate.
+pub fn slow_corners(moves: &[Move], dia: f64, share: f64, reach: f64) -> (Vec<Move>, SlowMoves) {
+    let mut out: Vec<Move> = Vec::with_capacity(moves.len());
+    let mut slow = SlowMoves { share, ends: Default::default() };
+    let level = |a: [f64; 3], b: &Move| !b.rapid && (b.p[0] - a[0]).hypot(b.p[1] - a[1]) >= (b.p[2] - a[2]).abs() * 4.0 && (b.p[0] - a[0]).hypot(b.p[1] - a[1]) > 1e-9;
+    let mut i = 0;
+    while i < moves.len() {
+        // A run of level cuts from moves[i - 1] (its start point) through moves[j - 1].
+        if i == 0 || !level(moves[i - 1].p, &moves[i]) {
+            out.push(moves[i]);
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        while j < moves.len() && level(moves[j - 1].p, &moves[j]) {
+            j += 1;
+        }
+        let pts: Vec<[f64; 3]> = moves[i - 1..j].iter().map(|m| m.p).collect();
+        let mut along = vec![0.0];
+        for w in pts.windows(2) {
+            along.push(along.last().unwrap() + (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]));
+        }
+        let at = |d: f64| {
+            let d = d.clamp(0.0, *along.last().unwrap());
+            let k = along.partition_point(|a| *a < d).clamp(1, pts.len() - 1);
+            let t = (d - along[k - 1]) / (along[k] - along[k - 1]).max(1e-12);
+            [pts[k - 1][0] + (pts[k][0] - pts[k - 1][0]) * t, pts[k - 1][1] + (pts[k][1] - pts[k - 1][1]) * t]
+        };
+        let r = dia / 2.0;
+        let mut spans: Vec<(f64, f64)> = Vec::new();
+        for k in 1..pts.len() - 1 {
+            let (a, v, b) = (at(along[k] - r), pts[k], at(along[k] + r));
+            let (u, w) = ([v[0] - a[0], v[1] - a[1]], [b[0] - v[0], b[1] - v[1]]);
+            let (lu, lw) = (u[0].hypot(u[1]), w[0].hypot(w[1]));
+            if lu < 1e-9 || lw < 1e-9 {
+                continue;
+            }
+            let cos = ((u[0] * w[0] + u[1] * w[1]) / (lu * lw)).clamp(-1.0, 1.0);
+            if cos.acos().to_degrees() > CORNER_TURN_DEGREES {
+                let span = (along[k] - reach * dia, along[k] + reach * dia);
+                match spans.last_mut() {
+                    Some(last) if span.0 <= last.1 => last.1 = span.1,
+                    _ => spans.push(span),
+                }
+            }
+        }
+        if spans.is_empty() {
+            out.extend_from_slice(&moves[i..j]);
+            i = j;
+            continue;
+        }
+        let inside = |d: f64| spans.iter().any(|s| d > s.0 && d < s.1);
+        for k in 1..pts.len() {
+            let (d0, d1) = (along[k - 1], along[k]);
+            // Cut this move where a slow span starts or ends inside it.
+            let mut cuts: Vec<f64> = spans.iter().flat_map(|s| [s.0, s.1]).filter(|c| *c > d0 + 1e-9 && *c < d1 - 1e-9).collect();
+            cuts.sort_by(f64::total_cmp);
+            cuts.push(d1);
+            let mut from = d0;
+            let orig = moves[i - 1 + k];
+            for c in cuts {
+                let t = (c - d0) / (d1 - d0).max(1e-12);
+                let p = if c >= d1 { orig.p } else { [pts[k - 1][0] + (pts[k][0] - pts[k - 1][0]) * t, pts[k - 1][1] + (pts[k][1] - pts[k - 1][1]) * t, pts[k - 1][2] + (pts[k][2] - pts[k - 1][2]) * t] };
+                let m = Move { p, ..orig };
+                if inside((from + c) / 2.0) {
+                    slow.ends.insert(SlowMoves::key(p));
+                }
+                out.push(m);
+                from = c;
+            }
+        }
+        i = j;
+    }
+    (out, slow)
 }
 
 /// The machine file formats on offer: name, file extension, and whether it is in millimetres.
@@ -2955,7 +3432,7 @@ pub fn gcode(paths: &[PostPath], post: &PostSettings) -> String {
                     s.push_str("G1 ");
                 }
                 let flat = (m.p[0] - prev[0]).hypot(m.p[1] - prev[1]);
-                let wanted = if flat < (m.p[2] - prev[2]).abs() { tool.plunge } else { tool.feed } * k;
+                let wanted = if flat < (m.p[2] - prev[2]).abs() { tool.plunge } else { tool.feed * SlowMoves::share_at(path.slow, m.p) } * k;
                 let _ = write!(s, "X{x:.4} Y{y:.4} Z{z:.4}");
                 if (wanted - feed).abs() > 1e-9 {
                     let _ = write!(s, " F{wanted:.1}");
@@ -3027,6 +3504,7 @@ pub fn blank_op(kind: OpKind, name: String, tool: Tool, depth: f64, paths: Vec<P
         paths,
         clearance_tool: None,
         rest_only: false,
+        adaptive: false,
         raster_angle: 0.0,
         profile_pass: ProfilePass::Last,
         raster_allowance: 0.0,
@@ -3313,7 +3791,7 @@ mod tests {
         let moves = generate(&o, M, &J, None).unwrap();
         let t = o.tool.clone();
         let text = gcode(
-            &[PostPath { name: "Drill 1", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "" }],
+            &[PostPath { name: "Drill 1", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "", slow: None }],
             &PostSettings { inches: true, origin: [1.0, 1.0], z_shift: 0.5, scale: 1.0, arcs: None },
         );
         assert!(text.starts_with("(Written by Burin)\nG20"));
@@ -3327,19 +3805,19 @@ mod tests {
     fn estimate_counts_feed_and_rapid() {
         let t = tool("End Mill (0.25 inch)");
         let m = [
-            Move { p: [0.0, 0.0, 0.0], rapid: true },
-            Move { p: [100.0, 0.0, 0.0], rapid: false },
+            Move { p: [0.0, 0.0, 0.0], rapid: true, join: false },
+            Move { p: [100.0, 0.0, 0.0], rapid: false, join: false },
         ];
         // One minute of cutting counts double.
         assert!((estimate_seconds(&m, &t, 200.0, 0.0) - 120.0).abs() < 1e-6);
         let feed = t.feed;
         let plunge = t.plunge;
         let m = [
-            Move { p: [0.0, 0.0, 1.0], rapid: true },
+            Move { p: [0.0, 0.0, 1.0], rapid: true, join: false },
             // A fast move, then down, a pause, and up again at the fast rate.
-            Move { p: [200.0, 0.0, 1.0], rapid: true },
-            Move { p: [200.0, 0.0, -plunge], rapid: false },
-            Move { p: [200.0, 0.0, 1.0], rapid: true },
+            Move { p: [200.0, 0.0, 1.0], rapid: true, join: false },
+            Move { p: [200.0, 0.0, -plunge], rapid: false, join: false },
+            Move { p: [200.0, 0.0, 1.0], rapid: true, join: false },
         ];
         let lift = (plunge + 1.0) / 200.0;
         let down = (plunge + 1.0) / plunge;
@@ -3361,6 +3839,25 @@ mod tests {
         assert!(near_middle, "a raster row crosses the middle");
     }
 
+    /// Going on to the next raster row without lifting is a join, as in the original's saved jobs:
+    /// at cutting speed, at one depth, between two cuts.
+    #[test]
+    fn raster_rows_are_linked_by_joins() {
+        let mut o = op(OpKind::Pocket, vec![Path::closed(rect([5.0, 5.0], 3.0, 3.0, 0.0))]);
+        o.raster = true;
+        o.profile_pass = ProfilePass::None;
+        let m = generate(&o, M, &J, None).unwrap();
+        let joins: Vec<usize> = (1..m.len()).filter(|&i| m[i].join).collect();
+        assert!(joins.len() >= 3, "{} joins", joins.len());
+        for i in joins {
+            assert!(!m[i].rapid && (m[i].p[2] - m[i - 1].p[2]).abs() < 1e-9, "across at one depth");
+            assert_eq!(move_kind(m[i - 1].p, &m[i]), MoveKind::Join);
+        }
+        // Without them a fast move takes their place, or a cut: nothing else is marked.
+        let plain = generate(&op(OpKind::Profile, vec![Path::closed(rect([5.0, 5.0], 3.0, 3.0, 0.0))]), M, &J, None).unwrap();
+        assert!(plain.iter().all(|m| !m.join));
+    }
+
     #[test]
     fn rest_only_pocket_only_cuts_the_wall() {
         let mut o = op(OpKind::Pocket, vec![Path::closed(rect([5.0, 5.0], 3.0, 3.0, 0.0))]);
@@ -3378,7 +3875,7 @@ mod tests {
         let moves = generate(&o, M, &J, None).unwrap();
         let zs: Vec<f64> = cuts(&moves).iter().map(|p| p[2]).collect();
         assert_eq!(zs, vec![-0.125, -0.25, -0.375, -0.5]);
-        let text = gcode(&[PostPath { name: "d", tool: &o.tool, moves: &moves, dwell: o.dwell, steps: None, notes: "" }], &PostSettings { inches: true, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None });
+        let text = gcode(&[PostPath { name: "d", tool: &o.tool, moves: &moves, dwell: o.dwell, steps: None, notes: "", slow: None }], &PostSettings { inches: true, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None });
         assert_eq!(text.matches("G4 P0.50").count(), 4, "{text}");
     }
 
@@ -3519,7 +4016,7 @@ mod tests {
     fn profile_output(arcs: Option<f64>, origin: [f64; 2]) -> (String, Vec<Move>, Op) {
         let o = op(OpKind::Profile, vec![Path::closed(circle([5.0, 5.0], 1.2)), Path::closed(rect([2.0, 2.0], 1.0, 1.0, 0.0))]);
         let moves = generate(&o, M, &J, None).unwrap();
-        let text = gcode(&[PostPath { name: "p", tool: &o.tool, moves: &moves, dwell: 0.0, steps: None, notes: "" }], &PostSettings { inches: true, origin, z_shift: 0.0, scale: 1.0, arcs });
+        let text = gcode(&[PostPath { name: "p", tool: &o.tool, moves: &moves, dwell: 0.0, steps: None, notes: "", slow: None }], &PostSettings { inches: true, origin, z_shift: 0.0, scale: 1.0, arcs });
         (text, moves, o)
     }
 
@@ -4378,7 +4875,7 @@ mod tests {
 
     #[test]
     fn the_real_depth_is_measured_from_the_cutting_moves() {
-        let m = |z: f64, rapid: bool| Move { p: [0.0, 0.0, z], rapid };
+        let m = |z: f64, rapid: bool| Move { p: [0.0, 0.0, z], rapid, join: false };
         assert_eq!(deepest_move(&[m(5.0, true), m(-3.0, false), m(-1.0, false), m(-9.0, true)]), 3.0, "a rapid is no cut");
         assert_eq!(deepest_move(&[m(5.0, true)]), 0.0);
     }
@@ -4737,7 +5234,7 @@ mod tests {
         o.tool.name = "End Mill (6 mm)".into();
         o.name = "Outside (top)".into();
         let moves = generate(&o, M, &J, None).unwrap();
-        let path = PostPath { name: &o.name, tool: &o.tool, moves: &moves, dwell: 0.0, steps: None, notes: "" };
+        let path = PostPath { name: &o.name, tool: &o.tool, moves: &moves, dwell: 0.0, steps: None, notes: "", slow: None };
         let text = gcode(&[path], &PostSettings { inches: false, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None });
         for line in text.lines() {
             let mut open = 0;
@@ -4902,6 +5399,146 @@ mod tests {
         o.start_at = StartAt::Keep;
         let first = cuts(&generate(&o, M, &J, None).unwrap())[0];
         assert!(path.iter().any(|p| (p[0] - first[0]).abs() < 1e-9 && (p[1] - first[1]).abs() < 1e-9), "{first:?}");
+    }
+
+    fn cut(p: [f64; 3]) -> Move {
+        Move { p, rapid: false, join: false }
+    }
+
+    #[test]
+    fn tight_corners_are_cut_slower_and_long_sides_are_not() {
+        // A 10 × 10 square at one depth, cut with a 0.25 tool.
+        let mut moves = vec![Move { p: [0.0, 0.0, 0.2], rapid: true, join: false }, cut([0.0, 0.0, -0.1])];
+        for p in [[10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [0.0, 0.0]] {
+            moves.push(cut([p[0], p[1], -0.1]));
+        }
+        let (out, slow) = slow_corners(&moves, 0.25, 0.5, 1.0);
+        assert!(out.len() > moves.len(), "long sides split near the corners");
+        let slowed: Vec<&Move> = out.iter().filter(|m| SlowMoves::share_at(Some(&slow), m.p) < 1.0).collect();
+        assert!(slowed.iter().any(|m| m.p[0] == 10.0 && m.p[1] == 0.0), "the corner itself");
+        // Each slow piece lies within one diameter of a corner.
+        for w in out.windows(2) {
+            if SlowMoves::share_at(Some(&slow), w[1].p) < 1.0 {
+                let mid = [(w[0].p[0] + w[1].p[0]) / 2.0, (w[0].p[1] + w[1].p[1]) / 2.0];
+                let near = [[10.0, 0.0], [10.0, 10.0], [0.0, 10.0]].iter().any(|c: &[f64; 2]| (mid[0] - c[0]).hypot(mid[1] - c[1]) <= 0.25 + 1e-9);
+                assert!(near, "{mid:?}");
+            }
+        }
+        // The plunge keeps its own rate, and the path is the same shape.
+        assert!(SlowMoves::share_at(Some(&slow), [0.0, 0.0, -0.1]) == 1.0 || out[1].p == [0.0, 0.0, -0.1]);
+        assert_eq!(out.last().unwrap().p, [0.0, 0.0, -0.1]);
+    }
+
+    #[test]
+    fn wide_curves_keep_their_rate_and_tight_ones_slow_down() {
+        let ring = |r: f64| {
+            let mut m = vec![Move { p: [r, 0.0, 0.2], rapid: true, join: false }, cut([r, 0.0, -0.1])];
+            for k in 1..=72 {
+                let a = std::f64::consts::TAU * k as f64 / 72.0;
+                m.push(cut([r * a.cos(), r * a.sin(), -0.1]));
+            }
+            m
+        };
+        let (_, wide) = slow_corners(&ring(5.0), 0.25, 0.5, 1.0);
+        assert!(wide.ends.is_empty(), "a 5 inch circle has no tight corner");
+        let (_, tight) = slow_corners(&ring(0.15), 0.25, 0.5, 1.0);
+        assert!(tight.ends.len() > 30, "a curve barely wider than the tool is slowed: {}", tight.ends.len());
+    }
+
+    #[test]
+    fn the_machine_file_lowers_the_rate_near_corners() {
+        let t = default_tools().into_iter().next().unwrap();
+        let mut moves = vec![Move { p: [0.0, 0.0, 0.2], rapid: true, join: false }, cut([0.0, 0.0, -0.1])];
+        for p in [[4.0, 0.0], [4.0, 4.0]] {
+            moves.push(cut([p[0], p[1], -0.1]));
+        }
+        let (moves, slow) = slow_corners(&moves, t.dia, 0.5, 1.0);
+        let text = gcode(&[PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "", slow: Some(&slow) }], &PostSettings { inches: true, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None });
+        assert!(text.contains(&format!("F{:.1}", t.feed * 0.5)), "{text}");
+        assert!(text.contains(&format!("F{:.1}", t.feed)));
+    }
+
+    #[test]
+    fn the_estimate_counts_slower_corners() {
+        let t = default_tools().into_iter().next().unwrap();
+        let mut moves = vec![cut([0.0, 0.0, -0.1])];
+        for p in [[4.0, 0.0], [4.0, 4.0], [0.0, 4.0], [0.0, 0.0]] {
+            moves.push(cut([p[0], p[1], -0.1]));
+        }
+        let plain = estimate_seconds(&moves, &t, 200.0, 0.0);
+        let (split, slow) = slow_corners(&moves, t.dia, 0.5, 1.0);
+        assert!((estimate_with(&split, &t, 200.0, 0.0, None) - plain).abs() <= 1.0, "splitting alone changes nothing");
+        assert!(estimate_with(&split, &t, 200.0, 0.0, Some(&slow)) > plain);
+    }
+
+    #[test]
+    fn squared_distances_are_exact() {
+        let (nx, ny) = (7, 5);
+        let mut marked = vec![false; nx * ny];
+        marked[2 * nx + 3] = true;
+        let d = squared_distances(&marked, nx, ny);
+        assert_eq!(d[2 * nx + 3], 0.0);
+        assert_eq!(d[2 * nx + 6], 9.0);
+        assert_eq!(d[4 * nx + 0], 13.0);
+    }
+
+    #[test]
+    fn the_small_tool_clears_what_the_large_one_could_not_reach() {
+        // A wide room with a narrow slot off it: 0.5 wide, too narrow for a 1 inch tool, wide
+        // enough for a quarter inch tool to need more than its wall pass.
+        let shape = Path::closed(vec![[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [2.25, 4.0], [2.25, 7.0], [1.75, 7.0], [1.75, 4.0], [0.0, 4.0]]);
+        let mut o = op(OpKind::Pocket, vec![shape]);
+        o.tool.dia = 0.125;
+        o.rest_only = true;
+        let mut big = o.tool.clone();
+        big.dia = 1.0;
+        o.clearance_tool = Some(big);
+        let with_rest = generate(&o, M, &J, None).unwrap().to_vec();
+        o.clearance_tool = None;
+        let wall_only = generate(&o, M, &J, None).unwrap().to_vec();
+        // The slot's middle line: the wall pass alone stays 0.0625 from the walls and can't reach it.
+        let near_mid = |moves: &[Move]| moves.iter().any(|m| !m.rapid && (m.p[0] - 2.0).abs() < 0.12 && m.p[1] > 4.8 && m.p[1] < 6.5);
+        assert!(!near_mid(&wall_only));
+        assert!(near_mid(&with_rest), "the slot is cleared");
+        // The open room, which the large tool reaches, isn't cut again in its middle.
+        assert!(!with_rest.iter().any(|m| !m.rapid && (m.p[0] - 2.0).abs() < 0.5 && (m.p[1] - 2.0).abs() < 0.5));
+    }
+
+    #[test]
+    fn adaptive_clearing_clears_the_pocket_without_heavy_bites() {
+        let mut o = op(OpKind::Pocket, vec![Path::closed(rect([5.0, 5.0], 3.0, 2.0, 0.0))]);
+        o.tool.dia = 0.25;
+        o.adaptive = true;
+        let moves = generate(&o, M, &J, None).unwrap().to_vec();
+        let cut = cuts(&moves);
+        // It reaches the whole floor: every point well inside is passed near by the cutter.
+        for (x, y) in [(5.0, 5.0), (4.0, 4.4), (6.2, 5.6), (3.8, 5.7), (6.3, 4.3)] {
+            assert!(cut.iter().any(|p| p[2] < 0.0 && (p[0] - x).hypot(p[1] - y) < 0.13), "({x}, {y}) is left");
+        }
+        // Never closer to the wall than the cutter's radius.
+        assert!(cut.iter().filter(|p| p[2] < 0.0).all(|p| (p[0] - 5.0).abs() <= 1.5 - 0.125 + 1e-3 && (p[1] - 5.0).abs() <= 1.0 - 0.125 + 1e-3));
+        // Few lifts: most hops from one stretch to the next stay down.
+        let lifts = moves.windows(2).filter(|w| w[1].rapid && w[1].p[2] > w[0].p[2] && w[0].p[2] < 0.0).count();
+        assert!(lifts < 12, "{lifts} lifts");
+        // Many small steps rather than a few rings.
+        let plain = { let mut q = o.clone(); q.adaptive = false; cuts(&generate(&q, M, &J, None).unwrap()).len() };
+        assert!(cut.len() > plain);
+    }
+
+    #[test]
+    fn adaptive_clearing_comes_down_in_a_helix_with_ramping_on() {
+        let mut o = op(OpKind::Pocket, vec![Path::closed(rect([5.0, 5.0], 3.0, 2.0, 0.0))]);
+        o.tool.dia = 0.25;
+        o.adaptive = true;
+        o.ramp = true;
+        o.ramp_kind = RampKind::Spiral;
+        let moves = generate(&o, M, &J, None).unwrap().to_vec();
+        // The first cut into the material, at each depth, goes down sideways round the helix.
+        let downs: Vec<&[Move]> = moves.windows(2).filter(|w| !w[1].rapid && w[1].p[2] < w[0].p[2] - 1e-9 && w[1].p[2] < -1e-9).collect();
+        let first = downs.first().unwrap();
+        assert!((first[1].p[0] - first[0].p[0]).hypot(first[1].p[1] - first[0].p[1]) > 1e-6, "not a straight plunge");
+        let sideways = downs.iter().filter(|w| (w[1].p[0] - w[0].p[0]).hypot(w[1].p[1] - w[0].p[1]) > 1e-6).count();
+        assert!(sideways >= 48, "{sideways}");
     }
 }
 

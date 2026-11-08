@@ -140,13 +140,111 @@ fn line_art(paths: &[Path], points_per_unit: f64, moveto: &str, lineto: &str, cl
     s
 }
 
-pub fn eps_text(paths: &[Path], width: f64, height: f64, points_per_unit: f64) -> String {
-    format!(
-        "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 {} {}\n%%EndComments\n0.5 setlinewidth\n{}showpage\n%%EOF\n",
-        (width * points_per_unit).ceil() as i64,
-        (height * points_per_unit).ceil() as i64,
-        line_art(paths, points_per_unit, "newpath moveto", "lineto", "closepath", "stroke"),
+/// Points to the millimetre, as the original's EPS and AI exports scale (`0x1421ceab0`): 72 / 25.4.
+pub const POINTS_PER_MM: f64 = 2.834645669291339;
+
+/// The shapes' box in points, as the original's EPS and AI exports give it: whole points outwards
+/// for `%%BoundingBox`, eight decimals for `%%HiResBoundingBox` (`0x1407aba00`, `0x1407abef0`).
+fn point_box(paths: &[Path], k: f64) -> (String, String) {
+    let (lo, hi) = crate::geom::bbox(paths).unwrap_or(([0.0, 0.0], [0.0, 0.0]));
+    (
+        format!("%%BoundingBox: {} {} {} {}\n", (lo[0] * k).floor() as i64, (lo[1] * k).floor() as i64, (hi[0] * k).ceil() as i64, (hi[1] * k).ceil() as i64),
+        format!("%%HiResBoundingBox: {:.8} {:.8} {:.8} {:.8}\n", lo[0] * k, lo[1] * k, hi[0] * k, hi[1] * k),
     )
+}
+
+/// Each shape as a move, its lines, and its stroke. A closed one draws its last side back to the
+/// start rather than closing, as the original does.
+fn ps_paths(paths: &[Path], k: f64, moveto: &str, lineto: &str, stroke: &str) -> String {
+    let mut s = String::new();
+    for path in paths.iter().filter(|p| !p.pts.is_empty()) {
+        let pts = path.pts.iter().chain(path.closed.then(|| &path.pts[0]));
+        for (i, p) in pts.enumerate() {
+            s.push_str(&format!("{:.6} {:.6} {}\n", p[0] * k, p[1] * k, if i == 0 { moveto } else { lineto }));
+        }
+        s.push_str(stroke);
+        s.push('\n');
+    }
+    s
+}
+
+/// Today as the original writes it in these files ("%A, %B %d, %Y": "Sunday, November 08, 2026").
+pub fn long_date() -> String {
+    let (date, _) = crate::postp::now_strings();
+    let parts: Vec<i64> = date.split('-').filter_map(|p| p.parse().ok()).collect();
+    let [y, m, d] = parts[..] else { return date };
+    const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    // Sakamoto's day of the week.
+    let t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+    let yy = if m < 3 { y - 1 } else { y };
+    let wd = (yy + yy / 4 - yy / 100 + yy / 400 + t[(m - 1) as usize] + d).rem_euclid(7) as usize;
+    format!("{}, {} {:02}, {}", DAYS[wd], MONTHS[(m - 1) as usize], d, y)
+}
+
+/// Encapsulated PostScript laid out as the original's (`0x1407aba00`): the shapes' box, the
+/// title and date, empty setup and prolog, then each shape stroked. Points are 72 to the inch.
+pub fn eps_text(paths: &[Path], _width: f64, _height: f64, points_per_unit: f64) -> String {
+    let (bbox, hires) = point_box(paths, points_per_unit);
+    format!(
+        "%!PS-Adobe-3.0 EPSF-3.0\n{bbox}{hires}%%Creator: Burin\n%%Title: Exported data from Burin\n%%CreationDate: {}\n%%EndComments\n%%BeginSetup\n%%EndSetup\n%%BeginProlog\n%%EndProlog\n\n{}",
+        long_date(),
+        ps_paths(paths, points_per_unit, "moveto", "lineto", "stroke"),
+    )
+}
+
+/// An Adobe Illustrator 3 file as the original writes one (`0x1407abef0`): the same box and
+/// date, the AI3 resources it names, black stroke (`0 0 0 1 K`, `0 J 0 j 1 w 4 M []0 d`), then each
+/// shape with `m`, `L` and `S`. The original writes its curves with `c`; Burin's shapes are lines.
+pub fn ai_text(paths: &[Path], points_per_unit: f64) -> String {
+    let (bbox, hires) = point_box(paths, points_per_unit);
+    let mut s = String::from("%!PS-Adobe-3.0\n%%Creator: Adobe Illustrator(TM) 3.2\n%%Title: Exported data from Burin\n");
+    s.push_str(&format!("%%CreationDate: {}\n{bbox}{hires}", long_date()));
+    for line in [
+        "%%DocumentProcessColors: Black",
+        "%%DocumentNeededResources: procset Adobe_packedarray 2.0 0",
+        "%%+ procset Adobe_cshow 1.1 0",
+        "%%+ procset Adobe_customcolor 1.0 0",
+        "%%+ procset Adobe_Illustrator_AI3 1.0 1",
+        "%%AI3_ColorUsage: Color",
+        "%%AI3_DocumentPreview: None",
+        "%%PageOrigin:0 0",
+        "%%EndComments",
+        "%%BeginProlog",
+        "%%IncludeResource: procset Adobe_packedarray 2.0 0",
+        "Adobe_packedarray /initialize get exec",
+        "%%IncludeResource: procset Adobe_cshow 1.1 0",
+        "%%IncludeResource: procset Adobe_customcolor 1.0 0",
+        "%%IncludeResource: procset Adobe_Illustrator_AI3 1.0 1",
+        "%%EndProlog",
+        "%%BeginSetup",
+        "Adobe_cshow /initialize get exec",
+        "Adobe_customcolor /initialize get exec",
+        "Adobe_Illustrator_AI3 /initialize get exec",
+        "%%EndSetup",
+        "0 A",
+        "0 R",
+        "0 0 0 1 K",
+        "0 J 0 j 1 w 4 M []0 d",
+    ] {
+        s.push_str(line);
+        s.push('\n');
+    }
+    s.push_str(&ps_paths(paths, points_per_unit, "m", "L", "S"));
+    for line in [
+        "%%PageTrailer",
+        "gsave annotatepage grestore showpage",
+        "%%Trailer",
+        "Adobe_Illustrator_AI3 /terminate get exec",
+        "Adobe_customcolor /terminate get exec",
+        "Adobe_cshow /terminate get exec",
+        "Adobe_packedarray /terminate get exec",
+        "%%EOF",
+    ] {
+        s.push_str(line);
+        s.push('\n');
+    }
+    s
 }
 
 pub fn pdf_bytes(paths: &[Path], width: f64, height: f64, points_per_unit: f64) -> Vec<u8> {
@@ -274,7 +372,7 @@ impl App {
     }
 
     fn can_be_selected(&self, v: &Vector) -> bool {
-        self.doc.layers.get(v.layer).is_none_or(|l| l.visible && !l.locked)
+        self.doc.can_pick(v)
     }
 
     /// Open lines, and closed ones with next to no area, which have nothing inside to cut. Groups
@@ -314,7 +412,7 @@ impl App {
             .doc
             .vectors
             .iter()
-            .filter(|v| self.doc.layers.get(v.layer).is_none_or(|l| l.visible && !l.locked))
+            .filter(|v| self.doc.can_pick(v))
             .filter(|v| !v.is_group() && !matches!(v.prim, Prim::Text { .. }))
             .collect();
         let mut found = Vec::new();
@@ -332,7 +430,7 @@ impl App {
     }
 
     fn file_units(&self) -> (&'static str, f64) {
-        if self.doc.job.units == Units::Mm { ("mm", 72.0 / 25.4) } else { ("in", 72.0) }
+        if self.doc.job.units == Units::Mm { ("mm", POINTS_PER_MM) } else { ("in", 72.0) }
     }
 
     /// The selection, or everything that gets cut if nothing is selected.
@@ -389,6 +487,7 @@ impl App {
         let bytes = match extension {
             "svg" => svg_text(&paths, width, height, unit).into_bytes(),
             "eps" => eps_text(&paths, width, height, points).into_bytes(),
+            "ai" => ai_text(&paths, points).into_bytes(),
             "pdf" => pdf_bytes(&paths, width, height, points),
             _ => geom::dxf_write(&paths).into_bytes(),
         };
@@ -484,12 +583,11 @@ impl App {
                 }
             });
             ui.menu_button(tr("Export"), |ui| {
-                for (label, extension) in [("DXF", "dxf"), ("SVG", "svg"), ("EPS", "eps"), ("PDF", "pdf")] {
+                for (label, extension) in [("DXF", "dxf"), ("SVG", "svg"), ("EPS", "eps"), ("AI", "ai"), ("PDF", "pdf")] {
                     if entry(ui, label, true, None) {
                         self.export_drawing_as(extension);
                     }
                 }
-                later(ui, "AI");
             });
         });
         if entry(ui, "Open Settings Folder...", true, None) {
@@ -674,13 +772,21 @@ impl App {
             if entry(ui, "Create Shape from Selection...", true, None) {
                 self.open_shape_form(None);
             }
-            later(ui, "Two Rail Sweep");
-            later(ui, "Extrude and Weave");
+            if ui.push_id(crate::sweep::TWO_RAIL_SWEEP_COMMAND, |ui| entry(ui, "Two Rail Sweep", true, None)).inner {
+                self.open_two_rail_sweep();
+            }
+            if ui.push_id(crate::sweep::EXTRUDE_COMMAND, |ui| entry(ui, "Extrude and Weave", true, None)).inner {
+                self.open_extrude();
+            }
             if ui.push_id(crate::modeltools::TURN_SPIN_COMMAND, |ui| entry(ui, "Turn and Spin", true, None)).inner {
                 self.open_turn_spin();
             }
-            later(ui, "Create Textured Area Component");
-            later(ui, "Add Zero Plane");
+            if ui.push_id(crate::modeltools::TEXTURE_AREA_COMMAND, |ui| entry(ui, "Create Textured Area Component", self.selected_comp.is_some(), None)).inner {
+                self.open_texture_area();
+            }
+            if ui.push_id(crate::modeltools::ZERO_PLANE_COMMAND, |ui| entry(ui, "Add Zero Plane", true, None)).inner {
+                self.add_zero_plane();
+            }
         });
         ui.menu_button(tr("Create Component from..."), |ui| {
             if ui.push_id(crate::modeltools::BAKE_COMMAND, |ui| entry(ui, "Bake Components", self.selected_comp.is_some(), None)).inner {
@@ -716,9 +822,13 @@ impl App {
         if entry(ui, "Export as Grayscale Bitmap", has_model, None) {
             self.export_grey();
         }
-        later(ui, "Export as 3D Clipart");
+        if ui.push_id(crate::modeltools::EXPORT_CLIP3D_COMMAND, |ui| entry(ui, "Export as 3D Clipart", has_model, None)).inner {
+            self.export_3d_clipart();
+        }
         ui.separator();
-        later(ui, "Sculpt Visible Model");
+        if ui.push_id(crate::sculpt::SCULPT_COMMAND, |ui| entry(ui, "Sculpt Visible Model", has_model, None)).inner {
+            self.open_sculpt();
+        }
         if ui.push_id(crate::modeltools::SMOOTH_COMMAND, |ui| entry(ui, "Smooth Selected Components", has_model, None)).inner {
             self.smooth_form = Some(crate::modeltools::SmoothForm::default());
         }
@@ -736,7 +846,9 @@ impl App {
             self.boundary_around_component();
         }
         ui.separator();
-        later(ui, "Emboss Component");
+        if ui.push_id(crate::modeltools::EMBOSS_COMMAND, |ui| entry(ui, "Emboss Component", self.selected_comp.is_some(), None)).inner {
+            self.open_emboss();
+        }
         if ui.push_id(crate::modeltools::SCALE_Z_COMMAND, |ui| entry(ui, "Scale Model Z Height", has_model, None)).inner {
             self.open_scale_z();
         }
@@ -793,7 +905,9 @@ impl App {
             ui.push_id(crate::toolpath::DRAW_RETRACTS_COMMAND, |ui| {
                 ui.checkbox(&mut self.draw_retracts, tr("Draw retract moves"));
             });
-            later(ui, "Draw join moves");
+            ui.push_id(crate::toolpath::DRAW_JOINS_COMMAND, |ui| {
+                ui.checkbox(&mut self.draw_joins, tr("Draw join moves"));
+            });
         });
         ui.menu_button(tr("Preview Simulation Quality"), |ui| self.quality_list(ui));
         ui.separator();
@@ -853,6 +967,12 @@ impl App {
             ui.ctx().request_repaint();
         }
         ui.checkbox(&mut self.grid, tr("Show Grid"));
+        ui.horizontal(|ui| {
+            ui.label(tr("Grid Spacing")).on_hover_text(tr("0 follows the zoom."));
+            crate::ui::number(ui, &mut self.grid_spacing, 50.0);
+            self.grid_spacing = self.grid_spacing.max(0.0);
+            ui.label(self.doc.job.unit());
+        });
         ui.checkbox(&mut self.show_vectors, tr("Show Shapes"));
         ui.checkbox(&mut self.show_toolpaths, tr("Show Toolpaths"));
         ui.menu_button(tr("Guide Lines"), |ui| {
@@ -876,7 +996,11 @@ impl App {
         });
         ui.checkbox(&mut self.draw_block, tr("Draw Material Block"));
         ui.separator();
-        later(ui, "Multi-Sided View");
+        let two = self.doc.job.two_sided;
+        ui.push_id(crate::view3d::MULTI_SIDED_COMMAND, |ui| {
+            let r = ui.add_enabled(two, egui::Checkbox::new(&mut self.multi_sided, tr("Multi-Sided View")));
+            r.on_hover_text(self.keys.text(Action::MultiSided)).on_disabled_hover_text(tr("For two-sided jobs"));
+        });
         later(ui, "Auto-Wrapping View");
         later(ui, "Color Shaded View");
         ui.checkbox(&mut self.shaded_background, tr("Use Shaded Background"));
@@ -893,6 +1017,23 @@ impl App {
         ui.separator();
         if entry(ui, "Save Shaded Image", self.view3d, None) {
             self.save_preview = crate::platform::FileDialog::new().add_filter(tr("Picture"), &["png"]).set_file_name("preview.png").save_file();
+        }
+        ui.separator();
+        let keys = self.keys;
+        use crate::app::Tiling;
+        for (command, label, tiling, action) in [
+            (crate::app::TILE_HORIZONTAL_COMMAND, "Tile Windows Horizontal", Tiling::Stacked, Action::TileStacked),
+            (crate::app::TILE_VERTICAL_COMMAND, "Tile Windows Vertical", Tiling::SideBySide, Action::TileSideBySide),
+        ] {
+            if ui.push_id(command, |ui| entry(ui, label, true, Some(keys.text(action)))).inner {
+                self.tiled = Some(tiling);
+                self.auto_fit = true;
+            }
+        }
+        // One view at a time: Burin's views don't overlap, so this is the closest it has.
+        if ui.push_id(crate::app::CASCADE_COMMAND, |ui| entry(ui, "Cascade Windows", self.tiled.is_some(), None)).inner {
+            self.tiled = None;
+            self.auto_fit = true;
         }
     }
 
@@ -1132,7 +1273,13 @@ mod tests {
     fn eps_and_pdf_are_in_points_at_the_real_size() {
         let paths = vec![Path::closed(rect([1.0, 1.0], 1.0, 1.0, 0.0))];
         let eps = eps_text(&paths, 10.0, 5.0, 72.0);
-        assert!(eps.starts_with("%!PS-Adobe") && eps.contains("%%BoundingBox: 0 0 720 360") && eps.contains("closepath"));
+        // The shapes' own box, in whole points outwards, and the last side drawn back to the start.
+        assert!(eps.starts_with("%!PS-Adobe-3.0 EPSF-3.0\n") && eps.contains("%%BoundingBox: 36 36 108 108\n") && eps.contains("%%HiResBoundingBox: 36.00000000 36.00000000 108.00000000 108.00000000"), "{eps}");
+        assert!(!eps.contains("closepath") && eps.matches("lineto").count() == 4 && eps.trim_end().ends_with("stroke"));
+        let ai = ai_text(&paths, 72.0);
+        assert!(ai.starts_with("%!PS-Adobe-3.0\n%%Creator: Adobe Illustrator(TM) 3.2\n") && ai.contains("%%BoundingBox: 36 36 108 108\n"));
+        assert!(ai.contains("0 0 0 1 K\n0 J 0 j 1 w 4 M []0 d\n36.000000 36.000000 m\n") && ai.matches(" L\n").count() == 4 && ai.contains("\nS\n%%PageTrailer\n") && ai.ends_with("%%EOF\n"));
+        assert!(long_date().contains(", "));
         let pdf = pdf_bytes(&paths, 10.0, 5.0, 72.0);
         let text = String::from_utf8(pdf).unwrap();
         assert!(text.starts_with("%PDF-1.4") && text.contains("/MediaBox [0 0 720 360]"));

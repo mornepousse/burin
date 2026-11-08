@@ -14,13 +14,13 @@ pub enum Icon {
     Dome, Layer, Up, Down,
     TpProfile, TpPocket, TpDrill, TpEngrave, TpVCarve, TpRough, TpFinish,
     Tools, Edit, Duplicate, Trash, Clock, Preview, Recalc, SaveTp,
-    Snap, SnapObjects, Grid, Pan, ZoomBox, ZoomFit, ZoomSel, ShowVectors, ShowPaths, ShowModel, PanelLeft, PanelRight,
+    Snap, SnapObjects, Grid, Pan, ZoomBox, ZoomFit, ZoomSel, ShowVectors, ShowPaths, ShowModel, TileSide, TileStacked, FlipAroundX, FlipAroundY, SideTop, SideBottom,
     ViewFit, ViewIso, ViewZ, ViewX, ViewY,
     Play, Pause, Step, End, Rewind, Pin, Collapse,
     Doc, Folder, Sample,
     TextCurve, Dimension, Trim, Fillet, Validate, CopyAlong, Nest,
     TpPrism, TpTexture, TpMoulding, Eye, EyeOff, Locked, Unlocked,
-    Similar, Bulk, Constraint, Trace, Distort, JobSetup, ReliefPicture, ImportModel, TpFlute, TpChamfer, SnapShapes,
+    Similar, Bulk, Constraint, Trace, Distort, JobSetup, ReliefPicture, ImportModel, ZeroPlane, TpFlute, TpChamfer, SnapShapes,
     RDimension, RCoincident, RHorizontal, RVertical, RParallel, RPerpendicular, REqual, RCollinear,
     RTangent, RConcentric, RMidpoint, RPointOn, RSymmetric, RFixed, RConstruction,
 }
@@ -507,11 +507,35 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
             p.circle_filled(c, 8.0 * s, tone(Color32::from_rgb(170, 215, 170)));
             p.circle_filled(at(0.0, 1.0), 3.5 * s, tone(Color32::from_rgb(70, 140, 80)));
         }
-        Icon::PanelLeft | Icon::PanelRight => {
+        // The block and the line it's turned over about, with the way it turns.
+        Icon::FlipAroundX | Icon::FlipAroundY => {
+            fill(&[(-9.0, -6.0), (9.0, -6.0), (9.0, 6.0), (-9.0, 6.0)], WOOD);
+            if icon == Icon::FlipAroundY {
+                line(&[(0.0, -10.0), (0.0, 10.0)], RED, 1.4);
+                line(&[(-6.0, -8.5), (6.0, -8.5)], BLUE, 1.2);
+                line(&[(3.5, -10.5), (6.0, -8.5), (3.5, -6.5)], BLUE, 1.2);
+            } else {
+                line(&[(-11.0, 0.0), (11.0, 0.0)], RED, 1.4);
+                line(&[(10.5, -5.0), (10.5, 5.0)], BLUE, 1.2);
+                line(&[(8.5, 2.5), (10.5, 5.0), (12.5, 2.5)], BLUE, 1.2);
+            }
+        }
+        // The side being worked on: a block with its number, the bottom one orange.
+        Icon::SideTop | Icon::SideBottom => {
+            let (col, t) = if icon == Icon::SideTop { (WOOD, "1") } else { (Color32::from_rgb(0xED, 0xC2, 0x64), "2") };
+            fill(&[(-9.0, -7.0), (9.0, -7.0), (9.0, 7.0), (-9.0, 7.0)], col);
+            p.text(at(0.0, 0.0), Align2::CENTER_CENTER, t, FontId::proportional(13.0 * s), tone(BLACK));
+        }
+        // Two windows, the one in use filled: side by side, or one above the other.
+        Icon::TileSide => {
             boxed(-10.0, -8.0, 10.0, 8.0, Color32::from_gray(190), 1.0);
-            let (a, b) = if icon == Icon::PanelLeft { (-10.0, -2.0) } else { (2.0, 10.0) };
-            filled(a, -8.0, b, 8.0, Color32::from_rgb(120, 150, 210));
-            line(&[(-2.0, -5.0), (-2.0, 5.0)], Color32::from_gray(190), 1.0);
+            filled(-10.0, -8.0, -1.0, 8.0, Color32::from_rgb(120, 150, 210));
+            line(&[(0.0, -8.0), (0.0, 8.0)], Color32::from_gray(190), 1.0);
+        }
+        Icon::TileStacked => {
+            boxed(-10.0, -8.0, 10.0, 8.0, Color32::from_gray(190), 1.0);
+            filled(-10.0, -8.0, 10.0, -1.0, Color32::from_rgb(120, 150, 210));
+            line(&[(-10.0, 0.0), (10.0, 0.0)], Color32::from_gray(190), 1.0);
         }
         Icon::ViewFit => {
             boxed(-9.0, -9.0, 9.0, 9.0, BLACK, 1.5);
@@ -744,6 +768,14 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
             fill(&[(-8.0, -3.0), (0.0, 2.0), (0.0, 9.0), (-8.0, 4.0)], WOOD_DARK);
             fill(&[(8.0, -3.0), (0.0, 2.0), (0.0, 9.0), (8.0, 4.0)], Color32::from_rgb(160, 118, 72));
             line(&[(-8.0, -3.0), (0.0, -8.0), (8.0, -3.0), (8.0, 4.0), (0.0, 9.0), (-8.0, 4.0), (-8.0, -3.0)], BLUE, 1.1);
+        }
+        // A thin flat slab with a dish sunk in it.
+        Icon::ZeroPlane => {
+            fill(&[(-9.0, 0.0), (0.0, -5.0), (9.0, 0.0), (0.0, 5.0)], WOOD);
+            fill(&[(-9.0, 0.0), (0.0, 5.0), (0.0, 8.0), (-9.0, 3.0)], WOOD_DARK);
+            fill(&[(9.0, 0.0), (0.0, 5.0), (0.0, 8.0), (9.0, 3.0)], Color32::from_rgb(160, 118, 72));
+            fill(&[(-4.0, 0.0), (0.0, -2.2), (4.0, 0.0), (0.0, 2.2)], WOOD_DARK);
+            line(&[(-9.0, 0.0), (0.0, -5.0), (9.0, 0.0), (9.0, 3.0), (0.0, 8.0), (-9.0, 3.0), (-9.0, 0.0)], BLUE, 1.1);
         }
         Icon::TpFlute => {
             tile();

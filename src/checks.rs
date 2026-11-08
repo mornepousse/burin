@@ -231,10 +231,10 @@ mod tests {
         tool.dia = 6.0;
         tool.pass_depth = 3.0;
         let op = toolpath::blank_op(OpKind::Profile, "Around".into(), tool, 5.0, Vec::new());
-        let mut moves = vec![Move { p: [0.0, 0.0, 20.0], rapid: true }];
-        moves.extend(points.iter().map(|(p, rapid)| Move { p: *p, rapid: *rapid }));
-        moves.push(Move { p: [0.0, 0.0, 20.0], rapid: true });
-        Toolpath { op, visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(moves), kept_moves: None, kept_steps: None }
+        let mut moves = vec![Move { p: [0.0, 0.0, 20.0], rapid: true, join: false }];
+        moves.extend(points.iter().map(|(p, rapid)| Move { p: *p, rapid: *rapid, join: false }));
+        moves.push(Move { p: [0.0, 0.0, 20.0], rapid: true, join: false });
+        Toolpath { op, visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(moves), kept_moves: None, kept_steps: None, face: 0, sheet: 0 }
     }
 
     fn job() -> Job {

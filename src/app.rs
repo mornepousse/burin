@@ -70,6 +70,14 @@ pub struct Job {
     pub solid: [u8; 3],
     /// How the wood looks in the carve preview: `None` means the solid colour.
     pub preview_material: Option<usize>,
+    /// Both sides of the material are cut (the original's Double Sided job type).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub two_sided: bool,
+    /// How the material is turned over between the sides: about the Y axis (left to right) when
+    /// set, else about the X axis (top to bottom), the original's `ppSideFlipDirection` "Around Y"
+    /// and "Around X" (value 0, `0x140602519`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flip_around_y: bool,
 }
 
 impl Default for Job {
@@ -88,6 +96,8 @@ impl Default for Job {
             material: None,
             solid: [122, 122, 62],
             preview_material: Some(0),
+            two_sided: false,
+            flip_around_y: false,
         }
     }
 }
@@ -238,6 +248,16 @@ pub struct Vector {
     /// The piece this belongs to: its shapes stay separate and can each be selected, but move together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub piece: Option<u64>,
+    /// The side of a two-sided job it is on: 0 the top, 1 the bottom (`SetActiveSide`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub face: u8,
+    /// The sheet it is on, counted from 0 ("Sheet 1"), as the original keeps each object's sheet.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub sheet: u8,
+}
+
+fn is_zero(v: &u8) -> bool {
+    *v == 0
 }
 
 impl Vector {
@@ -337,6 +357,13 @@ pub struct Toolpath {
     /// The same moves with their exact arcs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_steps: Option<Arc<Vec<crate::arcs::Step>>>,
+    /// The side of a two-sided job it cuts: 0 the top, 1 the bottom.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub face: u8,
+    /// The sheet that was showing when it was calculated (the original's
+    /// `_ActiveSheetWhenCalculated`, 0 in every toolpath of the user's files).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub sheet: u8,
 }
 
 /// Everything saved in a project file.
@@ -348,6 +375,10 @@ pub struct Doc {
     pub active_layer: usize,
     pub components: Vec<Component>,
     pub tools: Vec<Tool>,
+    /// The tool list's groups, kept even while empty: the original's Tool Database holds them as start and end
+    /// markers in the list (types 11 and 12, `0x14086ce30`), made by New Group with tools dragged in after.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_groups: Vec<String>,
     pub toolpaths: Vec<Toolpath>,
     pub machine: Machine,
     pub next_id: u64,
@@ -362,6 +393,15 @@ pub struct Doc {
     /// New shapes are drawn as construction geometry.
     #[serde(default)]
     pub new_construction: bool,
+    /// The side being worked on in a two-sided job: 0 the top, 1 the bottom.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub active_face: u8,
+    /// Sheets beyond the first: every sheet is the job's size, each with its own shapes and
+    /// toolpaths, and only the active one shows (`vcCadSheetManager`, `ActiveSheetIndex`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub extra_sheets: u8,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub active_sheet: u8,
     /// The person's notes about the job, which go on the job sheet.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub notes: String,
@@ -385,11 +425,15 @@ impl Default for Doc {
             active_layer: 0,
             components: Vec::new(),
             tools: default_tools(),
+            tool_groups: Vec::new(),
             toolpaths: Vec::new(),
             machine: Machine { safe_z: 0.2, home: [0.0, 0.0, 0.8], plunge_gap: 0.2, gap_above: 0.0, gap_below: None },
             next_id: 1,
             constraints: Vec::new(),
             new_construction: false,
+            active_face: 0,
+            extra_sheets: 0,
+            active_sheet: 0,
             bitmaps: Vec::new(),
             guides: Vec::new(),
         }
@@ -447,14 +491,14 @@ impl Doc {
         let metric = units == Units::Mm;
         for tp in &mut self.toolpaths {
             op_in_units(&mut tp.op, k, metric);
-            tp.moves = Arc::new(tp.moves.iter().map(|m| Move { p: [m.p[0] * k, m.p[1] * k, m.p[2] * k], rapid: m.rapid }).collect());
+            tp.moves = Arc::new(tp.moves.iter().map(|m| Move { p: [m.p[0] * k, m.p[1] * k, m.p[2] * k], rapid: m.rapid, join: m.join }).collect());
             if tp.kept_moves.is_some() {
                 tp.kept_moves = Some(tp.moves.clone());
             }
             if let Some(steps) = &tp.kept_steps {
                 use crate::arcs::Step;
                 tp.kept_steps = Some(Arc::new(steps.iter().map(|s| match s {
-                    Step::Straight(m) => Step::Straight(Move { p: [m.p[0] * k, m.p[1] * k, m.p[2] * k], rapid: m.rapid }),
+                    Step::Straight(m) => Step::Straight(Move { p: [m.p[0] * k, m.p[1] * k, m.p[2] * k], rapid: m.rapid, join: m.join }),
                     Step::Arc { end, centre, counter_clockwise } => Step::Arc { end: [end[0] * k, end[1] * k, end[2] * k], centre: [centre[0] * k, centre[1] * k], counter_clockwise: *counter_clockwise },
                 }).collect()));
             }
@@ -472,9 +516,34 @@ impl Doc {
         self.next_id - 1
     }
 
+    /// Whether a shape is on the side being worked on: always, unless the job is two-sided.
+    pub fn on_active_side(&self, v: &Vector) -> bool {
+        v.sheet == self.active_sheet && (!self.job.two_sided || v.face == self.active_face)
+    }
+
+    /// How many sheets the job has.
+    pub fn sheet_count(&self) -> usize {
+        1 + self.extra_sheets as usize
+    }
+
+    /// Whether a shape shows: on a visible layer and on the side being worked on.
+    pub fn shows(&self, v: &Vector) -> bool {
+        self.on_active_side(v) && self.layers.get(v.layer).is_none_or(|l| l.visible)
+    }
+
+    /// Whether a shape can be chosen: showing, and its layer not locked.
+    pub fn can_pick(&self, v: &Vector) -> bool {
+        self.on_active_side(v) && self.layers.get(v.layer).is_none_or(|l| l.visible && !l.locked)
+    }
+
+    /// Whether a toolpath belongs to the side being worked on.
+    pub fn toolpath_on_side(&self, t: &Toolpath) -> bool {
+        t.sheet == self.active_sheet && (!self.job.two_sided || t.face == self.active_face)
+    }
+
     pub fn add_vector(&mut self, paths: Vec<Path>, prim: Prim) -> u64 {
         let id = self.new_id();
-        self.vectors.push(Vector { id, paths, layer: self.active_layer, prim, construction: self.new_construction, members: Vec::new(), piece: None });
+        self.vectors.push(Vector { id, paths, layer: self.active_layer, prim, construction: self.new_construction, members: Vec::new(), piece: None, face: self.active_face, sheet: self.active_sheet });
         id
     }
 
@@ -567,6 +636,20 @@ pub enum Screen {
     Start,
     Work,
 }
+
+/// Both views at once, as the original's Tile Windows commands lay out its two view windows.
+/// The view in use goes first: on the left side by side, at the top one above the other.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Tiling {
+    /// Tile Windows Vertical (57652, `Page Up`).
+    SideBySide,
+    /// Tile Windows Horizontal (57651, `Page Down`).
+    Stacked,
+}
+
+pub const TILE_HORIZONTAL_COMMAND: u32 = 57651;
+pub const TILE_VERTICAL_COMMAND: u32 = 57652;
+pub const CASCADE_COMMAND: u32 = 57650;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LeftTab {
@@ -844,6 +927,10 @@ pub struct XformForm {
     pub clearance: f64,
     pub border: f64,
     pub along_x: bool,
+    /// Nesting may turn parts (the original's `CanRotate`), in steps of this many degrees
+    /// (`RotationStepAngle`).
+    pub nest_turn: bool,
+    pub nest_step: f64,
     /// Set Size and Rotate: treat each selected shape on its own.
     pub each: bool,
     pub constraint: Option<crate::constraints::Kind>,
@@ -911,6 +998,8 @@ impl XformForm {
             clearance: 0.0,
             border: 0.25 * unit,
             along_x: true,
+            nest_turn: false,
+            nest_step: crate::edit::NEST_STEP,
             each: false,
             constraint: None,
             smart: false,
@@ -1001,6 +1090,10 @@ pub struct App {
     pub left_open: bool,
     pub right_open: bool,
     pub view3d: bool,
+    /// Both views shown at once, and how.
+    pub tiled: Option<Tiling>,
+    /// The last drawing form opened, which Space opens again.
+    pub last_draw: Option<DrawKind>,
     pub tool: Tool2,
     pub selected: Vec<u64>,
     pub clipboard: Vec<Vector>,
@@ -1008,6 +1101,11 @@ pub struct App {
     pub selected_comp: Option<usize>,
     pub status: String,
     pub tool_index: usize,
+    /// The name being typed for a new group in the tool list, and the groups while the list is open.
+    pub new_tool_group: Option<String>,
+    /// The group chosen in the tool list, where New makes its tool and New Group its group.
+    pub tool_group_picked: Option<String>,
+    pub tool_groups_edit: Vec<String>,
     /// Working copy while the tool list is open.
     pub tool_edit: Option<Vec<Tool>>,
     /// What the tool list is choosing for: 0 main tool, 1 area clearance tool.
@@ -1019,6 +1117,9 @@ pub struct App {
     pub one_file: bool,
     /// Writes curves as true arcs in machine files.
     pub output_arcs: bool,
+    /// Cut more slowly near tight corners (`toolpath::slow_corners`), at this share of the rate.
+    pub corner_slow: bool,
+    pub corner_share: f64,
     /// The pointer catches on what is drawn.
     pub snap_shapes: bool,
     pub show_guides: bool,
@@ -1030,6 +1131,8 @@ pub struct App {
     pub clip_folders: Vec<PathBuf>,
     pub clip_folder: usize,
     pub clip_files: Vec<(String, Vec<Path>)>,
+    /// The 3D clipart in the chosen library folder, by name.
+    pub clip_models: Vec<(String, Vec<crate::relief::Component>)>,
     pub clip_loaded: Option<PathBuf>,
     pub picks: Vec<crate::constraints::Elem>,
     pub hover_elem: Option<crate::constraints::Elem>,
@@ -1097,6 +1200,8 @@ pub struct App {
     pub auto_fit: bool,
     pub last_rect: egui::Rect,
     pub snap: bool,
+    /// The grid's spacing in job units, as a project file can set it (`vcSnapGrid`); 0 follows the zoom.
+    pub grid_spacing: f64,
     pub grid: bool,
     pub show_vectors: bool,
     pub show_toolpaths: bool,
@@ -1110,6 +1215,13 @@ pub struct App {
     pub model_dirty: bool,
     pub sim: Option<Sim>,
     pub sim_undo: Option<Sim>,
+    /// For Preview All Sides: the bottom side carved on its own, as seen from underneath, which
+    /// is joined to the top side's carve when that is done.
+    pub sim_floor: Option<Sim>,
+    /// The original's Multi-Sided View (33839): both sides' toolpaths in the 3D view at once.
+    pub multi_sided: bool,
+    /// Sculpting a component, while its form is open.
+    pub sculpt: Option<crate::sculpt::Sculpt>,
     pub sim_tag: Vec<u8>,
     pub anim: Anim,
     pub speed: f32,
@@ -1141,6 +1253,12 @@ pub struct App {
     pub scale_z: Option<f64>,
     pub smooth_form: Option<crate::modeltools::SmoothForm>,
     pub offset_form: Option<crate::modeltools::OffsetForm>,
+    pub texture_form: Option<crate::modeltools::TextureForm>,
+    pub emboss_form: Option<crate::modeltools::EmbossForm>,
+    pub sweep_form: Option<crate::sweep::SweepForm>,
+    pub extrude_form: Option<crate::sweep::ExtrudeForm>,
+    /// The texture settings last used, offered again.
+    pub last_texture: Option<crate::modeltools::TextureForm>,
     pub slice_form: Option<crate::modeltools::SliceForm>,
     /// The Add Draft form's angle while it is open, and the last angle used.
     pub draft_angle: Option<f64>,
@@ -1190,6 +1308,7 @@ pub struct App {
     /// How toolpaths are drawn: each kind of move can be shown or not, and 2D previews filled.
     pub draw_plunges: bool,
     pub draw_retracts: bool,
+    pub draw_joins: bool,
     /// The main light turns with the view. Off at the start, as in the original.
     pub light_follows_viewer: bool,
     /// Higher parts cast shadows in the 3D view. Off at the start, as in the original.
@@ -1317,6 +1436,8 @@ impl Default for App {
             left_open: true,
             right_open: false,
             view3d: false,
+            tiled: None,
+            last_draw: None,
             tool: Tool2::Select,
             selected: Vec::new(),
             clipboard: Vec::new(),
@@ -1324,6 +1445,9 @@ impl Default for App {
             selected_comp: None,
             status: crate::i18n::tr("Ready").into(),
             tool_index: 0,
+            new_tool_group: None,
+            tool_group_picked: None,
+            tool_groups_edit: Vec::new(),
             tool_edit: None,
             tool_target: None,
             picked_tool: None,
@@ -1332,6 +1456,8 @@ impl Default for App {
             loaded_posts: Vec::new(),
             one_file: crate::pieces::load_one_file(),
             output_arcs: false,
+            corner_slow: false,
+            corner_share: toolpath::CORNER_RATE_SHARE,
             snap_shapes: true,
             show_guides: true,
             snap_held_off: false,
@@ -1341,6 +1467,7 @@ impl Default for App {
             clip_folders: load_clip_folders(),
             clip_folder: 0,
             clip_files: Vec::new(),
+            clip_models: Vec::new(),
             clip_loaded: None,
             picks: Vec::new(),
             hover_elem: None,
@@ -1390,6 +1517,7 @@ impl Default for App {
             auto_fit: true,
             last_rect: egui::Rect::NOTHING,
             snap: false,
+            grid_spacing: 0.0,
             grid: false,
             show_vectors: true,
             show_toolpaths: true,
@@ -1401,6 +1529,9 @@ impl Default for App {
             model_dirty: false,
             sim: None,
             sim_undo: None,
+            sim_floor: None,
+            multi_sided: false,
+            sculpt: None,
             sim_tag: Vec::new(),
             anim: Anim::default(),
             speed: 0.9,
@@ -1425,6 +1556,11 @@ impl Default for App {
             scale_z: None,
             smooth_form: None,
             offset_form: None,
+            texture_form: None,
+            emboss_form: None,
+            sweep_form: None,
+            extrude_form: None,
+            last_texture: None,
             slice_form: None,
             draft_angle: None,
             last_draft_angle: None,
@@ -1460,6 +1596,7 @@ impl Default for App {
             checks_accepted: false,
             draw_plunges: true,
             draw_retracts: true,
+            draw_joins: true,
             light_follows_viewer: false,
             draw_modeling_plane: true,
             shadow_shading: false,
@@ -1891,6 +2028,7 @@ impl App {
             op.passes = saved.passes.iter().map(|d| d + saved.start_depth).collect();
             op.allowance = saved.allowance;
             op.dwell = saved.dwell;
+            op.notes = saved.notes.clone();
             // Only a toolpath that can be made again the same way follows its shapes. Others keep
             // their moves as saved: V-carves, and those made partly from shapes since removed.
             let can_follow = (saved.kind.starts_with("Profile") || saved.kind == "Pocket" || saved.kind == "Drill") && !saved.options.area_clear && !saved.options.special;
@@ -1902,19 +2040,42 @@ impl App {
             } else if saved.kind.ends_with("On") {
                 op.side = toolpath::Side::On;
             }
-            let moves: Vec<Move> = fast_descents(&saved.moves, saved.plunge_gap).into_iter().map(|(q, rapid)| Move { p: place(q), rapid }).collect();
+            // Joins are marked on the file's own straight moves; the same start and end mark them here.
+            let mut joins: std::collections::HashSet<([u64; 3], [u64; 3])> = std::collections::HashSet::new();
+            let mut was: Option<[f64; 3]> = None;
+            for step in &saved.steps {
+                let end = match step {
+                    crate::arcs::Step::Straight(m) => {
+                        if let (true, Some(from)) = (m.join, was) {
+                            joins.insert((from.map(f64::to_bits), m.p.map(f64::to_bits)));
+                        }
+                        m.p
+                    }
+                    crate::arcs::Step::Arc { end, .. } => *end,
+                };
+                was = Some(end);
+            }
+            let descents = fast_descents(&saved.moves, saved.plunge_gap);
+            let moves: Vec<Move> = descents
+                .iter()
+                .enumerate()
+                .map(|(i, &(q, rapid))| {
+                    let join = !rapid && i > 0 && joins.contains(&(descents[i - 1].0.map(f64::to_bits), q.map(f64::to_bits)));
+                    Move { p: place(q), rapid, join }
+                })
+                .collect();
             let moves = Arc::new(moves);
             let steps: Vec<crate::arcs::Step> = fast_descent_steps(&saved.steps, saved.plunge_gap)
                 .into_iter()
                 .map(|s| match s {
-                    crate::arcs::Step::Straight(m) => crate::arcs::Step::Straight(Move { p: place(m.p), rapid: m.rapid }),
+                    crate::arcs::Step::Straight(m) => crate::arcs::Step::Straight(Move { p: place(m.p), rapid: m.rapid, join: m.join }),
                     crate::arcs::Step::Arc { end, centre, counter_clockwise } => {
                         let c = place([centre[0], centre[1], 0.0]);
                         crate::arcs::Step::Arc { end: place(end), centre: [c[0], c[1]], counter_clockwise }
                     }
                 })
                 .collect();
-            doc.toolpaths.push(Toolpath { op, visible: true, kept_moves: Some(moves.clone()), kept_steps: Some(Arc::new(steps)), moves, color: palette[k % palette.len()] });
+            doc.toolpaths.push(Toolpath { op, visible: true, kept_moves: Some(moves.clone()), kept_steps: Some(Arc::new(steps)), moves, color: palette[k % palette.len()], face: doc.active_face, sheet: doc.active_sheet });
         }
         // Last: toolpaths found their shapes by what each goes by, and still can inside a group.
         for group in &p.groups {
@@ -1922,9 +2083,56 @@ impl App {
                 doc.vectors.push(v);
             }
         }
+        // Guide lines: Burin's go straight up and down or across; any at another angle stays behind.
+        for g in &p.guides {
+            let vertical = g.kind == 1 || g.direction[0].abs() < 1e-9;
+            let across = g.kind == 2 || g.direction[1].abs() < 1e-9;
+            if vertical {
+                doc.guides.push(crate::snap::Guide { vertical: true, at: g.point[0] + shift[0] });
+            } else if across {
+                doc.guides.push(crate::snap::Guide { vertical: false, at: g.point[1] + shift[1] });
+            }
+        }
+        if !p.notes.is_empty() {
+            doc.notes = p.notes.clone();
+        }
+        // The model's look: the nearest wood Burin has, or a solid colour close to the original's
+        // material (colours chosen for Burin).
+        if let Some(look) = &p.look {
+            let lower = look.to_lowercase();
+            let wood = MATERIALS.iter().position(|m| lower.contains(&m.0.to_lowercase().split(' ').next().unwrap_or("").to_string()));
+            let solid = if lower.contains("mdf") {
+                Some([196, 160, 118])
+            } else if lower.contains("granite") || lower.contains("black") {
+                Some([46, 46, 50])
+            } else if lower.contains("red") {
+                Some([190, 44, 38])
+            } else if lower.contains("white") {
+                Some([236, 236, 232])
+            } else {
+                None
+            };
+            match (wood, solid) {
+                (Some(w), _) => doc.job.material = Some(w),
+                (None, Some(c)) => {
+                    doc.job.material = None;
+                    doc.job.solid = c;
+                }
+                _ => {}
+            }
+        }
         let (shapes, layers, toolpaths) = (p.shapes.len(), p.layers.len().max(1), p.toolpaths.len());
         self.doc = doc;
         self.reset_state();
+        self.show_guides = p.guides_shown;
+        // The file's snap grid: shown or not, snapping or not, and its spacing.
+        if let Some(g) = p.snap_grid {
+            self.grid = g.visible;
+            self.snap = g.snap;
+            if g.spacing > 0.0 {
+                self.grid_spacing = g.spacing;
+            }
+        }
         self.screen = Screen::Work;
         // A separate file from the one it came from: saving asks where. The original is still
         // there, so nothing is lost by leaving until something here changes.
@@ -2129,6 +2337,9 @@ impl App {
             v.id = self.doc.new_id();
             pairs.push((original, v.id));
             v.layer = self.doc.active_layer;
+            // Pasted onto the sheet and side showing, wherever it was copied from.
+            v.sheet = self.doc.active_sheet;
+            v.face = self.doc.active_face;
             for p in v.paths.iter_mut().flat_map(|p| p.pts.iter_mut()) {
                 p[0] += step;
                 p[1] -= step;
@@ -2261,7 +2472,7 @@ impl App {
         let paths = members.iter().flat_map(|m| m.paths.iter().cloned()).collect();
         let construction = members.iter().all(|m| m.construction);
         let piece = members[0].piece.filter(|p| members.iter().all(|m| m.piece == Some(*p)));
-        self.doc.vectors.push(Vector { id, paths, layer, prim: Prim::Free, construction, members, piece });
+        self.doc.vectors.push(Vector { id, paths, layer, prim: Prim::Free, construction, members, piece, face: self.doc.active_face, sheet: self.doc.active_sheet });
         self.selected = vec![id];
     }
 
@@ -2365,7 +2576,7 @@ impl App {
             None => group
                 .paths
                 .iter()
-                .map(|p| Vector { id: self.doc.new_id(), paths: vec![p.clone()], layer: group.layer, prim: Prim::Free, construction: group.construction, members: Vec::new(), piece: None })
+                .map(|p| Vector { id: self.doc.new_id(), paths: vec![p.clone()], layer: group.layer, prim: Prim::Free, construction: group.construction, members: Vec::new(), piece: None, face: group.face, sheet: group.sheet })
                 .collect(),
         };
         let mut ids = Vec::with_capacity(members.len());
@@ -2462,6 +2673,7 @@ impl App {
                 combine: form.combine,
                 visible: true,
                 surface: None,
+                whole: false,
             });
             self.selected_comp = Some(n - 1);
         }
@@ -2633,7 +2845,7 @@ impl App {
         for (o, moves) in results {
             let n = self.doc.toolpaths.len();
             let color = TOOLPATH_COLOURS[n % TOOLPATH_COLOURS.len()];
-            self.doc.toolpaths.insert(index, Toolpath { op: o, visible: true, color, moves, kept_moves: None, kept_steps: None });
+            self.doc.toolpaths.insert(index, Toolpath { op: o, visible: true, color, moves, kept_moves: None, kept_steps: None, face: self.doc.active_face, sheet: self.doc.active_sheet });
             index += 1;
         }
         self.selected_tp = Some(index - 1);
@@ -2723,8 +2935,9 @@ impl App {
         if self.all_behind {
             return Some(crate::i18n::tr("The material's settings have changed since the toolpaths were calculated.\n\nUse Recalculate, then save.").into());
         }
-        let chosen = |i: usize, t: &Toolpath| only.map_or(t.visible, |o| o == i);
         let behind: Vec<usize> = self.follow_tasks().into_iter().map(|(i, _)| i).collect();
+        let (two, face) = (self.doc.job.two_sided, self.doc.active_face);
+        let chosen = |i: usize, t: &Toolpath| only.map_or(t.visible && (!two || t.face == face), |o| o == i);
         let shapes = self.doc.current_paths();
         let mut old: Vec<&str> = Vec::new();
         for (i, t) in self.doc.toolpaths.iter().enumerate().filter(|(i, t)| chosen(*i, t)) {
@@ -2773,7 +2986,7 @@ impl App {
 
     /// The machine file's text. `file_name` is what a post processor file can print in it.
     pub fn gcode_text_named(&self, only: Option<usize>, file_name: &str) -> Option<String> {
-        let chosen: Vec<&Toolpath> = self.doc.toolpaths.iter().enumerate().filter(|(i, t)| only.map_or(t.visible, |o| o == *i)).map(|(_, t)| t).collect();
+        let chosen: Vec<&Toolpath> = self.doc.toolpaths.iter().enumerate().filter(|(i, t)| only.map_or(t.visible && self.doc.toolpath_on_side(t), |o| o == *i)).map(|(_, t)| t).collect();
         // Starting again after a stop: the toolpaths before go, and that one starts from its cut.
         if let Some((from, cut)) = self.resume {
             let started = self.doc.toolpaths.get(from).map(|t| {
@@ -2783,7 +2996,7 @@ impl App {
                 t
             });
             let mut list: Vec<&Toolpath> = Vec::new();
-            for (i, t) in self.doc.toolpaths.iter().enumerate().filter(|(i, t)| (only.map_or(t.visible, |o| o == *i) || *i == from) && *i >= from) {
+            for (i, t) in self.doc.toolpaths.iter().enumerate().filter(|(i, t)| (only.map_or(t.visible && self.doc.toolpath_on_side(t), |o| o == *i) || *i == from) && *i >= from) {
                 if i == from {
                     list.push(started.as_ref()?);
                 } else {
@@ -2793,6 +3006,77 @@ impl App {
             return self.gcode_from(&list, file_name);
         }
         self.gcode_from(&chosen, file_name)
+    }
+
+    /// Shows another sheet; what was chosen on the one before is let go.
+    pub fn show_sheet(&mut self, sheet: usize) {
+        let sheet = sheet.min(self.doc.sheet_count() - 1) as u8;
+        if sheet != self.doc.active_sheet {
+            self.doc.active_sheet = sheet;
+            self.selected.clear();
+            self.selected_comp = None;
+        }
+    }
+
+    /// Adds a sheet of the job's size after the others and shows it, as the original names its
+    /// sheets "Sheet %d" (`0x14217bfb8`).
+    pub fn add_sheet(&mut self) {
+        if self.doc.sheet_count() >= u8::MAX as usize {
+            return;
+        }
+        self.checkpoint();
+        self.doc.extra_sheets += 1;
+        self.show_sheet(self.doc.sheet_count() - 1);
+        self.dirty = true;
+    }
+
+    /// Removes the sheet showing, with its shapes and toolpaths; the sheets after it move up one.
+    pub fn delete_sheet(&mut self) {
+        if self.doc.sheet_count() < 2 {
+            return;
+        }
+        self.checkpoint();
+        let gone = self.doc.active_sheet;
+        self.doc.vectors.retain(|v| v.sheet != gone);
+        self.doc.toolpaths.retain(|t| t.sheet != gone);
+        for v in &mut self.doc.vectors {
+            if v.sheet > gone {
+                v.sheet -= 1;
+            }
+        }
+        for t in &mut self.doc.toolpaths {
+            if t.sheet > gone {
+                t.sheet -= 1;
+            }
+        }
+        self.doc.extra_sheets -= 1;
+        self.doc.active_sheet = gone.min(self.doc.extra_sheets);
+        self.selected.clear();
+        self.dirty = true;
+    }
+
+    /// Moves the chosen shapes to another sheet, keeping where they are on it.
+    pub fn move_selected_to_sheet(&mut self, sheet: usize) {
+        if self.selected.is_empty() || sheet >= self.doc.sheet_count() || sheet == self.doc.active_sheet as usize {
+            return;
+        }
+        self.checkpoint();
+        let chosen = self.selected.clone();
+        for v in self.doc.vectors.iter_mut().filter(|v| chosen.contains(&v.id)) {
+            v.sheet = sheet as u8;
+        }
+        self.selected.clear();
+        self.dirty = true;
+    }
+
+    /// A toolpath's machining time, counting the slower corners when they're asked for.
+    pub(crate) fn toolpath_seconds(&self, t: &Toolpath, rapid: f64) -> f64 {
+        let moves = toolpath::working_moves(&t.moves);
+        if self.corner_slow && t.kept_steps.is_none() {
+            let (split, slow) = toolpath::slow_corners(moves, t.op.tool.dia, self.corner_share, toolpath::CORNER_REACH);
+            return toolpath::estimate_with(&split, &t.op.tool, rapid, t.op.dwell, Some(&slow));
+        }
+        toolpath::estimate_seconds(moves, &t.op.tool, rapid, t.op.dwell)
     }
 
     /// The machine file's text for these toolpaths.
@@ -2808,10 +3092,23 @@ impl App {
             .enumerate()
             .map(|(k, t)| toolpath::route_in_file(&t.moves, t.kept_steps.as_ref().map(|s| s.as_slice()), machine.home, own_format && k == 0, own_format && k + 1 == chosen.len()))
             .collect();
+        // Slower near tight corners, when asked: the moves there are split off first. Paths that
+        // keep exact arcs from another program's file stay as they are.
+        let routes: Vec<(Vec<Move>, Option<Vec<crate::arcs::Step>>, Option<toolpath::SlowMoves>)> = chosen
+            .iter()
+            .zip(routes)
+            .map(|(t, (moves, steps))| match (self.corner_slow, &steps) {
+                (true, None) => {
+                    let (moves, slow) = toolpath::slow_corners(&moves, t.op.tool.dia, self.corner_share, toolpath::CORNER_REACH);
+                    (moves, None, Some(slow))
+                }
+                _ => (moves, steps, None),
+            })
+            .collect();
         let items: Vec<toolpath::PostPath> = chosen
             .iter()
             .zip(&routes)
-            .map(|(t, (moves, steps))| toolpath::PostPath { name: t.op.name.as_str(), tool: &t.op.tool, moves: moves.as_slice(), dwell: t.op.dwell, steps: steps.as_deref(), notes: t.op.notes.as_str() })
+            .map(|(t, (moves, steps, slow))| toolpath::PostPath { name: t.op.name.as_str(), tool: &t.op.tool, moves: moves.as_slice(), dwell: t.op.dwell, steps: steps.as_deref(), notes: t.op.notes.as_str(), slow: slow.as_ref() })
             .collect();
         let j = &self.doc.job;
         if let Some(def) = self.post_index.checked_sub(toolpath::POSTS.len()).and_then(|i| self.loaded_posts.get(i)) {
@@ -2841,9 +3138,20 @@ impl App {
             let scale = if j.units == Units::Mm { 1.0 } else { 25.4 };
             let (date, time) = crate::postp::now_strings();
             // This file never visits the home position, not even at its start and end.
+            let planet: Vec<(Vec<Move>, Option<toolpath::SlowMoves>)> = chosen
+                .iter()
+                .map(|t| match (self.corner_slow, &t.kept_steps) {
+                    (true, None) => {
+                        let (moves, slow) = toolpath::slow_corners(&t.moves, t.op.tool.dia, self.corner_share, toolpath::CORNER_REACH);
+                        (moves, Some(slow))
+                    }
+                    _ => (t.moves.to_vec(), None),
+                })
+                .collect();
             let items: Vec<toolpath::PostPath> = chosen
                 .iter()
-                .map(|t| toolpath::PostPath { name: t.op.name.as_str(), tool: &t.op.tool, moves: t.moves.as_slice(), dwell: t.op.dwell, steps: t.kept_steps.as_ref().map(|s| s.as_slice()), notes: t.op.notes.as_str() })
+                .zip(&planet)
+                .map(|(t, (moves, slow))| toolpath::PostPath { name: t.op.name.as_str(), tool: &t.op.tool, moves: moves.as_slice(), dwell: t.op.dwell, steps: t.kept_steps.as_ref().map(|s| s.as_slice()), notes: t.op.notes.as_str(), slow: slow.as_ref() })
                 .collect();
             let info = crate::planetcnc::PlanetJob {
                 name: file_name,
@@ -2931,6 +3239,7 @@ impl App {
     pub fn reset_preview(&mut self) {
         self.sim = None;
         self.sim_undo = None;
+        self.sim_floor = None;
         self.anim = Anim::default();
         self.bump_surface();
     }
@@ -2969,8 +3278,82 @@ impl App {
         self.bump_surface();
     }
 
+    /// Preview All Sides (`0x14033aa10`): every toolpath, shown or not, the active side's first and
+    /// then the other side's, and the active side is the one looked at afterwards. Here the active
+    /// side's toolpaths carve as usual and the other side's carve a block of their own, as seen from
+    /// that side. Turned over the way the job flips, wherever the two meet the material is gone, so
+    /// what shows is the active side with every hole that goes right through.
+    pub fn preview_all_sides(&mut self) {
+        let face = self.doc.active_face;
+        let top: Vec<usize> = (0..self.doc.toolpaths.len()).filter(|&i| self.doc.toolpaths[i].face == face).collect();
+        let bottom: Vec<usize> = (0..self.doc.toolpaths.len()).filter(|&i| self.doc.toolpaths[i].face != face).collect();
+        if top.is_empty() && bottom.is_empty() {
+            self.status = crate::i18n::tr("Create a toolpath first.").into();
+            return;
+        }
+        let points = self.sim_points();
+        let j = self.doc.job.clone();
+        let mut under = Sim::new(j.width, j.height, j.thickness, points);
+        for &i in &bottom {
+            let tp = &self.doc.toolpaths[i];
+            let moves = toolpath::working_moves(&tp.moves);
+            let tool = &tp.op.tool;
+            let cutter = relief::Cutter::new(tool.kind, tool.dia, tool.angle, under.grid.cell);
+            for w in moves.windows(2) {
+                if !w[1].rapid && (w[0].p[2] < 0.0 || w[1].p[2] < 0.0) {
+                    under.cut_move(&cutter, &mut [], w[0].p, w[1].p, 0);
+                }
+            }
+        }
+        self.sim = None;
+        self.sim_floor = Some(under);
+        // The original turns its Multi-Sided View on when this is done (`0x14033aa10`, `0x140593b70`).
+        self.multi_sided = true;
+        if top.is_empty() {
+            self.ensure_sim();
+            self.join_sides();
+            self.view3d = true;
+            self.bump_surface();
+        } else {
+            self.preview(top);
+        }
+    }
+
+    /// Takes away the material wherever the bottom side's carve reaches up to the top side's.
+    fn join_sides(&mut self) {
+        let (Some(sim), Some(under)) = (self.sim.as_mut(), self.sim_floor.as_ref()) else { return };
+        let (w, h, around_y) = (self.doc.job.width, self.doc.job.height, self.doc.job.flip_around_y);
+        let t = sim.thickness;
+        let (nx, ny, cell) = (sim.grid.nx, sim.grid.ny, sim.grid.cell);
+        for iy in 0..ny {
+            for ix in 0..nx {
+                let (x, y) = (ix as f64 * cell, iy as f64 * cell);
+                // Where this spot is on the other side once the block is turned over (the same
+                // either way: turning over twice puts everything back).
+                let (bx, by) = if around_y { (w - x, y) } else { (x, h - y) };
+                let floor = -t - under.grid.sample(bx, by);
+                let i = iy * nx + ix;
+                if under.grid.sample(bx, by) < -1e-4 && sim.grid.data[i] <= floor + 1e-4 {
+                    sim.grid.data[i] = -t;
+                    sim.walls[i] = relief::LEVEL;
+                }
+            }
+        }
+    }
+
     /// Cuts up to `budget` moves; returns true while more remain.
     pub fn advance_preview(&mut self, budget: usize) -> bool {
+        if self.sim.is_none() {
+            return false;
+        }
+        let more = self.advance_cuts(budget);
+        if !more && self.sim_floor.is_some() {
+            self.join_sides();
+        }
+        more
+    }
+
+    fn advance_cuts(&mut self, budget: usize) -> bool {
         let Some(sim) = self.sim.as_mut() else { return false };
         let mut left = budget;
         while left > 0 {
@@ -3168,7 +3551,7 @@ fn fast_descent_steps(steps: &[crate::arcs::Step], gap: f64) -> Vec<crate::arcs:
                 if let (Some(p), false) = (at, m.rapid) {
                     let straight_down = (p[0] - m.p[0]).abs() < 1e-6 && (p[1] - m.p[1]).abs() < 1e-6 && m.p[2] < p[2];
                     if straight_down && p[2] > gap && m.p[2] < gap {
-                        out.push(Step::Straight(Move { p: [m.p[0], m.p[1], gap], rapid: true }));
+                        out.push(Step::Straight(Move { p: [m.p[0], m.p[1], gap], rapid: true, join: false }));
                     }
                 }
                 at = Some(m.p);
@@ -3198,7 +3581,7 @@ fn saved_group(doc: &mut Doc, by_mark: &std::collections::HashMap<[u8; 16], u64>
     }
     let layer = group.layer.unwrap_or(members[0].layer);
     let paths = members.iter().flat_map(|m| m.paths.iter().cloned()).collect();
-    Some(Vector { id: doc.new_id(), paths, layer, prim: Prim::Free, construction: false, members, piece: None })
+    Some(Vector { id: doc.new_id(), paths, layer, prim: Prim::Free, construction: false, members, piece: None, face: 0, sheet: 0 })
 }
 
 /// Sets a toolpath up the way the file says, so that working it out again gives the same cut.
@@ -3503,7 +3886,7 @@ mod tests {
         let paths = a.doc.vectors[0].paths.clone();
         let mut op = toolpath::blank_op(OpKind::Profile, "One".into(), tool, 0.1, paths);
         op.source = vec![one];
-        a.keep_calculated(vec![(op, Arc::new(vec![Move { p: [3.0, 3.0, 0.0], rapid: false }]))], None);
+        a.keep_calculated(vec![(op, Arc::new(vec![Move { p: [3.0, 3.0, 0.0], rapid: false, join: false }]))], None);
         a.selected = vec![one, two];
         a.group_selected();
         assert!(a.follow_tasks().is_empty(), "nothing changed yet");

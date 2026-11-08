@@ -321,6 +321,15 @@ const FILL_LIGHT: [f32; 3] = [0.5, 0.25, 0.45];
 /// The original's Light Follows Viewer and Use Shadow Shading commands (`0x1408ac380`, `0x1408ad440`).
 pub const LIGHT_FOLLOWS_VIEWER_COMMAND: u32 = 32889;
 pub const SHADOW_SHADING_COMMAND: u32 = 33698;
+/// How close to the modeling plane, in cells, a point of the surface counts as lying on it. The
+/// rays find a flat surface only to about this much, so a whole job at 0 (a zero plane) would
+/// otherwise come out striped.
+const PLANE_REACH: f32 = 0.05;
+
+/// Multi-Sided View (33839, `0x1402c6e90`): flips a flag of the job's sides (`0x140593b70`), offered
+/// only when there are two sides (`0x1402c6f40`), and turned on by Preview All Sides at its end.
+pub const MULTI_SIDED_COMMAND: u32 = 33839;
+
 /// The original's Draw Modeling Plane command (`0x1402c6170`), and how see-through the plane is.
 pub const MODELING_PLANE_COMMAND: u32 = 33188;
 pub const MODELING_PLANE_OPACITY: f32 = 0.4;
@@ -810,7 +819,7 @@ impl Scene<'_> {
         // The modeling plane, white and see-through (`0x140301fe6`: 0.4, colour `0xffffff`), shows where
         // nothing of the model stands above it.
         match self.plane {
-            Some(at) if hit.side.is_none() && (z - at).abs() <= self.baked.cell * 1e-3 + 1e-5 => shaded.map(|v| v * (1.0 - MODELING_PLANE_OPACITY) + 255.0 * MODELING_PLANE_OPACITY),
+            Some(at) if hit.side.is_none() && (z - at).abs() <= self.baked.cell * PLANE_REACH + 1e-5 => shaded.map(|v| v * (1.0 - MODELING_PLANE_OPACITY) + 255.0 * MODELING_PLANE_OPACITY),
             _ => shaded,
         }
     }
@@ -1133,7 +1142,43 @@ impl App {
             painter.rect_filled(rect, 0.0, crate::theme::BACKDROP_TOP);
         }
 
-        if response.dragged_by(egui::PointerButton::Primary) {
+        // While sculpting, the left button sculpts, unless the tool is Twiddle or Alt is held.
+        let alt = ui.input(|i| i.modifiers.alt);
+        let sculpting = self.sculpt.as_ref().is_some_and(|s| s.tool != crate::sculpt::SculptTool::Twiddle) && !alt;
+        if sculpting {
+            let proj = Projection::new(self.cam, rect, self.doc.job.width, self.doc.job.height);
+            if response.dragged_by(egui::PointerButton::Primary) || response.drag_started_by(egui::PointerButton::Primary) || response.clicked() {
+                if let Some(p) = response.interact_pointer_pos() {
+                    let first = response.drag_started_by(egui::PointerButton::Primary) || response.clicked();
+                    let erase = ui.input(|i| i.modifiers.shift);
+                    self.sculpt_at(proj.unproject(p), first, erase);
+                }
+            }
+            // The brush, a red ring on the material's top under the pointer.
+            if let (Some(p), Some(s)) = (response.hover_pos(), self.sculpt.as_ref()) {
+                let c = proj.unproject(p);
+                let r = s.diameter / 2.0;
+                let ring: Vec<Pos2> = (0..=48).map(|k| {
+                    let a = k as f64 / 48.0 * std::f64::consts::TAU;
+                    proj.project((c[0] + r * a.cos()) as f32, (c[1] + r * a.sin()) as f32, 0.0)
+                }).collect();
+                ui.painter().add(Shape::line(ring, Stroke::new(1.5, crate::theme::ERROR)));
+            }
+            // The wheel changes the brush's size, finer with Ctrl; with Shift, its strength.
+            if response.hovered() {
+                let (scroll, ctrl, shift) = ui.input(|i| (i.smooth_scroll_delta.y + i.smooth_scroll_delta.x, i.modifiers.command, i.modifiers.shift));
+                if scroll != 0.0 {
+                    if let Some(s) = self.sculpt.as_mut() {
+                        if shift {
+                            s.strength = (s.strength * (1.0 + scroll as f64 * 0.002)).clamp(0.01, 1.0);
+                        } else {
+                            let k = if ctrl { 0.0005 } else { 0.002 };
+                            s.diameter = (s.diameter * (1.0 + scroll as f64 * k)).max(1e-3);
+                        }
+                    }
+                }
+            }
+        } else if response.dragged_by(egui::PointerButton::Primary) {
             let d = response.drag_delta();
             self.cam.yaw -= d.x * 0.008;
             self.cam.tilt = (self.cam.tilt - d.y * 0.008).clamp(0.0, 88f32.to_radians());
@@ -1141,7 +1186,7 @@ impl App {
         if response.dragged_by(egui::PointerButton::Secondary) || response.dragged_by(egui::PointerButton::Middle) {
             self.cam.pan += response.drag_delta();
         }
-        if response.hovered() {
+        if response.hovered() && !sculpting {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 {
                 self.cam.zoom = (self.cam.zoom * (scroll * 0.002).exp()).clamp(0.2, 20.0);
@@ -1236,15 +1281,29 @@ impl App {
             }
         }
 
-        // Cutting paths: blue where cutting, red where travelling, cyan going down, green coming up.
+        // Cutting paths: blue where cutting, red where travelling, cyan going down, green coming up, purple across.
         if self.show_toolpaths {
             let view = rect.expand(12.0);
-            for tp in self.doc.toolpaths.iter().filter(|t| t.visible) {
+            // With the Multi-Sided View on, the other side's toolpaths show too, where they really
+            // cut: turned over the way the job flips, coming up from under the block.
+            let both = self.multi_sided && self.doc.job.two_sided;
+            let (w, h, t, around_y) = (self.doc.job.width, self.doc.job.height, self.doc.job.thickness, self.doc.job.flip_around_y);
+            for tp in self.doc.toolpaths.iter().filter(|t| t.visible && (both || self.doc.toolpath_on_side(t))) {
+                let turned = both && !self.doc.toolpath_on_side(tp);
+                let place = |p: [f64; 3]| -> [f64; 3] {
+                    if !turned {
+                        p
+                    } else if around_y {
+                        [w - p[0], p[1], -t - p[2]]
+                    } else {
+                        [p[0], h - p[1], -t - p[2]]
+                    }
+                };
                 let mut line: Vec<Pos2> = Vec::new();
                 let mut fast = crate::toolpath::MoveKind::Cut;
                 let mut last: Option<Pos2> = None;
                 let mut last_at: Option<[f64; 3]> = None;
-                let shown = [true, self.draw_rapids, self.draw_plunges, self.draw_retracts];
+                let shown = [true, self.draw_rapids, self.draw_plunges, self.draw_retracts, self.draw_joins];
                 let flush = |points: &mut Vec<Pos2>, kind: crate::toolpath::MoveKind| {
                     if points.len() >= 2 && shown[kind as usize] {
                         let colour = match kind {
@@ -1252,6 +1311,7 @@ impl App {
                             crate::toolpath::MoveKind::Rapid => crate::theme::RAPID,
                             crate::toolpath::MoveKind::Plunge => crate::theme::PLUNGE,
                             crate::toolpath::MoveKind::Retract => crate::theme::RETRACT,
+                            crate::toolpath::MoveKind::Join => crate::theme::JOIN,
                         };
                         painter.add(Shape::line(std::mem::take(points), Stroke::new(1.0, colour)));
                     } else {
@@ -1259,7 +1319,8 @@ impl App {
                     }
                 };
                 for m in crate::toolpath::working_moves(&tp.moves) {
-                    let q = proj.project(m.p[0] as f32, m.p[1] as f32, m.p[2] as f32);
+                    let at = place(m.p);
+                    let q = proj.project(at[0] as f32, at[1] as f32, at[2] as f32);
                     let kind = last_at.map_or(crate::toolpath::MoveKind::Cut, |from| crate::toolpath::move_kind(from, m));
                     last_at = Some(m.p);
                     let Some(p) = last else {

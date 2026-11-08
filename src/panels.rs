@@ -361,14 +361,11 @@ impl App {
                 if icon_button(ui, Icon::ImportModel, crate::i18n::tr("Import 3D model"), true, false).clicked() {
                     self.dialog_import_model();
                 }
+                if icon_button(ui, Icon::ZeroPlane, crate::i18n::tr("Add Zero Plane"), true, false).clicked() {
+                    self.add_zero_plane();
+                }
                 if icon_button(ui, Icon::Delete, crate::i18n::tr("Delete shape"), comp, false).clicked() {
-                    if let Some(i) = self.selected_comp {
-                        self.checkpoint();
-                        self.doc.components.remove(i);
-                        self.selected_comp = None;
-                        self.model_dirty = true;
-                        self.sim = None;
-                    }
+                    self.delete_component();
                 }
             });
         }
@@ -422,6 +419,17 @@ impl App {
         }
     }
 
+    /// Takes the chosen component away, the Delete key's job in the component list (`0x1403ba190`).
+    pub fn delete_component(&mut self) {
+        if let Some(i) = self.selected_comp.filter(|&i| i < self.doc.components.len()) {
+            self.checkpoint();
+            self.doc.components.remove(i);
+            self.selected_comp = None;
+            self.model_dirty = true;
+            self.sim = None;
+        }
+    }
+
     pub fn move_component(&mut self, by: i32) {
         let Some(i) = self.selected_comp else { return };
         let j = i as i32 + by;
@@ -457,7 +465,17 @@ impl App {
             return;
         }
         self.clip_files.clear();
+        self.clip_models.clear();
         if let Some(dir) = &folder {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case(crate::modeltools::CLIP3D_EXTENSION))).collect();
+                files.sort();
+                for f in files {
+                    if let Some(c) = crate::platform::read(&f).ok().and_then(|b| crate::modeltools::read_clip3d(&String::from_utf8_lossy(&b)).ok()) {
+                        self.clip_models.push((f.file_stem().unwrap_or_default().to_string_lossy().to_string(), c));
+                    }
+                }
+            }
             if let Ok(entries) = std::fs::read_dir(dir) {
                 let mut files: Vec<_> = entries
                     .flatten()
@@ -560,9 +578,21 @@ impl App {
                     }
                 });
             }
-        } else if self.clip_files.is_empty() {
-            note(ui, crate::i18n::tr("No DXF files in this folder."));
+        } else if self.clip_files.is_empty() && self.clip_models.is_empty() {
+            note(ui, crate::i18n::tr("No DXF or 3D clipart files in this folder."));
         } else {
+            // 3D clipart first: each becomes a component in the middle of the job.
+            let models = self.clip_models.clone();
+            for row in models.chunks(3) {
+                ui.horizontal(|ui| {
+                    for (name, cs) in row {
+                        let outline: Vec<geom::Path> = cs.iter().flat_map(|c| c.paths.iter().cloned()).collect();
+                        if self.clip_tile(ui, name, &outline) {
+                            self.insert_3d_clipart(cs.clone());
+                        }
+                    }
+                });
+            }
             let files = self.clip_files.clone();
             for row in files.chunks(3) {
                 ui.horizontal(|ui| {
@@ -585,7 +615,47 @@ impl App {
         }
     }
 
+    /// The sheets: which one shows, adding and removing them, and sending the chosen shapes to another.
+    fn sheets_bar(&mut self, ui: &mut Ui) {
+        let count = self.doc.sheet_count();
+        let name = |i: usize| tf!("Sheet {}", i + 1);
+        ui.horizontal(|ui| {
+            bold(ui, crate::i18n::tr("Sheet"));
+            let mut showing = self.doc.active_sheet as usize;
+            egui::ComboBox::from_id_salt("sheet").selected_text(name(showing)).width(90.0).show_ui(ui, |ui| {
+                for i in 0..count {
+                    ui.selectable_value(&mut showing, i, name(i));
+                }
+            });
+            if showing != self.doc.active_sheet as usize {
+                self.show_sheet(showing);
+            }
+            if ui.small_button("+").on_hover_text(crate::i18n::tr("Add a sheet of the job's size")).clicked() {
+                self.add_sheet();
+            }
+            if ui.add_enabled(count > 1, egui::Button::new("−").small()).on_hover_text(crate::i18n::tr("Delete this sheet with its shapes and toolpaths")).clicked() {
+                self.delete_sheet();
+            }
+        });
+        if count > 1 && !self.selected.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(crate::i18n::tr("Move selection to"));
+                let mut target = self.doc.active_sheet as usize;
+                egui::ComboBox::from_id_salt("sheet-move").selected_text(name(target)).width(90.0).show_ui(ui, |ui| {
+                    for i in 0..count {
+                        ui.selectable_value(&mut target, i, name(i));
+                    }
+                });
+                if target != self.doc.active_sheet as usize {
+                    self.move_selected_to_sheet(target);
+                }
+            });
+        }
+        ui.separator();
+    }
+
     pub fn layers_tab(&mut self, ui: &mut Ui) {
+        self.sheets_bar(ui);
         let active = self.doc.active_layer;
         let count = self.doc.layers.len();
         ui.horizontal(|ui| {
@@ -1180,7 +1250,15 @@ impl App {
                         ui.radio_value(&mut f.along_x, true, crate::i18n::tr("Along X"));
                         ui.radio_value(&mut f.along_x, false, crate::i18n::tr("Along Y"));
                     });
-                    note(ui, crate::i18n::tr("Parts are packed in rows by their outer box."));
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut f.nest_turn, crate::i18n::tr("Allow rotation"));
+                        ui.add_enabled_ui(f.nest_turn, |ui| {
+                            ui.label(crate::i18n::tr("Angle step"));
+                            crate::ui::number(ui, &mut f.nest_step, 44.0);
+                            ui.label("°");
+                        });
+                    });
+                    note(ui, crate::i18n::tr("Parts are packed in rows by their outer box. Those that don't fit go on new sheets."));
                 });
             }
             Xform::Bulk => {
@@ -1586,6 +1664,15 @@ impl App {
                 }
                 self.piece_chooser(ui);
                 ui.checkbox(&mut self.output_arcs, crate::i18n::tr("Write curves as arcs (G2 / G3)")).on_hover_text(crate::i18n::tr("Smaller files and smoother curves. Try it in the air on your machine first."));
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.corner_slow, crate::i18n::tr("Slow down in tight corners")).on_hover_text(crate::i18n::tr("Near a sharp turn the cutter takes a wider bite; other CAM programs lower the rate there. Not in the original."));
+                    ui.add_enabled_ui(self.corner_slow, |ui| {
+                        let mut pct = self.corner_share * 100.0;
+                        crate::ui::number(ui, &mut pct, 40.0);
+                        self.corner_share = (pct / 100.0).clamp(0.05, 1.0);
+                        ui.label("%");
+                    });
+                });
                 ui.add_space(6.0);
                 bold(ui, crate::i18n::tr("Toolpaths to be saved ..."));
                 let names: Vec<&str> = self
@@ -1716,7 +1803,7 @@ impl App {
         }
         let ext = self.post_extension(self.post_index);
         // Called after the first toolpath going in the file.
-        let first = self.doc.toolpaths.iter().enumerate().find(|(i, t)| only.map_or(t.visible, |o| o == *i)).map_or("", |(_, t)| t.op.name.as_str());
+        let first = self.doc.toolpaths.iter().enumerate().find(|(i, t)| only.map_or(t.visible && self.doc.toolpath_on_side(t), |o| o == *i)).map_or("", |(_, t)| t.op.name.as_str());
         let name = format!("{}.{ext}", crate::pieces::file_stem_of(first));
         if let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Machine file"), &[ext.as_str()]).set_file_name(name).save_file() {
             let path = crate::pieces::with_extension(path, &ext);
@@ -1980,8 +2067,12 @@ impl App {
             ui.spacing_mut().item_spacing.y = 3.0;
             bold(ui, crate::i18n::tr("Clear Pocket ..."));
             ui.horizontal(|ui| {
-                ui.radio_value(&mut op.raster, false, crate::i18n::tr("Offset"));
-                ui.radio_value(&mut op.raster, true, crate::i18n::tr("Raster"));
+                let mut way = if op.adaptive { 2 } else if op.raster { 1 } else { 0 };
+                ui.radio_value(&mut way, 0, crate::i18n::tr("Offset"));
+                ui.radio_value(&mut way, 1, crate::i18n::tr("Raster"));
+                ui.radio_value(&mut way, 2, crate::i18n::tr("Adaptive")).on_hover_text(crate::i18n::tr("The cutter never bites more than its stepover: gentler on small cutters. From other CAM programs, not in the original."));
+                op.raster = way == 1;
+                op.adaptive = way == 2;
             });
             ui.horizontal(|ui| {
                 ui.label(crate::i18n::tr("Cut Direction"));
@@ -2073,6 +2164,8 @@ impl App {
 
     pub fn open_tool_list(&mut self, target: Option<u8>) {
         self.tool_edit = Some(self.doc.tools.clone());
+        self.tool_groups_edit = self.doc.tool_groups.clone();
+        self.tool_group_picked = None;
         self.tool_target = target;
         self.tools_open = true;
     }
@@ -2088,9 +2181,18 @@ impl App {
                     ui.set_width(226.0);
                     egui::Frame::new().fill(theme::INPUT).corner_radius(5).inner_margin(6).show(ui, |ui| {
                         ui.set_width(214.0);
+                        let mut dropped: Option<(usize, String)> = None;
+                        let mut moved: Option<(String, String)> = None;
                         egui::ScrollArea::vertical().max_height(380.0).id_salt("tools_tree").show(ui, |ui| {
+                            // The user's own groups first, each a folder tools and groups can be dragged onto,
+                            // with groups inside groups as in the original's tool database (types 11 and 12).
+                            let groups = group_paths(&self.tool_groups_edit, &tools);
+                            let mut tree = GroupTree { tools: &tools, groups: &groups, index: &mut self.tool_index, picked: &mut self.tool_group_picked, dropped: &mut dropped, moved: &mut moved };
+                            for top in groups.iter().filter(|g| !g.contains(GROUP_SEP)) {
+                                tree.show(ui, top);
+                            }
                             for (metric, group) in [(false, crate::i18n::tr("Imperial Tools")), (true, crate::i18n::tr("Metric Tools"))] {
-                                egui::CollapsingHeader::new(group).default_open(true).show(ui, |ui| {
+                                let shown = egui::CollapsingHeader::new(group).default_open(true).show(ui, |ui| {
                                     for (kind, name) in [
                                         (ToolKind::EndMill, crate::i18n::tr("End Mills")),
                                         (ToolKind::BallNose, crate::i18n::tr("Ball Nose")),
@@ -2098,21 +2200,43 @@ impl App {
                                         (ToolKind::Engraving, crate::i18n::tr("Engraving")),
                                         (ToolKind::Drill, crate::i18n::tr("Drills")),
                                     ] {
-                                        let ids: Vec<usize> = (0..tools.len()).filter(|i| tools[*i].metric == metric && tools[*i].kind == kind).collect();
+                                        let ids: Vec<usize> = (0..tools.len()).filter(|i| tools[*i].metric == metric && tools[*i].kind == kind && tools[*i].group.is_empty()).collect();
                                         if ids.is_empty() {
                                             continue;
                                         }
                                         egui::CollapsingHeader::new(name).id_salt((metric, name)).default_open(kind == ToolKind::EndMill || kind == ToolKind::BallNose).show(ui, |ui| {
                                             for i in ids {
-                                                if ui.selectable_label(self.tool_index == i, tools[i].name.as_str()).clicked() {
+                                                let r = ui.selectable_label(self.tool_index == i && self.tool_group_picked.is_none(), tools[i].name.as_str()).interact(egui::Sense::click_and_drag());
+                                                r.dnd_set_drag_payload(i);
+                                                if r.clicked() {
                                                     self.tool_index = i;
+                                                    self.tool_group_picked = None;
                                                 }
                                             }
                                         });
                                     }
                                 });
+                                // Dropped back on the units' folder, a tool leaves its group, and a group goes to the top.
+                                if let Some(i) = shown.header_response.dnd_release_payload::<usize>() {
+                                    dropped = Some((*i, String::new()));
+                                }
+                                if let Some(g) = shown.header_response.dnd_release_payload::<GroupDrag>() {
+                                    moved = Some((g.0.clone(), String::new()));
+                                }
                             }
                         });
+                        if let Some((i, group)) = dropped {
+                            if let Some(t) = tools.get_mut(i) {
+                                t.group = group;
+                                self.tool_index = i;
+                                self.tool_group_picked = None;
+                            }
+                        }
+                        if let Some((group, into)) = moved {
+                            if let Some(now) = move_group(&mut self.tool_groups_edit, &mut tools, &group, &into) {
+                                self.tool_group_picked = Some(now);
+                            }
+                        }
                     });
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
@@ -2120,6 +2244,8 @@ impl App {
                             let mut t = toolpath::default_tools().remove(1);
                             t.name = crate::i18n::tr("New Tool").into();
                             t.number = tools.iter().map(|t| t.number).max().unwrap_or(0) + 1;
+                            // With a group chosen, the new tool goes straight into it (the manual's Tool Database page).
+                            t.group = self.tool_group_picked.clone().unwrap_or_default();
                             tools.push(t);
                             self.tool_index = tools.len() - 1;
                         }
@@ -2136,6 +2262,38 @@ impl App {
                             self.tool_index = self.tool_index.min(tools.len() - 1);
                         }
                     });
+                    // New Group: a name, then Apply makes the group, which tools are dragged onto.
+                    match self.new_tool_group.take() {
+                        None => {
+                            if wide(ui, crate::i18n::tr("New Group"), 216.0).clicked() {
+                                self.new_tool_group = Some(crate::i18n::tr("New Group").into());
+                            }
+                        }
+                        Some(mut name) => {
+                            let mut keep = true;
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(&mut name).desired_width(120.0));
+                                if ui.add_enabled(!name.trim().is_empty(), egui::Button::new(crate::i18n::tr("Apply"))).clicked() {
+                                    // An empty group; tools are dragged onto it. With a group chosen, it goes inside that one.
+                                    let name = name.trim().replace(GROUP_SEP, "-");
+                                    let name = match &self.tool_group_picked {
+                                        Some(parent) => format!("{parent}{GROUP_SEP}{name}"),
+                                        None => name,
+                                    };
+                                    if !self.tool_groups_edit.contains(&name) {
+                                        self.tool_groups_edit.push(name);
+                                    }
+                                    keep = false;
+                                }
+                                if ui.button(crate::i18n::tr("Cancel")).clicked() {
+                                    keep = false;
+                                }
+                            });
+                            if keep {
+                                self.new_tool_group = Some(name);
+                            }
+                        }
+                    }
                     ui.horizontal(|ui| {
                         if wide(ui, crate::i18n::tr("Import ..."), 106.0).clicked() {
                             if let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Tool list"), &["json"]).pick_file() {
@@ -2261,6 +2419,7 @@ impl App {
                     self.picked_tool = Some((target, t.clone()));
                 }
                 self.doc.tools = tools;
+                self.doc.tool_groups = std::mem::take(&mut self.tool_groups_edit);
                 self.tool_edit = None;
                 self.tools_open = false;
             }
@@ -2509,5 +2668,109 @@ impl App {
                 }
             });
         });
+    }
+}
+
+/// Between a group and the group it's in, in a tool's group: `Roughing/Big` is Big inside Roughing.
+pub const GROUP_SEP: char = '/';
+
+/// A group being dragged in the tool list.
+#[derive(Clone)]
+pub struct GroupDrag(pub String);
+
+/// Every group, with the groups holding them, sorted so each comes before what's inside it.
+pub fn group_paths(empty: &[String], tools: &[Tool]) -> Vec<String> {
+    let mut all: Vec<String> = Vec::new();
+    for g in empty.iter().chain(tools.iter().map(|t| &t.group)).filter(|g| !g.is_empty()) {
+        let mut at = 0;
+        while let Some(k) = g[at..].find(GROUP_SEP) {
+            all.push(g[..at + k].to_string());
+            at += k + 1;
+        }
+        all.push(g.clone());
+    }
+    all.sort();
+    all.dedup();
+    all
+}
+
+/// Puts `group`, with everything inside it, into `into` (the top when empty). Refused into itself
+/// or into a group inside it. Gives the group's new name.
+pub fn move_group(groups: &mut Vec<String>, tools: &mut [Tool], group: &str, into: &str) -> Option<String> {
+    let inside = |g: &str, of: &str| g == of || g.strip_prefix(of).is_some_and(|rest| rest.starts_with(GROUP_SEP));
+    if inside(into, group) {
+        return None;
+    }
+    let leaf = group.rsplit(GROUP_SEP).next().unwrap_or(group);
+    let now = if into.is_empty() { leaf.to_string() } else { format!("{into}{GROUP_SEP}{leaf}") };
+    if now == group {
+        return None;
+    }
+    let rename = |g: &mut String| {
+        if inside(g, group) {
+            *g = format!("{now}{}", &g[group.len()..]);
+        }
+    };
+    // Groups that only held others keep existing through what's inside them; empty ones are listed.
+    for g in groups.iter_mut() {
+        rename(g);
+    }
+    if !groups.iter().any(|g| inside(g, &now)) {
+        groups.push(now.clone());
+    }
+    for t in tools.iter_mut() {
+        rename(&mut t.group);
+    }
+    groups.sort();
+    groups.dedup();
+    Some(now)
+}
+
+/// Draws the user's groups in the tool list, each holding its own groups and tools.
+struct GroupTree<'a> {
+    tools: &'a [Tool],
+    groups: &'a [String],
+    index: &'a mut usize,
+    picked: &'a mut Option<String>,
+    dropped: &'a mut Option<(usize, String)>,
+    moved: &'a mut Option<(String, String)>,
+}
+
+impl GroupTree<'_> {
+    fn show(&mut self, ui: &mut Ui, group: &str) {
+        let name = group.rsplit(GROUP_SEP).next().unwrap_or(group);
+        let id = ui.make_persistent_id(("tool-group", group));
+        let state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
+        let (_, header, _) = state
+            .show_header(ui, |ui| {
+                let r = ui.selectable_label(self.picked.as_deref() == Some(group), name).interact(egui::Sense::click_and_drag());
+                r.dnd_set_drag_payload(GroupDrag(group.to_string()));
+                if r.clicked() {
+                    *self.picked = Some(group.to_string());
+                }
+                if let Some(i) = r.dnd_release_payload::<usize>() {
+                    *self.dropped = Some((*i, group.to_string()));
+                }
+                if let Some(g) = r.dnd_release_payload::<GroupDrag>() {
+                    *self.moved = Some((g.0.clone(), group.to_string()));
+                }
+            })
+            .body(|ui| {
+                let prefix = format!("{group}{GROUP_SEP}");
+                for inner in self.groups.iter().filter(|g| g.strip_prefix(&prefix).is_some_and(|rest| !rest.contains(GROUP_SEP))) {
+                    self.show(ui, inner);
+                }
+                for i in (0..self.tools.len()).filter(|i| self.tools[*i].group == group) {
+                    let r = ui.selectable_label(*self.index == i && self.picked.is_none(), self.tools[i].name.as_str()).interact(egui::Sense::click_and_drag());
+                    // Where the tool sits among the groups, as the original's tooltip says.
+                    let r = r.on_hover_text(group.replace(GROUP_SEP, " > "));
+                    r.dnd_set_drag_payload(i);
+                    if r.clicked() {
+                        *self.index = i;
+                        *self.picked = None;
+                    }
+                }
+            });
+        let _ = header;
     }
 }

@@ -97,7 +97,7 @@ pub struct SimilarGroup {
 
 impl App {
     fn editable(&self, v: &Vector) -> bool {
-        self.doc.layers.get(v.layer).is_none_or(|l| l.visible && !l.locked)
+        self.doc.can_pick(v)
     }
 
     /// Groups the visible shapes by kind and size, the biggest groups first.

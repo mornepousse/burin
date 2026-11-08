@@ -31,6 +31,107 @@ pub struct Project {
     /// The groups on the sheet, with what is inside each.
     pub groups: Vec<SavedGroup>,
     pub toolpaths: Vec<SavedToolpath>,
+    /// The guide lines on the sheet, and whether they were shown.
+    pub guides: Vec<SavedGuide>,
+    pub guides_shown: bool,
+    /// The snap grid, when the file has one.
+    pub snap_grid: Option<SavedGrid>,
+    /// The name of the look the model is shown with ("Canadian Maple", "MDF"...), when the file has one.
+    pub look: Option<String>,
+    /// The job's notes (`Notes` among the document's settings).
+    pub notes: String,
+}
+
+/// A guide line as the original keeps it (`vcGuideLine`, written by `0x140a5d710`, version 2): a
+/// point it goes through, its direction, its angle in degrees, and its kind (1 up and down, 2
+/// across, in the user's files).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SavedGuide {
+    pub point: P,
+    pub direction: P,
+    pub angle: f64,
+    pub kind: u32,
+}
+
+/// The snap grid as the original keeps it (`vcSnapGrid::Serialize`, `0x140a77c10`, version 1):
+/// shown (a byte), snapping (a byte), then the spacing (8 bytes). The same three are kept in the
+/// program's settings as `vcSnapGridVisible`, `vcSnapGridDoSnap` and `vcSnapGridSpacingMM` or
+/// `vcSnapGridSpacingInches` (`0x140a77ef0` writes, `0x140a77f80` reads).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SavedGrid {
+    pub visible: bool,
+    pub snap: bool,
+    pub spacing: f64,
+}
+
+fn read_snap_grid(d: &[u8]) -> Option<SavedGrid> {
+    let name = b"vcSnapGrid";
+    let at = d.windows(name.len()).position(|w| w == name)? + name.len();
+    if u32_at(d, at)? > 1 {
+        return None;
+    }
+    let spacing = f64_at(d, at + 6)?;
+    Some(SavedGrid { visible: *d.get(at + 4)? != 0, snap: *d.get(at + 5)? != 0, spacing: if spacing.is_finite() && spacing > 0.0 { spacing } else { 0.0 } })
+}
+
+/// The look the model is shown with. The model's data (`ModelObjects/ObjectData`) starts with its
+/// manager, then its first level (`cmLevelNode`, `0x1403eec30`, over `cmGroupNode`, `0x1409db180`):
+/// in the user's files the level's name ("Niveau 1") is followed by the look's name, indented by
+/// three spaces ("   MDF"), or by nothing at all.
+fn read_look(d: &[u8]) -> Option<String> {
+    let guid = |t: &str| t.len() == 36 && t.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+    let mut texts = Vec::new();
+    let mut i = 0;
+    while i + 4 < d.len() && texts.len() < 4 {
+        match text_at(d, i) {
+            Some((t, end)) => {
+                if !t.is_empty() && !guid(&t) {
+                    texts.push(t);
+                }
+                i = end;
+            }
+            None => i += 1,
+        }
+    }
+    texts.get(1).filter(|t| t.starts_with(' ')).map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+}
+
+/// The guide lines in the document's data. The manager (`vcGuideLineManager`, `0x140a5e100`,
+/// version 1) writes whether they're shown, how many there are, then each as an object: the
+/// first with its class name, the others with a reference to it. Each guide (version 2 or less)
+/// is its point and direction (two numbers each), its angle, its kind, from version 2 a flag,
+/// then a 16-byte mark.
+fn read_guides(d: &[u8]) -> (bool, Vec<SavedGuide>) {
+    let name = b"vcGuideLineManager";
+    let Some(at) = d.windows(name.len()).position(|w| w == name) else { return (true, Vec::new()) };
+    let mut i = at + name.len();
+    let Some(version) = u32_at(d, i) else { return (true, Vec::new()) };
+    if version > 1 {
+        return (true, Vec::new());
+    }
+    let shown = d.get(i + 4).is_none_or(|b| *b != 0);
+    let Some(count) = u32_at(d, i + 5) else { return (shown, Vec::new()) };
+    i += 9;
+    let mut out = Vec::new();
+    for _ in 0..count.min(10_000) {
+        // A new class: 0xFFFF, its schema, its name's length and name. A known one: a tag with the top bit.
+        match u16_at(d, i) {
+            Some(0xFFFF) => {
+                let Some(len) = u16_at(d, i + 4) else { break };
+                i += 6 + len as usize;
+            }
+            Some(tag) if tag & 0x8000 != 0 => i += 2,
+            _ => break,
+        }
+        let Some(v) = u32_at(d, i) else { break };
+        if v > 2 {
+            break;
+        }
+        let (Some(px), Some(py), Some(dx), Some(dy), Some(angle), Some(kind)) = (f64_at(d, i + 4), f64_at(d, i + 12), f64_at(d, i + 20), f64_at(d, i + 28), f64_at(d, i + 36), u32_at(d, i + 44)) else { break };
+        i += 48 + if v > 1 { 1 + 16 } else { 0 };
+        out.push(SavedGuide { point: [px, py], direction: [dx, dy], angle, kind });
+    }
+    (shown, out)
 }
 
 /// A group of shapes in the drawing, on its layer if the file says which.
@@ -83,6 +184,9 @@ pub struct SavedToolpath {
     pub safe_z: f64,
     pub plunge_gap: f64,
     pub home: [f64; 3],
+    /// The toolpath's own notes: its `ToolpathNotes` setting, text (type 3), as the original keeps
+    /// them (`0x140874050` reads, `0x140874160` writes, empty when there are none).
+    pub notes: String,
 }
 
 /// How a toolpath was set up, as far as this program can do the same. What the file leaves out is `None`.
@@ -224,6 +328,9 @@ fn read_options(settings: &[(String, Setting)], kind: &str) -> SavedOptions {
     }
 }
 
+/// The kind of a stored move that is a join.
+pub const JOIN_KIND: u32 = 18;
+
 /// What a run of stored moves holds: small straight moves, the same with true arcs, the longest pause.
 struct Stored {
     moves: Vec<([f64; 3], bool)>,
@@ -256,6 +363,8 @@ fn read_moves(d: &[u8], at: usize, total: usize) -> Option<(Stored, usize)> {
             return Some(());
         }
         let fast = matches!(kind, 2 | 8 | 9 | 10);
+        // 18 is a join (the original's move type 14, `0x1405575e0`): across at one depth from cut to cut.
+        let join = kind == JOIN_KIND;
         let moved = (from[0] - to[0]).abs() + (from[1] - to[1]).abs() + (from[2] - to[2]).abs() > 1e-9;
         if !(fast || moved) {
             return Some(());
@@ -264,7 +373,7 @@ fn read_moves(d: &[u8], at: usize, total: usize) -> Option<(Stored, usize)> {
         if *sides_left > 0 {
             *sides_left -= 1;
         } else {
-            out.steps.push(Step::Straight(Move { p: to, rapid: fast }));
+            out.steps.push(Step::Straight(Move { p: to, rapid: fast, join }));
         }
         Some(())
     };
@@ -280,7 +389,7 @@ fn read_moves(d: &[u8], at: usize, total: usize) -> Option<(Stored, usize)> {
         if size != 0x58 {
             if let Some(to) = arc_end.take() {
                 out.moves.push((to, false));
-                out.steps.push(Step::Straight(Move { p: to, rapid: false }));
+                out.steps.push(Step::Straight(Move { p: to, rapid: false, join: false }));
             }
         }
         match size {
@@ -328,10 +437,18 @@ fn text_at(d: &[u8], at: usize) -> Option<(String, usize)> {
     if d.get(at..at + 3)? != [0xFF, 0xFE, 0xFF] {
         return None;
     }
-    let len = *d.get(at + 3)? as usize;
-    let raw = d.get(at + 4..at + 4 + len * 2)?;
+    // The length takes one byte; 0xFF means a two-byte length follows, and 0xFFFF a four-byte one,
+    // so text of 255 letters or more (a toolpath's notes, say) reads too.
+    let (len, from) = match *d.get(at + 3)? {
+        0xFF => match u16_at(d, at + 4)? {
+            0xFFFF => (u32_at(d, at + 6)? as usize, at + 10),
+            n => (n as usize, at + 6),
+        },
+        n => (n as usize, at + 4),
+    };
+    let raw = d.get(from..from.checked_add(len.checked_mul(2)?)?)?;
     let units: Vec<u16> = raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-    Some((String::from_utf16_lossy(&units), at + 4 + len * 2))
+    Some((String::from_utf16_lossy(&units), from + len * 2))
 }
 
 /// The settings written after a toolpath's moves: a name, a type, then a value.
@@ -532,10 +649,15 @@ fn read_toolpaths(d: &[u8]) -> Vec<SavedToolpath> {
             _ => String::new(),
         };
         let uses_dwell = !matches!(find("UseDwell"), Some(Setting::Flag(false)));
+        let notes = match find("ToolpathNotes") {
+            Some(Setting::Text(t)) => t.clone(),
+            _ => String::new(),
+        };
         let home = g.stored.moves.first().map_or([0.0; 3], |m| m.0);
         let (safe_z, plunge_gap) = read_heights(d, g.start, home).unwrap_or((5.0, 1.0));
         let options = read_options(&settings, &kind);
         out.push(SavedToolpath {
+            notes,
             name,
             kind,
             options,
@@ -731,6 +853,23 @@ impl<'a> Compound<'a> {
         }
         out.truncate(size);
         Some(out)
+    }
+}
+
+/// Where an outline's own data starts after its archive class tag at `at`: a class already met is
+/// `0x8000` and its number; a new one is `0xFFFF`, its version, the name's length and the name, which must be
+/// `vdContour`. The original writes a contour this way after the object's own header (`vcCadContour::Serialize`,
+/// `0x140a1aeb0`, version 2; the header `vcCadObject::Serialize`, `0x140a2c7a0`, version 8: two marks of 16 bytes,
+/// then numbers).
+fn contour_body(d: &[u8], at: usize) -> Option<usize> {
+    let tag = u16_at(d, at)?;
+    if tag == 0xFFFF {
+        let len = u16_at(d, at + 4)? as usize;
+        (d.get(at + 6..at + 6 + len)? == b"vdContour".as_slice()).then_some(at + 6 + len)
+    } else if tag & 0x8000 != 0 {
+        Some(at + 2)
+    } else {
+        None
     }
 }
 
@@ -964,6 +1103,15 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
     if !(e > a && f > b && g > c) {
         return Err(crate::i18n::tr("The material size in this project can't be read.").into());
     }
+    // The document's own data: its notes and guide lines. Older files may not have it.
+    let document = file.stream("VectorData", "DocumentData").unwrap_or_default();
+    let (guides_shown, guides) = read_guides(&document);
+    let snap_grid = read_snap_grid(&document);
+    let look = file.stream("ModelObjects", "ObjectData").and_then(|m| read_look(&m));
+    let notes = read_settings(&document).into_iter().find_map(|(n, v)| match v {
+        Setting::Text(t) if n == "Notes" => Some(t),
+        _ => None,
+    }).unwrap_or_default();
     let found = read_layers(&d);
     let mut shapes: Vec<(usize, Path)> = Vec::new();
     let mut marks: Vec<[u8; 16]> = Vec::new();
@@ -996,17 +1144,7 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
                 continue;
             }
         }
-        let tag = u16_at(&d, i + 4).unwrap_or(0);
-        let body = if tag == 0xFFFF {
-            let len = u16_at(&d, i + 8).unwrap_or(0) as usize;
-            if d.get(i + 10..i + 10 + len) != Some(b"vdContour".as_slice()) {
-                i += 1;
-                continue;
-            }
-            i + 10 + len
-        } else if tag & 0x8000 != 0 {
-            i + 6
-        } else {
+        let Some(body) = contour_body(&d, i + 4) else {
             i += 1;
             continue;
         };
@@ -1043,17 +1181,17 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
         t.sources = t.sources.iter().flat_map(|s| groups.get(s).cloned().unwrap_or_else(|| vec![*s])).collect();
     }
     // Some shapes (holes made by some of the original's tools) have no version string before them:
-    // their mark comes twice, with six bytes between, then the outline. Taken only when a toolpath or a
-    // group names them, so the toolpath previews kept in the same stream stay out.
+    // their mark comes twice, with six bytes between, then the outline; others have the mark once, six
+    // bytes, then the outline's class tag directly. Taken only when a toolpath or a group names them, so
+    // the toolpath previews kept in the same stream stay out.
     let wanted: std::collections::BTreeSet<[u8; 16]> = toolpaths.iter().flat_map(|t| t.sources.iter().copied()).chain(groups.values().flatten().copied()).filter(|m| *m != [0; 16] && !marks.contains(m)).collect();
     for mark in wanted {
         let mut from = 0;
         while let Some(p) = d[from..].windows(16).position(|w| w == mark).map(|p| p + from) {
             from = p + 16;
-            if d.get(p + 22..p + 38) != Some(mark.as_slice()) || u16_at(&d, p + 38).is_none_or(|tag| tag & 0x8000 == 0) {
-                continue;
-            }
-            if let Some((path, _)) = outline_at(&d, p + 40) {
+            let doubled = (d.get(p + 22..p + 38) == Some(mark.as_slice())).then(|| contour_body(&d, p + 38)).flatten();
+            let Some(body) = doubled.or_else(|| contour_body(&d, p + 22)) else { continue };
+            if let Some((path, _)) = outline_at(&d, body) {
                 let layer = objects.iter().find(|o| o.mark == mark).and_then(|o| found.iter().position(|(_, m, _)| *m == o.layer)).unwrap_or_else(|| layer_for(p));
                 if map.get(layer).is_none_or(|l| *l == usize::MAX) {
                     if let Some(slot) = map.get_mut(layer) {
@@ -1069,7 +1207,7 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
     }
     let layer_of = |mark: &[u8; 16]| found.iter().position(|(_, m, _)| m == mark).map(|p| map[p]).filter(|l| *l != usize::MAX);
     let tree = group_tree(&objects, &layer_of);
-    Ok(Project { min: [a, b, c], max: [e, f, g], datum, layers, shapes, marks, groups: tree, toolpaths })
+    Ok(Project { min: [a, b, c], max: [e, f, g], datum, layers, shapes, marks, groups: tree, toolpaths, guides, guides_shown, snap_grid, look, notes })
 }
 
 #[cfg(test)]
@@ -1784,5 +1922,70 @@ pub(crate) mod tests {
         let p = read(&compound(&material([-20.0, -20.0, -1.0], [20.0, 20.0, 0.0], 4), &v)).unwrap();
         let (c, r) = crate::bulk::as_circle(&p.shapes[0].1).unwrap();
         assert!(c[0].abs() < 1e-6 && c[1].abs() < 1e-6 && (r - 10.0).abs() < 1e-6);
+    }
+
+    fn text_bytes(t: &str) -> Vec<u8> {
+        let units: Vec<u16> = t.encode_utf16().collect();
+        let mut b = vec![0xFF, 0xFE, 0xFF];
+        if units.len() < 0xFF {
+            b.push(units.len() as u8);
+        } else {
+            b.push(0xFF);
+            b.extend_from_slice(&(units.len() as u16).to_le_bytes());
+        }
+        for u in units {
+            b.extend_from_slice(&u.to_le_bytes());
+        }
+        b
+    }
+
+    #[test]
+    fn toolpath_notes_and_long_texts_are_read() {
+        let long = "Climb, then clean the corners. ".repeat(12);
+        assert!(long.encode_utf16().count() > 255);
+        let mut d = text_bytes("ToolpathNotes");
+        d.extend_from_slice(&3u32.to_le_bytes());
+        d.extend(text_bytes(&long));
+        d.extend(text_bytes("ToolpathName"));
+        d.extend_from_slice(&3u32.to_le_bytes());
+        d.extend(text_bytes("Pocket 1"));
+        let settings = read_settings(&d);
+        assert!(settings.contains(&("ToolpathNotes".to_string(), Setting::Text(long.clone()))));
+        assert!(settings.contains(&("ToolpathName".to_string(), Setting::Text("Pocket 1".into()))));
+        // As in the user's files: notes left empty.
+        let mut e = text_bytes("ToolpathNotes");
+        e.extend_from_slice(&3u32.to_le_bytes());
+        e.extend_from_slice(&[0xFF, 0xFE, 0xFF, 0x00]);
+        assert_eq!(read_settings(&e), vec![("ToolpathNotes".to_string(), Setting::Text(String::new()))]);
+    }
+
+    #[test]
+    fn guide_lines_are_read_as_the_original_writes_them() {
+        // From a user's own file: four guides, three up and down and one across.
+        let hex = "766347756964654c696e654d616e61676572010000000104000000ffff01000b00766347756964654c696e65020000000000000000001040b22727e426a659400000000000000000000000000000f03f0000000000805640010000000000ff008034002e336600f3fff91fc01e0680020000000000000000001c400000000000001240000000000000f03f00000000000000000000000000000000020000000000ff008034002e336600f3fff91fc01e0680020000000000000000406d408c81421d521b4c400000000000000000000000000000f03f000000000080564001000000006964594900002e3366004f00310cc16706800200000000000000008047c0e196e18a401a57400000000000000000000000000000f03f000000000080564001000000006964594900002e3366004f00310cc167ffff01000a007663536e617047726964";
+        let d: Vec<u8> = (0..hex.len()).step_by(2).map(|k| u8::from_str_radix(&hex[k..k + 2], 16).unwrap()).collect();
+        let (shown, guides) = read_guides(&d);
+        assert!(shown);
+        assert_eq!(guides.len(), 4);
+        assert_eq!((guides[0].kind, guides[0].point[0], guides[0].angle), (1, 4.0, 90.0));
+        assert_eq!((guides[1].kind, guides[1].point[1], guides[1].direction), (2, 4.5, [1.0, 0.0]));
+        assert_eq!((guides[2].kind, guides[2].point[0]), (1, 234.0));
+        assert_eq!((guides[3].kind, guides[3].point[0]), (1, -47.0));
+        // The snap grid after them, as in the user's files: hidden, not snapping, 5 apart.
+        let grid = [b"vcSnapGrid".as_slice(), &[1, 0, 0, 0, 0, 0], &5.0f64.to_le_bytes(), &[1, 0, 0, 0]].concat();
+        assert_eq!(read_snap_grid(&grid), Some(SavedGrid { visible: false, snap: false, spacing: 5.0 }));
+    }
+
+    #[test]
+    fn the_models_look_is_read_after_its_level() {
+        let mut d = b"VectricModelManager".to_vec();
+        d.extend(text_bytes("bb32689a-d12f-4c8e-a88d-75f5a73511d3"));
+        d.extend(text_bytes("Niveau 1"));
+        d.extend_from_slice(&[1, 0, 0, 0]);
+        d.extend(text_bytes("   Canadian Maple"));
+        assert_eq!(read_look(&d).as_deref(), Some("Canadian Maple"));
+        let mut bare = text_bytes("Niveau 1");
+        bare.extend(text_bytes("Niveau 1"));
+        assert_eq!(read_look(&bare), None);
     }
 }

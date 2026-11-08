@@ -390,8 +390,9 @@ impl App {
     }
 
     pub fn dialog_import(&mut self) {
-        let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Drawing"), &["svg", "dxf"]).pick_file() else { return };
-        if let Err(why) = self.import_drawing(&path) {
+        let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Drawing or 3D clipart"), &["svg", "dxf", crate::modeltools::CLIP3D_EXTENSION]).pick_file() else { return };
+        let clip = path.extension().is_some_and(|e| e.eq_ignore_ascii_case(crate::modeltools::CLIP3D_EXTENSION));
+        if let Err(why) = if clip { self.import_3d_clipart(&path) } else { self.import_drawing(&path) } {
             self.message = Some(why);
         }
     }
@@ -478,6 +479,11 @@ impl App {
         self.scale_z_window(&ctx);
         self.smooth_window(&ctx);
         self.offset_model_window(&ctx);
+        self.texture_area_window(&ctx);
+        self.sculpt_window(&ctx);
+        self.emboss_window(&ctx);
+        self.sweep_window(&ctx);
+        self.extrude_window(&ctx);
         self.slice_model_window(&ctx);
         self.draft_model_window(&ctx);
         self.turn_spin_window(&ctx);
@@ -537,6 +543,27 @@ impl App {
         }
     }
 
+    /// The component list takes the keys when a component is chosen and no shape is, standing in for
+    /// the original's tree having the focus (its key handler `0x1403ba190`).
+    pub(crate) fn component_list_in_use(&self) -> bool {
+        self.left_tab == LeftTab::Modeling && self.selected.is_empty() && self.selected_comp.is_some_and(|i| i < self.doc.components.len())
+    }
+
+    /// Up and Down choose the component above or below the chosen one, and stop at the ends,
+    /// as the original's component tree does with one component chosen (`0x1403ba190`).
+    fn component_keys(&mut self, ctx: &egui::Context) {
+        if !self.component_list_in_use() || self.recalc.is_some() || ctx.egui_wants_keyboard_input() || self.screen != Screen::Work {
+            return;
+        }
+        let step = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) as i32 - i.key_pressed(egui::Key::ArrowUp) as i32);
+        if let Some(i) = self.selected_comp.filter(|_| step != 0) {
+            let j = i as i32 + step;
+            if j >= 0 && (j as usize) < self.doc.components.len() {
+                self.selected_comp = Some(j as usize);
+            }
+        }
+    }
+
     /// The arrow keys move the selection: Shift ten times as far, Ctrl a hundred, Alt a tenth,
     /// and Ctrl with Shift the original's fixed distance.
     fn nudge(&mut self, ctx: &egui::Context) {
@@ -587,6 +614,12 @@ impl App {
             return;
         }
         self.nudge(&ctx);
+        self.component_keys(&ctx);
+        if self.sculpt.is_some() {
+            // While sculpting, the numbers choose the tool (the original's form).
+            self.sculpt_keys(&ctx);
+            return;
+        }
         if self.recalc.is_some() {
             return;
         }
@@ -646,9 +679,10 @@ impl App {
             }
         }
         if fired(Action::Delete) || fired(Action::DeleteAgain) {
-            // A chosen rule goes first, and the shapes stay.
+            // A chosen rule goes first, and the shapes stay; with no shape chosen, the component goes.
             match self.selected_rule.filter(|_| matches!(&self.left, LeftForm::Xform(f) if f.kind == Xform::Constraints)) {
                 Some(i) => self.remove_rule(i),
+                None if self.component_list_in_use() => self.delete_component(),
                 None => self.delete_selected(),
             }
         }
@@ -719,6 +753,28 @@ impl App {
         }
         if fired(Action::View3d) {
             self.view3d = true;
+        }
+        // Space opens the last drawing form again (the manual's Shortcut Keys page); with a line
+        // being drawn it finishes the line instead, which is handled by the line tool.
+        if !self.view3d && matches!(self.left, LeftForm::None) && matches!(self.drag, crate::canvas::Drag::None) && ctx.input(|i| i.key_pressed(egui::Key::Space)) {
+            if let Some(kind) = self.last_draw {
+                self.start_draw(kind);
+            }
+        }
+        if fired(Action::TopSide) {
+            self.set_active_face(0);
+        }
+        if fired(Action::BottomSide) {
+            self.set_active_face(1);
+        }
+        if fired(Action::MultiSided) && self.doc.job.two_sided {
+            self.multi_sided = !self.multi_sided;
+        }
+        if fired(Action::TileSideBySide) {
+            self.tile(crate::app::Tiling::SideBySide);
+        }
+        if fired(Action::TileStacked) {
+            self.tile(crate::app::Tiling::Stacked);
         }
         if fired(Action::ZoomFit) || fired(Action::ZoomFitAgain) {
             self.zoom_to_job();
@@ -883,7 +939,7 @@ impl App {
     }
 
     pub fn select_all(&mut self) {
-        self.selected = self.doc.vectors.iter().filter(|v| self.doc.layers.get(v.layer).is_none_or(|l| l.visible && !l.locked)).map(|v| v.id).collect();
+        self.selected = self.doc.vectors.iter().filter(|v| self.doc.can_pick(v)).map(|v| v.id).collect();
     }
 
     pub fn close_left_form(&mut self) {
@@ -1266,8 +1322,12 @@ impl App {
                     });
                     ui.add_space(14.0);
                     ui.vertical(|ui| {
-                        let _ = ui.radio(true, crate::i18n::tr("Single Sided"));
-                        ui.add_enabled(false, egui::RadioButton::new(false, crate::i18n::tr("Double Sided"))).on_disabled_hover_text(crate::i18n::tr("Not in this version"));
+                        if ui.radio(!self.doc.job.two_sided, crate::i18n::tr("Single Sided")).clicked() {
+                            self.doc.job.two_sided = false;
+                        }
+                        if ui.radio(self.doc.job.two_sided, crate::i18n::tr("Double Sided")).clicked() {
+                            self.doc.job.two_sided = true;
+                        }
                         ui.add_enabled(false, egui::RadioButton::new(false, crate::i18n::tr("Rotary"))).on_disabled_hover_text(crate::i18n::tr("Not in this version"));
                     });
                 });
@@ -1363,6 +1423,21 @@ impl App {
                     });
                 });
             });
+            if self.doc.job.two_sided {
+                card(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 3.0;
+                    bold(ui, crate::i18n::tr("Flip Direction Between Sides"));
+                    // The original keeps "Around X" or "Around Y"; its form says how the block is turned.
+                    let mut around_y = self.doc.job.flip_around_y;
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut around_y, true, crate::i18n::tr("Horizontal (around Y)"));
+                        ui.radio_value(&mut around_y, false, crate::i18n::tr("Vertical (around X)"));
+                    });
+                    if around_y != self.doc.job.flip_around_y {
+                        self.change_flip_direction();
+                    }
+                });
+            }
             card(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
                 bold(ui, crate::i18n::tr("Modeling Resolution"));
@@ -1483,6 +1558,7 @@ impl App {
         }
         self.left = LeftForm::Draw(form);
         self.view3d = false;
+        self.last_draw = Some(kind);
     }
 
 
@@ -1744,14 +1820,24 @@ impl App {
         Frame::new().inner_margin(Margin { left: 12, right: 2, top: 2, bottom: 2 }).show(ui, |ui| {
             ui.set_width(width - 14.0);
             ui.horizontal(|ui| {
-                let all = !self.doc.toolpaths.is_empty() && self.doc.toolpaths.iter().all(|t| t.visible);
+                let side = |d: &Doc, t: &Toolpath| d.toolpath_on_side(t);
+                let all = self.doc.toolpaths.iter().any(|t| side(&self.doc, t)) && self.doc.toolpaths.iter().filter(|t| side(&self.doc, t)).all(|t| t.visible);
                 let mut toggle = all;
                 if ui.checkbox(&mut toggle, "").on_hover_text(crate::i18n::tr("Show or hide all toolpaths")).changed() {
-                    for t in &mut self.doc.toolpaths {
+                    let doc = &mut self.doc;
+                    let (two, face) = (doc.job.two_sided, doc.active_face);
+                    for t in doc.toolpaths.iter_mut().filter(|t| !two || t.face == face) {
                         t.visible = toggle;
                     }
                 }
-                bold_sized(ui, crate::i18n::tr("Toolpaths"), 13.5, TEXT);
+                // A two-sided job lists one side's toolpaths, and says which (the original's guide).
+                let title = match (self.doc.job.two_sided, self.doc.active_face) {
+                    (false, _) => crate::i18n::tr("Toolpaths").to_string(),
+                    (true, 0) => crate::i18n::tr("Toolpaths (Top)").to_string(),
+                    (true, _) => crate::i18n::tr("Toolpaths (Bottom)").to_string(),
+                };
+                let r = bold_sized(ui, &title, 13.5, TEXT);
+                label_widget(&r, &title);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let some = self.selected_tp.is_some_and(|i| i > 0);
                     if icon_button(ui, Icon::Up, crate::i18n::tr("Move toolpath up"), some, false).clicked() {
@@ -1766,7 +1852,7 @@ impl App {
             let r = ui.available_rect_before_wrap();
             ui.painter().line_segment([r.left_top(), r.right_top() - vec2(0.0, 0.0)], Stroke::new(1.0, LINE));
             ui.add_space(4.0);
-            if self.doc.toolpaths.is_empty() {
+            if !self.doc.toolpaths.iter().any(|t| self.doc.toolpath_on_side(t)) {
                 let rest = ui.available_rect_before_wrap();
                 ui.painter().text(rest.center(), Align2::CENTER_CENTER, crate::i18n::tr("No Toolpaths Created Yet"), FontId::proportional(13.5), MUTED);
                 return;
@@ -1774,6 +1860,9 @@ impl App {
             let mut clicked_edit = None;
             egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 for i in 0..self.doc.toolpaths.len() {
+                    if !self.doc.toolpath_on_side(&self.doc.toolpaths[i]) {
+                        continue;
+                    }
                     ui.horizontal(|ui| {
                         ui.add_space(4.0);
                         ui.checkbox(&mut self.doc.toolpaths[i].visible, "");
@@ -2141,10 +2230,19 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(38.0);
-                    ui.add_enabled(false, egui::Button::new(crate::i18n::tr("Preview All Sides")).min_size(vec2(w, 20.0))).on_disabled_hover_text(crate::i18n::tr("Only single sided jobs in this version"));
+                    let two = self.doc.job.two_sided && !self.doc.toolpaths.is_empty();
+                    let clicked = ui
+                        .add_enabled(two, egui::Button::new(crate::i18n::tr("Preview All Sides")).min_size(vec2(w, 20.0)))
+                        .on_hover_text(crate::i18n::tr("Both sides' toolpaths, each cutting its own side of one block"))
+                        .on_disabled_hover_text(crate::i18n::tr("For two-sided jobs"))
+                        .clicked();
+                    if clicked {
+                        self.preview_all_sides();
+                    }
                 });
-                let all: Vec<usize> = (0..self.doc.toolpaths.len()).collect();
-                let visible: Vec<usize> = (0..self.doc.toolpaths.len()).filter(|i| self.doc.toolpaths[*i].visible).collect();
+                // In a two-sided job these are the active side's toolpaths, as the list shows.
+                let all: Vec<usize> = (0..self.doc.toolpaths.len()).filter(|i| self.doc.toolpath_on_side(&self.doc.toolpaths[*i])).collect();
+                let visible: Vec<usize> = all.iter().copied().filter(|i| self.doc.toolpaths[*i].visible).collect();
                 let mut do_all = false;
                 let mut do_visible = false;
                 row(ui, Icon::TpPocket, &mut |ui| {
@@ -2153,6 +2251,12 @@ impl App {
                 row(ui, Icon::TpDrill, &mut |ui| {
                     do_visible = ui.add_enabled(!visible.is_empty(), egui::Button::new(crate::i18n::tr("Preview Visible Toolpaths")).min_size(vec2(w, 20.0))).clicked();
                 });
+                if do_all || do_visible {
+                    // One side at a time again: a carve that joined both is started afresh.
+                    if self.sim_floor.take().is_some() {
+                        self.sim = None;
+                    }
+                }
                 if do_all {
                     self.preview(all);
                 }
@@ -2201,12 +2305,73 @@ impl App {
         let top = Rect::from_min_size(whole.min, vec2(whole.width(), if two_rows { 60.0 } else { 32.0 }));
         let view = Rect::from_min_max(pos2(whole.left() + 5.0, top.bottom()), whole.max);
         self.top_row(ui, top, view, two_rows);
-        if self.view3d {
-            self.view_3d(ui, view);
-            self.view_rect = view;
-        } else {
-            self.view_2d(ui, view);
+        let Some(tiling) = self.tiled else {
+            if self.view3d {
+                self.view_3d(ui, view);
+                self.view_rect = view;
+            } else {
+                self.view_2d(ui, view);
+            }
+            return;
+        };
+        let (first, second) = tile_rects(view, tiling);
+        let (r2, r3) = if self.view3d { (second, first) } else { (first, second) };
+        // A press in the other view makes it the one in use, as clicking a window does.
+        if let Some(p) = ui.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None }) {
+            if r3.contains(p) {
+                self.view3d = true;
+            } else if r2.contains(p) {
+                self.view3d = false;
+            }
         }
+        self.view_2d(ui, r2);
+        self.view_3d(ui, r3);
+        if self.view3d {
+            self.view_rect = r3;
+        }
+        // The view in use has its edge lit.
+        let (on, off) = if self.view3d { (r3, r2) } else { (r2, r3) };
+        ui.painter().rect_stroke(off, 0.0, Stroke::new(1.0, LINE), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(on, 0.0, Stroke::new(1.5, theme::ACCENT), egui::StrokeKind::Inside);
+    }
+
+    /// Makes one side of a two-sided job the one worked on (the original's `SetActiveSide`): only
+    /// its shapes and toolpaths show, and what's drawn or made goes on it.
+    pub(crate) fn set_active_face(&mut self, face: u8) {
+        if !self.doc.job.two_sided || self.doc.active_face == face {
+            return;
+        }
+        self.doc.active_face = face;
+        self.selected.clear();
+        self.handles_on = None;
+        self.selected_tp = None;
+        self.sim = None;
+        self.sim_floor = None;
+        self.status = if face == 0 { crate::i18n::tr("Working on the top side.") } else { crate::i18n::tr("Working on the bottom side.") }.into();
+    }
+
+    /// Change flip direction: the bottom side's shapes are drawn as seen once the block is turned
+    /// over, so turning it the other way puts each of them half a turn round the job's middle,
+    /// keeping it over the same spot of the material.
+    pub(crate) fn change_flip_direction(&mut self) {
+        self.checkpoint();
+        let (w, h) = (self.doc.job.width, self.doc.job.height);
+        for v in self.doc.vectors.iter_mut().filter(|v| v.face == 1) {
+            v.each_mut(&mut |v| {
+                for q in v.paths.iter_mut().flat_map(|q| q.pts.iter_mut()) {
+                    *q = [w - q[0], h - q[1]];
+                }
+                v.prim = Prim::Free;
+            });
+        }
+        self.doc.job.flip_around_y = !self.doc.job.flip_around_y;
+        self.dirty = true;
+    }
+
+    /// The same key again goes back to one view, like a maximised window.
+    pub(crate) fn tile(&mut self, tiling: crate::app::Tiling) {
+        self.tiled = if self.tiled == Some(tiling) { None } else { Some(tiling) };
+        self.auto_fit = true;
     }
 
     fn top_row(&mut self, ui: &mut Ui, top: Rect, view: Rect, two_rows: bool) {
@@ -2253,8 +2418,9 @@ impl App {
             (Icon::ShowVectors, crate::i18n::tr("Show shapes"), true, self.show_vectors, 27.0),
             (Icon::ShowPaths, crate::i18n::tr("Show toolpaths"), true, self.show_toolpaths, 34.0),
             (Icon::ShowModel, crate::i18n::tr("Show the 3D model"), true, false, 36.0),
-            (Icon::PanelLeft, crate::i18n::tr("Show or hide the left panel"), true, false, 27.0),
-            (Icon::PanelRight, crate::i18n::tr("Show or hide the right panel"), true, false, 27.0),
+            // The original's view toolbar (resource 140) ends with Tile Vertical, then Tile Horizontal.
+            (Icon::TileSide, crate::i18n::tr("Tile Windows Vertical"), true, self.tiled == Some(crate::app::Tiling::SideBySide), 27.0),
+            (Icon::TileStacked, crate::i18n::tr("Tile Windows Horizontal"), true, self.tiled == Some(crate::app::Tiling::Stacked), 27.0),
         ];
         for (i, (icon, tip, enabled, active, step)) in items.into_iter().enumerate() {
             let rect = Rect::from_min_size(pos2(x, tools_y), vec2(24.0, 24.0));
@@ -2287,18 +2453,41 @@ impl App {
                         self.anim = Anim::default();
                         self.bump_surface();
                     }
-                    Icon::PanelLeft => {
-                        self.left_open = !self.left_open;
-                        self.auto_fit = true;
-                    }
-                    Icon::PanelRight => {
-                        self.right_open = !self.right_open;
-                        self.auto_fit = true;
-                    }
+                    Icon::TileSide => self.tile(crate::app::Tiling::SideBySide),
+                    Icon::TileStacked => self.tile(crate::app::Tiling::Stacked),
                     _ => {}
                 }
             }
             x += step;
+        }
+        // A two-sided job adds two buttons: which way the block turns over, and which side is in use
+        // (the original's "Change flip direction" `0x8459` and "Toggle Top / Bottom Side" `0x84bd`).
+        if self.doc.job.two_sided {
+            // When they don't fit after the tools, they go at the end of the row above.
+            let (mut x, tools_y) = if x + 7.0 + 2.0 * 27.0 > top.right() - 4.0 && two_rows {
+                (top.right() - 7.0 - 2.0 * 27.0 - 4.0, top.top() + 4.0)
+            } else {
+                (x, tools_y)
+            };
+            let flip = if self.doc.job.flip_around_y { Icon::FlipAroundY } else { Icon::FlipAroundX };
+            let side = if self.doc.active_face == 0 { Icon::SideTop } else { Icon::SideBottom };
+            for (i, (icon, tip)) in [(flip, crate::i18n::tr("Change flip direction")), (side, crate::i18n::tr("Toggle Top / Bottom Side"))].into_iter().enumerate() {
+                let rect = Rect::from_min_size(pos2(x + 7.0, tools_y), vec2(24.0, 24.0));
+                let resp = ui.interact(rect, ui.scope_id().with(("sides", i)), Sense::click()).on_hover_text(tip);
+                if resp.hovered() {
+                    ui.painter().rect_filled(rect, 6.0, theme::BUTTON);
+                }
+                icons::paint(ui.painter(), rect.shrink(1.0), icon, true);
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
+                if resp.clicked() {
+                    if i == 0 {
+                        self.change_flip_direction();
+                    } else {
+                        self.set_active_face(1 - self.doc.active_face);
+                    }
+                }
+                x += 27.0;
+            }
         }
     }
 
@@ -2317,8 +2506,8 @@ impl App {
             egui::Window::new(crate::i18n::tr("Machining Time")).open(&mut open).collapsible(false).resizable(false).show(&ctx, |ui| {
                 let mut total = 0.0;
                 let rapid = if self.doc.job.units == Units::Inches { toolpath::RAPID_RATE_MM / 25.4 } else { toolpath::RAPID_RATE_MM };
-                for t in self.doc.toolpaths.iter().filter(|t| t.visible) {
-                    let s = toolpath::estimate_seconds(toolpath::working_moves(&t.moves), &t.op.tool, rapid, t.op.dwell);
+                for t in self.doc.toolpaths.iter().filter(|t| t.visible && self.doc.toolpath_on_side(t)) {
+                    let s = self.toolpath_seconds(t, rapid);
                     total += s;
                     ui.label(format!("{}: {}", t.op.name, duration(s)));
                 }
@@ -2377,3 +2566,21 @@ pub(crate) fn wood_block(p: &egui::Painter, r: Rect) {
     p.add(Shape::convex_polygon(end, Color32::from_rgb(158, 104, 62), Stroke::NONE));
     p.add(Shape::convex_polygon(top, Color32::from_rgb(226, 172, 120), Stroke::NONE));
 }
+
+/// The two halves of the view area, the first one for the view in use, with a small gap between.
+pub(crate) fn tile_rects(view: Rect, tiling: crate::app::Tiling) -> (Rect, Rect) {
+    let gap = TILE_GAP / 2.0;
+    match tiling {
+        crate::app::Tiling::SideBySide => {
+            let mid = view.center().x;
+            (Rect::from_min_max(view.min, pos2(mid - gap, view.bottom())), Rect::from_min_max(pos2(mid + gap, view.top()), view.max))
+        }
+        crate::app::Tiling::Stacked => {
+            let mid = view.center().y;
+            (Rect::from_min_max(view.min, pos2(view.right(), mid - gap)), Rect::from_min_max(pos2(view.left(), mid + gap), view.max))
+        }
+    }
+}
+
+/// Space between two tiled views, in points.
+const TILE_GAP: f32 = 4.0;

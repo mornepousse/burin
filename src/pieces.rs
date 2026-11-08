@@ -126,7 +126,7 @@ impl App {
     pub fn piece_toolpaths(&mut self, piece: u64, only: Option<usize>) -> Result<Vec<Toolpath>, String> {
         let shapes: Vec<u64> = self.doc.vectors.iter().filter(|v| v.piece == Some(piece)).map(|v| v.id).collect();
         let lines = self.doc.current_paths();
-        let chosen: Vec<&Toolpath> = self.doc.toolpaths.iter().enumerate().filter(|(i, t)| only.map_or(t.visible, |o| o == *i) && !t.op.merged).map(|(_, t)| t).collect();
+        let chosen: Vec<&Toolpath> = self.doc.toolpaths.iter().enumerate().filter(|(i, t)| only.map_or(t.visible && self.doc.toolpath_on_side(t), |o| o == *i) && !t.op.merged).map(|(_, t)| t).collect();
         let mut ops = Vec::new();
         for t in chosen {
             let mine: Vec<u64> = t.op.source.iter().copied().filter(|id| shapes.contains(id)).collect();
@@ -150,7 +150,7 @@ impl App {
         for (op, color) in ops {
             match toolpath::generate(&op, machine, &job, self.model.as_ref()) {
                 Ok(moves) if moves.is_empty() => return Err(tf!("These toolpaths have no moves, so there's nothing to write for them:\n\n{}\n\nUse Recalculate, or edit them to choose their shapes again, then save.", op.name)),
-                Ok(moves) => made.push(Toolpath { op, visible: true, color, moves: Arc::new(moves), kept_moves: None, kept_steps: None }),
+                Ok(moves) => made.push(Toolpath { op, visible: true, color, moves: Arc::new(moves), kept_moves: None, kept_steps: None, face: self.doc.active_face, sheet: self.doc.active_sheet }),
                 Err(why) => return Err(format!("{}: {why}", op.name)),
             }
         }

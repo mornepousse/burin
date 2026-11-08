@@ -94,8 +94,8 @@ pub fn read(text: &str) -> Read {
             continue;
         }
         match motion {
-            0 => moves.push(Move { p: target, rapid: true }),
-            1 => moves.push(Move { p: target, rapid: false }),
+            0 => moves.push(Move { p: target, rapid: true, join: false }),
+            1 => moves.push(Move { p: target, rapid: false, join: false }),
             _ => {
                 let clockwise = motion == 2;
                 let centre = match (i, j, r) {
@@ -104,8 +104,8 @@ pub fn read(text: &str) -> Read {
                 };
                 let tolerance = if metric == Some(false) { ARC_TOLERANCE_MM / 25.4 } else { ARC_TOLERANCE_MM };
                 match centre {
-                    Some(c) => moves.extend(arc_points(at, target, c, clockwise, tolerance).into_iter().map(|p| Move { p, rapid: false })),
-                    None => moves.push(Move { p: target, rapid: false }),
+                    Some(c) => moves.extend(arc_points(at, target, c, clockwise, tolerance).into_iter().map(|p| Move { p, rapid: false, join: false })),
+                    None => moves.push(Move { p: target, rapid: false, join: false }),
                 }
             }
         }
@@ -193,16 +193,16 @@ impl App {
         let zero = self.doc.job.origin();
         let z_shift = if self.doc.job.z_on_bed { -self.doc.job.thickness } else { 0.0 };
         let machine = self.doc.machine_on_job();
-        let mut moves = vec![Move { p: machine.home, rapid: true }];
-        moves.extend(read.moves.iter().map(|m| Move { p: [m.p[0] * k + zero[0], m.p[1] * k + zero[1], m.p[2] * k + z_shift], rapid: m.rapid }));
-        moves.push(Move { p: machine.home, rapid: true });
+        let mut moves = vec![Move { p: machine.home, rapid: true, join: false }];
+        moves.extend(read.moves.iter().map(|m| Move { p: [m.p[0] * k + zero[0], m.p[1] * k + zero[1], m.p[2] * k + z_shift], rapid: m.rapid, join: m.join }));
+        moves.push(Move { p: machine.home, rapid: true, join: false });
         let tool = self.doc.tools.first().cloned().unwrap_or_else(|| toolpath::default_tools().remove(0)).in_units(job_metric);
         let mut op = toolpath::blank_op(OpKind::Profile, name.to_string(), tool, toolpath::deepest_move(&moves), Vec::new());
         op.imported = true;
         let moves = Arc::new(moves);
         self.checkpoint();
         let color = TOOLPATH_COLOURS[self.doc.toolpaths.len() % TOOLPATH_COLOURS.len()];
-        self.doc.toolpaths.push(Toolpath { op, visible: true, color, moves: moves.clone(), kept_moves: Some(moves), kept_steps: None });
+        self.doc.toolpaths.push(Toolpath { op, visible: true, color, moves: moves.clone(), kept_moves: Some(moves), kept_steps: None, face: self.doc.active_face, sheet: self.doc.active_sheet });
         self.selected_tp = Some(self.doc.toolpaths.len() - 1);
         self.screen = Screen::Work;
         self.right_open = true;

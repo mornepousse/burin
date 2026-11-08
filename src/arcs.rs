@@ -123,7 +123,7 @@ mod tests {
     use super::*;
 
     fn feed(x: f64, y: f64, z: f64) -> Move {
-        Move { p: [x, y, z], rapid: false }
+        Move { p: [x, y, z], rapid: false, join: false }
     }
 
     fn circle(c: [f64; 2], r: f64, n: usize, z: f64) -> Vec<Move> {

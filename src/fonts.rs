@@ -48,6 +48,120 @@ pub struct TextStyle {
     /// How far apart lines are, in capital heights.
     #[serde(default = "line_gap", skip_serializing_if = "is_line_gap")]
     pub line_spacing: f64,
+    /// Upright writing: letters one under another, each standing up, the lines as columns from right
+    /// to left. The original turns this on for a font whose name starts with `@` (`0x1408ea400`,
+    /// `0x1408db56a`) and keeps it with the text's font (`txtFont` version 3, `0x1408e3670`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub vertical: bool,
+    /// Space added before each letter by clicking between letters, in capital heights, by the
+    /// letter's place in the whole text (the original's per-letter offset, `+0x40`, `0x1408e76c0`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub letter_gaps: Vec<f64>,
+    /// Space added above each line by clicking between lines, in capital heights (the original's
+    /// line offset, `+0x48`, `0x1408d8e90`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub line_gaps: Vec<f64>,
+}
+
+/// A place between two letters (the letter after it, by its place in the text) or between two
+/// lines (the line below), where a click moves them closer or apart.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TextGap {
+    Letter(usize),
+    Line(usize),
+}
+
+/// How much one click moves letters or lines, as a share of the letter's advance or the line's
+/// height: 0.05, or 0.2 with Ctrl (`0x140a84a90`, `0x1420f48c0`, `0x14211b1a8`).
+pub const KERN_STEP: f64 = 0.05;
+pub const KERN_STEP_COARSE: f64 = 0.2;
+/// A letter's advance can't be brought under this share of itself; if it would be, the letter is
+/// put this share of its advance back instead (`0x1408e76c0`: `0x1420e8d18`, `0x142186fa0`).
+pub const LEAST_ADVANCE_SHARE: f64 = 0.1;
+pub const CLOSEST_OFFSET_SHARE: f64 = -0.1;
+
+/// The gap between letters or lines at `p`, within `reach` across.
+pub fn gap_at(text: &str, height: f64, origin: P, style: &TextStyle, p: P, reach: f64) -> Option<TextGap> {
+    let carets = letter_carets(text, height, origin, style);
+    for (i, c) in carets.iter().enumerate() {
+        let follows = i > 0 && carets[i - 1].row == c.row;
+        if follows && (p[0] - c.x).abs() <= reach && p[1] >= c.base - height * 0.25 && p[1] <= c.base + height {
+            return Some(TextGap::Letter(c.index));
+        }
+    }
+    let rows = carets.last().map_or(0, |c| c.row);
+    for row in 1..=rows {
+        let (Some(above), Some(below)) = (carets.iter().find(|c| c.row == row - 1), carets.iter().find(|c| c.row == row)) else { continue };
+        let (lo, hi) = (below.base + height, above.base - height * 0.25);
+        let left = carets.iter().filter(|c| c.row + 1 >= row && c.row <= row).map(|c| c.x).fold(f64::MAX, f64::min);
+        let right = carets.iter().filter(|c| c.row + 1 >= row && c.row <= row).map(|c| c.x + c.advance).fold(f64::MIN, f64::max);
+        let (lo, hi) = if lo < hi { (lo, hi) } else { ((lo + hi) / 2.0 - reach, (lo + hi) / 2.0 + reach) };
+        if p[1] >= lo && p[1] <= hi && p[0] >= left && p[0] <= right {
+            return Some(TextGap::Line(row));
+        }
+    }
+    None
+}
+
+/// One click on a gap: closer, or apart with Shift; Ctrl for a bigger step (`0x1408d8e90`).
+pub fn adjust_gap(text: &str, height: f64, origin: P, style: &mut TextStyle, gap: TextGap, apart: bool, coarse: bool) -> bool {
+    let step = if coarse { KERN_STEP_COARSE } else { KERN_STEP };
+    let sign = if apart { 1.0 } else { -1.0 };
+    match gap {
+        TextGap::Letter(index) => {
+            let Some(c) = letter_carets(text, height, origin, style).into_iter().find(|c| c.index == index) else { return false };
+            let mut total = c.kern + style.letter_gap(index) * height + sign * c.advance * step;
+            if total + c.advance < c.advance * LEAST_ADVANCE_SHARE {
+                total = c.advance * CLOSEST_OFFSET_SHARE;
+            }
+            if style.letter_gaps.len() <= index {
+                style.letter_gaps.resize(index + 1, 0.0);
+            }
+            style.letter_gaps[index] = (total - c.kern) / height;
+        }
+        TextGap::Line(row) => {
+            // Lines can't come closer than one line's height (`0x1408d8e90`); the first doesn't move.
+            if row == 0 {
+                return false;
+            }
+            let now = (style.line_spacing + style.line_gaps.get(row).copied().unwrap_or(0.0)) * height;
+            let wanted = (now + sign * height * step).max(height);
+            if style.line_gaps.len() <= row {
+                style.line_gaps.resize(row + 1, 0.0);
+            }
+            style.line_gaps[row] = wanted / height - style.line_spacing;
+        }
+    }
+    while style.letter_gaps.last() == Some(&0.0) {
+        style.letter_gaps.pop();
+    }
+    while style.line_gaps.last() == Some(&0.0) {
+        style.line_gaps.pop();
+    }
+    true
+}
+
+/// Where a letter was put: its place in the whole text, its line, where it starts across from the
+/// line's start (with the origin added), its advance, the font's kerning before it, and its baseline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Caret {
+    pub index: usize,
+    pub row: usize,
+    pub x: f64,
+    pub advance: f64,
+    pub kern: f64,
+    pub base: f64,
+}
+
+impl TextStyle {
+    fn letter_gap(&self, index: usize) -> f64 {
+        self.letter_gaps.get(index).copied().unwrap_or(0.0)
+    }
+
+    /// How far below the first baseline line `row`'s baseline is.
+    fn line_drop(&self, row: usize, height: f64) -> f64 {
+        (1..=row).map(|r| self.line_spacing + self.line_gaps.get(r).copied().unwrap_or(0.0)).sum::<f64>() * height
+    }
 }
 
 fn one() -> f64 {
@@ -65,7 +179,7 @@ fn is_line_gap(v: &f64) -> bool {
 
 impl Default for TextStyle {
     fn default() -> Self {
-        TextStyle { font: String::new(), bold: false, italic: false, align: TextAlign::Left, spacing: 1.0, line_spacing: LINE_GAP }
+        TextStyle { font: String::new(), bold: false, italic: false, align: TextAlign::Left, spacing: 1.0, line_spacing: LINE_GAP, vertical: false, letter_gaps: Vec::new(), line_gaps: Vec::new() }
     }
 }
 
@@ -132,6 +246,7 @@ pub fn style_picker(ui: &mut egui::Ui, style: &mut TextStyle) -> bool {
     ui.horizontal(|ui| {
         ui.toggle_value(&mut style.bold, crate::i18n::tr("Bold"));
         ui.toggle_value(&mut style.italic, egui::RichText::new(crate::i18n::tr("Italic")).italics());
+        ui.toggle_value(&mut style.vertical, crate::i18n::tr("Upright")).on_hover_text(crate::i18n::tr("Letters one under another, each standing up, as with a font whose name starts with @"));
     });
     ui.horizontal(|ui| {
         ui.selectable_value(&mut style.align, TextAlign::Left, crate::i18n::tr("Left"));
@@ -193,7 +308,7 @@ fn font_row(ui: &mut egui::Ui, chosen: &mut String, font: &str) {
         // Lines, as the tool will follow them.
         let glyphs = single_glyphs(upright);
         let base = rect.center().y + PREVIEW_SIZE * 0.4;
-        for path in single_line(font, f64::from(PREVIEW_SIZE * 0.7), [0.0, 0.0], glyphs, false, &TextStyle::default()) {
+        for path in single_line(font, f64::from(PREVIEW_SIZE * 0.7), [0.0, 0.0], glyphs, false, &TextStyle::default(), &mut Vec::new()) {
             let pts: Vec<egui::Pos2> = path.pts.iter().map(|p| egui::pos2(left + p[0] as f32, base - p[1] as f32)).filter(|p| p.x < rect.right() - 4.0).collect();
             ui.painter().add(egui::Shape::line(pts, egui::Stroke::new(1.2, colour)));
         }
@@ -583,21 +698,59 @@ pub fn lay_out_in_box(text: &str, style: &TextStyle, lo: P, hi: P, layout: &BoxL
 /// baseline (or its middle or end, as the text is aligned). A font this computer doesn't have is
 /// written in Burin's own.
 pub fn text_paths(text: &str, height: f64, origin: P, style: &TextStyle) -> Vec<Path> {
+    laid_out(text, height, origin, style, &mut Vec::new())
+}
+
+/// Where each letter of a text goes, for clicking between letters and lines.
+pub fn letter_carets(text: &str, height: f64, origin: P, style: &TextStyle) -> Vec<Caret> {
+    let mut carets = Vec::new();
+    laid_out(text, height, origin, style, &mut carets);
+    carets
+}
+
+fn laid_out(text: &str, height: f64, origin: P, style: &TextStyle, carets: &mut Vec<Caret>) -> Vec<Path> {
+    if style.vertical || style.font.starts_with('@') {
+        return upright_paths(text, height, origin, style);
+    }
     if let Some((_, upright, bold)) = SINGLE_LINE.iter().find(|(name, ..)| *name == style.font) {
         let glyphs = parse_jhf(if style.bold { bold } else { upright });
-        return single_line(text, height, origin, &glyphs, style.italic, style);
+        return single_line(text, height, origin, &glyphs, style.italic, style, carets);
     }
     if let Some(family) = families().iter().find(|f| f.name == style.font) {
         if let Some((face, lean)) = pick_face(family, style.bold, style.italic) {
             if let Some(font) = loaded(&face) {
-                return outlines(text, height, origin, font.as_ref(), lean, style);
+                return outlines(text, height, origin, font.as_ref(), lean, style, carets);
             }
         }
     }
     match FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT) {
-        Ok(font) => outlines(text, height, origin, &font, style.italic, style),
+        Ok(font) => outlines(text, height, origin, &font, style.italic, style, carets),
         Err(_) => Vec::new(),
     }
+}
+
+/// How far down the next letter of an upright text goes, in capital heights, before the letter
+/// spacing: about a font's whole height, top of the tallest letter to the bottom of the lowest.
+pub const UPRIGHT_ADVANCE: f64 = 1.4;
+
+/// Upright writing: each letter standing up, centred on its column, one under the other from the
+/// origin down; each line of the text is a column, the next to the left of it.
+fn upright_paths(text: &str, height: f64, origin: P, style: &TextStyle) -> Vec<Path> {
+    let letter = TextStyle { font: style.font.trim_start_matches('@').to_string(), vertical: false, align: TextAlign::Centre, ..style.clone() };
+    let down = height * UPRIGHT_ADVANCE * style.spacing;
+    let across = height * style.line_spacing;
+    let mut paths = Vec::new();
+    for (column, line) in text.split('\n').enumerate() {
+        let x = origin[0] - column as f64 * across;
+        for (i, ch) in line.chars().enumerate() {
+            if ch.is_whitespace() {
+                continue;
+            }
+            let at = [x, origin[1] - i as f64 * down];
+            paths.extend(text_paths(&ch.to_string(), height, at, &letter));
+        }
+    }
+    paths
 }
 
 /// Where each line starts, for its width.
@@ -609,7 +762,7 @@ fn line_start(align: TextAlign, width: f64) -> f64 {
     }
 }
 
-fn outlines(text: &str, height: f64, origin: P, font: &impl Font, lean: bool, style: &TextStyle) -> Vec<Path> {
+fn outlines(text: &str, height: f64, origin: P, font: &impl Font, lean: bool, style: &TextStyle, carets: &mut Vec<Caret>) -> Vec<Path> {
     let cap = font
         .outline(font.glyph_id('H'))
         .map(|o| {
@@ -626,22 +779,32 @@ fn outlines(text: &str, height: f64, origin: P, font: &impl Font, lean: bool, st
     let k = height / cap;
     let slant = if lean { SLANT } else { 0.0 };
     let mut paths = Vec::new();
+    let mut first = 0;
     for (row, line) in text.split('\n').enumerate() {
         // Each letter's place: its width times the spacing asked for, with the font's own kerning between
-        // pairs, as the original keeps a font's kerning pairs with it (`txtKerningPairs`, `0x1408e5410`).
+        // pairs, as the original keeps a font's kerning pairs with it (`txtKerningPairs`, `0x1408e5410`),
+        // and any space added by clicking between the letters.
         let ids: Vec<_> = line.chars().map(|ch| font.glyph_id(ch)).collect();
         let mut places = Vec::with_capacity(ids.len());
+        let mut kerns = Vec::with_capacity(ids.len());
         let mut caret = 0.0;
         for (i, id) in ids.iter().enumerate() {
+            let mut kern = 0.0;
             if i > 0 {
-                caret += font.kern_unscaled(ids[i - 1], *id) as f64 * k;
+                kern = font.kern_unscaled(ids[i - 1], *id) as f64 * k;
+                caret += kern + style.letter_gap(first + i) * height;
             }
             places.push(caret);
+            kerns.push(kern);
             caret += font.h_advance_unscaled(*id) as f64 * k * style.spacing;
         }
         let width = caret;
         let start = line_start(style.align, width);
-        let y = -(row as f64) * height * style.line_spacing;
+        let y = -style.line_drop(row, height);
+        for (i, id) in ids.iter().enumerate() {
+            carets.push(Caret { index: first + i, row, x: origin[0] + start + places[i], advance: font.h_advance_unscaled(*id) as f64 * k * style.spacing, kern: kerns[i], base: origin[1] + y });
+        }
+        first += line.chars().count() + 1;
         for (ch, place) in line.chars().zip(places) {
             let x = start + place;
             let id = font.glyph_id(ch);
@@ -740,7 +903,7 @@ pub fn parse_jhf(src: &str) -> Vec<Stroked> {
         .collect()
 }
 
-fn single_line(text: &str, height: f64, origin: P, glyphs: &[Stroked], lean: bool, style: &TextStyle) -> Vec<Path> {
+fn single_line(text: &str, height: f64, origin: P, glyphs: &[Stroked], lean: bool, style: &TextStyle, carets: &mut Vec<Caret>) -> Vec<Path> {
     let glyph = |ch: char| (ch as u32).checked_sub(32).and_then(|i| glyphs.get(i as usize)).or_else(|| glyphs.get('?' as usize - 32));
     // The capital's height and the baseline, from the H.
     let (base, top) = glyph('H').map_or((-9, 12), |g| {
@@ -750,12 +913,18 @@ fn single_line(text: &str, height: f64, origin: P, glyphs: &[Stroked], lean: boo
     let k = height / ((top - base).max(1) as f64);
     let slant = if lean { SLANT } else { 0.0 };
     let mut paths = Vec::new();
+    let mut first = 0;
     for (row, line) in text.split('\n').enumerate() {
-        let width: f64 = line.chars().filter_map(glyph).map(|g| (g.right - g.left) as f64 * k * style.spacing).sum();
+        let gaps: f64 = (1..line.chars().count()).map(|i| style.letter_gap(first + i) * height).sum();
+        let width: f64 = line.chars().filter_map(glyph).map(|g| (g.right - g.left) as f64 * k * style.spacing).sum::<f64>() + gaps;
         let mut x = line_start(style.align, width);
-        let y = -(row as f64) * height * style.line_spacing;
-        for ch in line.chars() {
+        let y = -style.line_drop(row, height);
+        for (i, ch) in line.chars().enumerate() {
+            if i > 0 {
+                x += style.letter_gap(first + i) * height;
+            }
             let Some(g) = glyph(ch) else { continue };
+            carets.push(Caret { index: first + i, row, x: origin[0] + x, advance: (g.right - g.left) as f64 * k * style.spacing, kern: 0.0, base: origin[1] + y });
             for stroke in &g.strokes {
                 let pts = stroke
                     .iter()
@@ -768,12 +937,72 @@ fn single_line(text: &str, height: f64, origin: P, glyphs: &[Stroked], lean: boo
             }
             x += (g.right - g.left) as f64 * k * style.spacing;
         }
+        first += line.chars().count() + 1;
     }
     paths
 }
 
 #[cfg(test)]
 mod tests {
+
+    /// Clicking between letters moves the letter after the gap by 0.05 of its advance (0.2 with
+    /// Ctrl), closer or apart; between lines by 0.05 of the height, never closer than one height.
+    #[test]
+    fn clicks_between_letters_and_lines() {
+        let mut style = TextStyle::default();
+        let text = "WAV\nWAV";
+        let before = letter_carets(text, 1.0, [0.0, 0.0], &style);
+        let a = before.iter().find(|c| c.index == 1).copied().unwrap();
+        assert!(adjust_gap(text, 1.0, [0.0, 0.0], &mut style, TextGap::Letter(1), false, false));
+        let after = letter_carets(text, 1.0, [0.0, 0.0], &style);
+        let moved = after.iter().find(|c| c.index == 1).unwrap().x - a.x;
+        assert!((moved + a.advance * KERN_STEP).abs() < 1e-9, "{moved}");
+        let v = after.iter().find(|c| c.index == 2).unwrap().x - before.iter().find(|c| c.index == 2).unwrap().x;
+        assert!((v - moved).abs() < 1e-9, "the rest of the line follows");
+        assert_eq!(after.iter().find(|c| c.index == 5).unwrap().x, before.iter().find(|c| c.index == 5).unwrap().x, "the other line doesn't");
+        // Apart with Shift puts it back; Ctrl moves by 0.2.
+        adjust_gap(text, 1.0, [0.0, 0.0], &mut style, TextGap::Letter(1), true, false);
+        assert!(style.letter_gaps.is_empty());
+        adjust_gap(text, 1.0, [0.0, 0.0], &mut style, TextGap::Letter(1), true, true);
+        assert!((style.letter_gaps[1] * 1.0 - a.advance * KERN_STEP_COARSE).abs() < 1e-9);
+        // However many clicks, a letter keeps 10% of its advance, then goes back to -0.1 of it.
+        for _ in 0..40 {
+            adjust_gap(text, 1.0, [0.0, 0.0], &mut style, TextGap::Letter(1), false, true);
+        }
+        let total = a.kern + style.letter_gaps[1];
+        assert!(total + a.advance >= a.advance * LEAST_ADVANCE_SHARE - 1e-9, "{total}");
+        // Lines: closer by 0.05 of the height, never under one height apart.
+        let base1 = letter_carets(text, 1.0, [0.0, 0.0], &style).iter().find(|c| c.row == 1).unwrap().base;
+        adjust_gap(text, 1.0, [0.0, 0.0], &mut style, TextGap::Line(1), false, false);
+        let base2 = letter_carets(text, 1.0, [0.0, 0.0], &style).iter().find(|c| c.row == 1).unwrap().base;
+        assert!((base2 - base1 - KERN_STEP).abs() < 1e-9, "the second line comes up");
+        for _ in 0..40 {
+            adjust_gap(text, 1.0, [0.0, 0.0], &mut style, TextGap::Line(1), false, true);
+        }
+        let base3 = letter_carets(text, 1.0, [0.0, 0.0], &style).iter().find(|c| c.row == 1).unwrap().base;
+        assert!((base3 + 1.0).abs() < 1e-9, "one height apart at the closest: {base3}");
+        assert!(!adjust_gap(text, 1.0, [0.0, 0.0], &mut style, TextGap::Line(0), false, false), "the first line doesn't move");
+    }
+
+    /// Upright writing puts the letters one under another, each standing up, and a font whose
+    /// name starts with @ does it too, as in the original.
+    #[test]
+    fn upright_text_goes_down_the_page() {
+        let flat = text_paths("AB", 1.0, [0.0, 0.0], &TextStyle::default());
+        let up = text_paths("AB", 1.0, [0.0, 0.0], &TextStyle { vertical: true, ..Default::default() });
+        let (a, b) = crate::geom::bbox(&flat).unwrap();
+        let (c, d) = crate::geom::bbox(&up).unwrap();
+        assert!(b[0] - a[0] > d[0] - c[0], "narrower: one letter wide");
+        assert!(d[1] - c[1] > (b[1] - a[1]) * 1.8, "taller: two letters high");
+        assert!(d[1] <= 1.05 && c[1] < -1.0, "the second letter goes below the first");
+        let at = text_paths("AB", 1.0, [0.0, 0.0], &TextStyle { font: "@".into(), ..Default::default() });
+        assert_eq!(crate::geom::bbox(&at), crate::geom::bbox(&up));
+        // Two lines are two columns, the second to the left.
+        let two = text_paths("A\nB", 1.0, [0.0, 0.0], &TextStyle { vertical: true, ..Default::default() });
+        let (e, _) = crate::geom::bbox(&two).unwrap();
+        assert!(e[0] < c[0] - 1.0);
+    }
+
     use super::*;
 
     fn bounds(paths: &[Path]) -> ([f64; 2], [f64; 2]) {

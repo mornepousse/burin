@@ -73,6 +73,10 @@ pub struct Component {
     /// When set, the height comes from here rather than from the outline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<HeightMap>,
+    /// Every cell of the job is part of it, even where its height is 0: the zero plane
+    /// (`0x1402b8770` sets every cell of its grid, at 0, as holding something).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub whole: bool,
 }
 
 /// `data` is laid out by rows from y = 0 upward; `cell` is the spacing in job units.
@@ -281,28 +285,31 @@ pub fn component_height(c: &Component, width: f64, height: f64, points: usize) -
 }
 
 /// Combines visible components, in order, into one height grid.
+///
+/// A place holds something once a component has covered it. Subtracting where something is
+/// goes on below zero, as in the original, whose cells left empty (9999999) stay empty when
+/// subtracted from; where nothing is yet it stops at 0. That is what the zero plane is for: it
+/// covers the whole job at 0, so dishes cut into it go below.
 pub fn compose(components: &[Component], width: f64, height: f64, points: usize) -> Option<Grid> {
     let mut out = Grid::new(width, height, points, 0.0);
+    let mut holds = vec![false; out.data.len()];
     let mut any = false;
     for c in components.iter().filter(|c| c.visible) {
         let g = component_height(c, width, height, points);
         any = true;
-        for (o, v) in out.data.iter_mut().zip(&g.data) {
-            if *v == 0.0 {
+        for ((o, v), held) in out.data.iter_mut().zip(&g.data).zip(holds.iter_mut()) {
+            if *v == 0.0 && !c.whole {
                 continue;
             }
-            *o = match c.combine {
-                Combine::Add => *o + v,
-                Combine::Subtract => (*o - v).max(0.0),
-                Combine::Merge => o.max(*v),
-                Combine::Low => {
-                    if *o > 0.0 {
-                        o.min(*v)
-                    } else {
-                        *v
-                    }
-                }
+            *o = match (c.combine, *held) {
+                (Combine::Add, _) => *o + v,
+                (Combine::Subtract, true) => *o - v,
+                (Combine::Subtract, false) => (*o - v).max(0.0),
+                (Combine::Merge, true) => o.max(*v),
+                (Combine::Low, true) => o.min(*v),
+                (Combine::Merge | Combine::Low, false) => *v,
             };
+            *held |= c.combine != Combine::Subtract;
         }
     }
     any.then_some(out)
@@ -785,6 +792,7 @@ mod tests {
             base: 0.0,
             combine,
             visible: true,
+            whole: false,
         }
     }
 
@@ -810,6 +818,23 @@ mod tests {
         let tall = Component { height: 0.9, ..comp(Profile::Flat, Combine::Merge, 1.0) };
         let g = compose(&[base, tall], 10.0, 10.0, 40_000).unwrap();
         assert!((g.sample(5.0, 5.0) - 0.9).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_dish_goes_below_zero_only_into_something() {
+        let dish = Component { height: 0.3, ..comp(Profile::Round, Combine::Subtract, 2.0) };
+        let alone = compose(&[dish.clone()], 10.0, 10.0, 40_000).unwrap();
+        assert_eq!(alone.sample(5.0, 5.0), 0.0, "with nothing under it, nothing is cut");
+        let plane = Component { name: "Zero Plane".into(), paths: vec![Path::closed(rect([5.0, 5.0], 10.0, 10.0, 0.0))], height: 0.0, whole: true, ..comp(Profile::Flat, Combine::Add, 1.0) };
+        let g = compose(&[plane, dish], 10.0, 10.0, 40_000).unwrap();
+        assert!((g.sample(5.0, 5.0) + 0.3).abs() < 1e-2, "the dish's bottom is at -0.3: {}", g.sample(5.0, 5.0));
+        assert_eq!(g.sample(1.0, 1.0), 0.0);
+        assert_eq!(g.max(), 0.0);
+        // Cutting deeper than a raised shape goes on through it too.
+        let base = Component { paths: vec![Path::closed(rect([5.0, 5.0], 8.0, 8.0, 0.0))], height: 0.1, ..comp(Profile::Flat, Combine::Add, 1.0) };
+        let deep = Component { height: 0.4, ..comp(Profile::Flat, Combine::Subtract, 1.0) };
+        let g = compose(&[base, deep], 10.0, 10.0, 40_000).unwrap();
+        assert!((g.sample(5.0, 5.0) + 0.3).abs() < 1e-3);
     }
 
     /// Follows a closed loop with an end mill.
@@ -953,6 +978,7 @@ mod tests {
             combine: Combine::Add,
             visible: true,
             surface: None,
+            whole: false,
         };
         let g = component_height(&comp, 10.0, 10.0, 1_000_000);
         // Turned upside down, so going outward climbs through the level as with a hole.
