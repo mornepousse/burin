@@ -28,7 +28,8 @@ Linux · Windows · Browser · English · Français
 
 | | |
 |---|---|
-| **Workspaces** | Two of them, switched from the top left: **Design** to draw and model, **Machining** for toolpaths, preview and machine files. Each shows only its own panels, and Burin goes to the right one when you open something of the other |
+| **Workspaces** | Two of them, switched from the top left: **Design** to draw and model, **Machining** for toolpaths, preview and machine files. Each keeps its panel on the left, opened from a strip of icons along the window's edge, and Burin goes to the right one when you open something of the other |
+| **Finding your way** | A light "workshop" look or a dark one; a colour for each family of tools; **Ctrl+K** to find any command by name; a card giving the selection's position, size and layer, typed in directly; a start screen with drawings of recent projects and models to start from (name plaque, coaster, small box) |
 | **Draw** | Lines, curves, arcs, circles, ellipses, rectangles, polygons, stars, spirals, text (the computer's fonts, bold, italic, alignment, and single-line fonts for engraving), dimensions, sketch constraints |
 | **Edit** | Move, rotate and resize with the mouse (or type an exact value), offset, weld, trim, align, array copies, smooth outlines |
 | **Organise** | Layers, groups, **pieces** (pick one hole without ungrouping, yet the piece moves as one), **several sheets** per job, nesting that adds sheets, turns parts, puts small parts in the holes of big ones, or fills an outline you choose |
@@ -133,7 +134,7 @@ names and the name of your home folder are never in it.
 
 ## Still missing
 
-- **Real tests:** nothing has been checked on a machine.
+- **Real tests:** only a few jobs (profiles and a pocket) have been cut on a real machine so far. Check every file before cutting.
 - **Menus:** some entries are still greyed out, mostly 3D modelling tools and views (coloured shaded
   view, wrapped rotary view).
 - **Results:** toolpaths are not always the same as those saved in `.crv3d` projects, notably the cutting order and pockets,

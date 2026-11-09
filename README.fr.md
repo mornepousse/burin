@@ -29,7 +29,8 @@ Linux · Windows · Navigateur · Français · English
 
 | | |
 |---|---|
-| **Espaces de travail** | Deux, au choix en haut à gauche : **Dessin** pour dessiner et modeler, **Usinage** pour les parcours, l'aperçu et les fichiers machine. Chacun ne montre que ses panneaux, et Burin passe au bon quand vous ouvrez quelque chose de l'autre |
+| **Espaces de travail** | Deux, au choix en haut à gauche : **Dessin** pour dessiner et modeler, **Usinage** pour les parcours, l'aperçu et les fichiers machine. Chacun garde son panneau à gauche, ouvert depuis une bande d'icônes le long de la fenêtre, et Burin passe au bon quand vous ouvrez quelque chose de l'autre |
+| **Se repérer** | Une apparence claire « atelier » ou sombre ; une couleur par famille d'outils ; **Ctrl+K** pour trouver une commande par son nom ; une fiche avec la position, la taille et le calque de la sélection, à modifier directement ; un écran d'accueil avec les dessins des projets récents et des modèles de départ (plaque à graver, sous-verre, petite boîte) |
 | **Dessiner** | Lignes, courbes, arcs, cercles, ellipses, rectangles, polygones, étoiles, spirales, texte (polices de l'ordinateur, gras, italique, alignement, et polices à trait unique pour la gravure), cotes, contraintes d'esquisse |
 | **Modifier** | Déplacer, tourner et redimensionner à la souris (avec une valeur exacte tapée au clavier), décaler, souder, couper, aligner, copier en série, lisser les tracés |
 | **Organiser** | Calques, groupes, **pièces** (on sélectionne un seul trou sans rien dégrouper, mais la pièce se déplace d'un bloc), **plusieurs plaques** par travail, imbrication qui ajoute des plaques et peut tourner les pièces |
@@ -125,7 +126,7 @@ figurent jamais.
 
 ## Ce qui manque encore
 
-- **Essais réels :** rien n'a été vérifié sur une machine.
+- **Essais réels :** seuls quelques travaux (contours et poche) ont été usinés sur une vraie machine pour l'instant. Vérifiez chaque fichier avant d'usiner.
 - **Menus :** une trentaine d'entrées restent grisées, surtout des outils de modélisation 3D et des vues
   (multi-faces, enroulée, vue colorée).
 - **Calculs :** les parcours ne sont pas toujours identiques à ceux enregistrés dans les projets `.crv3d`, notamment l'ordre de coupe et les
