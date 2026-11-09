@@ -1096,9 +1096,6 @@ impl App {
             ui.menu_button(tr("Toolpaths"), |ui| self.toolpaths_menu(ui));
             ui.menu_button(tr("View"), |ui| self.view_menu(ui));
         }
-        ui.menu_button(tr("Gadgets"), |ui| {
-            ui.add_enabled(false, egui::Label::new(tr("No gadgets installed")));
-        });
         ui.menu_button(tr("Help"), |ui| self.help_menu(ui));
     }
 }

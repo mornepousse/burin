@@ -87,8 +87,6 @@ pub const FR: &[(&str, &str)] = &[
     ("Remove All Guides", "Retirer tous les repères"),
     ("Show Shapes", "Afficher les formes"),
     ("Show Toolpaths", "Afficher les parcours"),
-    ("Gadgets", "Gadgets"),
-    ("No gadgets installed", "Aucun gadget installé"),
     ("Help", "Aide"),
     ("About", "À propos"),
     ("Open", "Ouvrir"),
