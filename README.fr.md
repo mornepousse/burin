@@ -21,7 +21,7 @@ Linux · Windows · Navigateur · Français · English
 ![Une pièce usinée dans l'aperçu 3D de Burin, dans une planche de hêtre](docs/apercu-3d.png)
 
 > [!WARNING]
-> **Burin n'a encore jamais piloté de vraie machine.** Une erreur dans un fichier de coupe peut casser
+> **Burin n'a encore usiné que quelques vrais travaux.** Une erreur dans un fichier de coupe peut casser
 > une fraise ou abîmer une pièce. Vérifiez chaque fichier dans un simulateur, puis faites-le tourner à
 > vide, fraise bien au-dessus de la matière, avant de couper.
 

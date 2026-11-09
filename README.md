@@ -20,7 +20,7 @@ Linux · Windows · Browser · English · Français
 ![A part carved in Burin's 3D preview, in a beech board](docs/apercu-3d.png)
 
 > [!WARNING]
-> **Burin has never driven a real machine yet.** A mistake in a cutting file can break a bit or spoil
+> **Burin has cut only a few real jobs so far.** A mistake in a cutting file can break a bit or spoil
 > a part. Check every file in a simulator, then run it in the air, with the bit well above the material,
 > before you cut.
 
