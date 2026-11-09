@@ -22,14 +22,17 @@
   <noscript><p>Burin a besoin de JavaScript pour fonctionner dans le navigateur.</p></noscript>
 </div>
 <script type="module">
-  import init, { start } from "./burin.js";
+  // Both halves of the program carry this build's mark, so a browser can't put an old one it
+  // kept with a new one: they must come from the same build.
   const message = document.getElementById("message");
   try {
-    await init();
+    const { default: init, start } = await import("./burin.js?v={{BUILD}}");
+    await init({ module_or_path: "./burin_bg.wasm?v={{BUILD}}" });
     start("burin");
     document.getElementById("status").classList.add("hidden");
   } catch (e) {
-    message.textContent = "Burin n'a pas pu démarrer dans ce navigateur : " + e;
+    message.textContent = "Burin n'a pas pu démarrer dans ce navigateur : " + e
+      + (e instanceof WebAssembly.LinkError ? " — rechargez la page (Ctrl+Maj+R) pour prendre la dernière version." : "");
   }
 </script>
 </body>

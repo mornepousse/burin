@@ -2625,7 +2625,9 @@ impl App {
         if self.about_open {
             let mut open = true;
             egui::Window::new(crate::i18n::tr("About Burin")).open(&mut open).collapsible(false).resizable(false).show(&ctx, |ui| {
-                ui.label(RichText::new(tf!("Burin {}", env!("CARGO_PKG_VERSION"))).strong().size(16.0));
+                // As the original's (`0x140726810`): the version, then how the 3D view is drawn.
+                let drawing = if crate::platform::WEB { "WebGL" } else { "OpenGL" };
+                ui.label(RichText::new(tf!("Burin {} ({})", env!("CARGO_PKG_VERSION"), drawing)).strong().size(16.0));
                 ui.label(crate::i18n::tr("Design, model and cut for CNC carving."));
                 ui.label(RichText::new(crate::i18n::tr("Free software under the GNU GPL, version 3 or later.")).color(theme::MUTED));
                 ui.hyperlink_to("burin.cc", "https://burin.cc");

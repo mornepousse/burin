@@ -6907,6 +6907,6 @@ fn the_version_shows_on_the_start_screen_and_in_about() {
     h.get_by_label_contains(&format!("Version {version}"));
     h.state_mut().about_open = true;
     h.run();
-    h.get_by_label_contains(&format!("Burin {version}"));
+    h.get_by_label_contains(&format!("Burin {version} (OpenGL)"));
     h.get_by_label_contains("GNU GPL");
 }
