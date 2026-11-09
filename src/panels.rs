@@ -1702,6 +1702,7 @@ impl App {
 
     pub fn save_form(&mut self, ui: &mut Ui) {
         let width = ui.available_width();
+        let before = self.output_choices();
         egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
             ui.set_width(width - 28.0);
             ui.spacing_mut().item_spacing.y = 6.0;
@@ -1731,6 +1732,9 @@ impl App {
                             ui.label("mm");
                         });
                     });
+                }
+                if self.output_choices() != before {
+                    self.output_choices().save();
                 }
                 ui.add_space(6.0);
                 bold(ui, crate::i18n::tr("Toolpaths to be saved ..."));

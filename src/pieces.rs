@@ -35,6 +35,64 @@ pub(crate) fn report_written(app: &mut App, path: &std::path::Path, written: std
     }
 }
 
+/// The machine file choices kept from one session to the next: slowing in tight corners and the
+/// LinuxCNC corner tolerance. Burin's own, as those options are.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct OutputChoices {
+    pub corner_slow: bool,
+    pub corner_share: f64,
+    pub blend: bool,
+    pub blend_mm: f64,
+}
+
+impl Default for OutputChoices {
+    fn default() -> Self {
+        OutputChoices { corner_slow: false, corner_share: crate::toolpath::CORNER_RATE_SHARE, blend: false, blend_mm: crate::toolpath::BLEND_TOLERANCE_MM }
+    }
+}
+
+impl OutputChoices {
+    /// Read from their file's text; anything unreadable, or out of range, is as at first.
+    pub fn from_text(text: &str) -> Self {
+        let mut c: OutputChoices = serde_json::from_str(text).unwrap_or_default();
+        let d = OutputChoices::default();
+        if !(0.05..=1.0).contains(&c.corner_share) {
+            c.corner_share = d.corner_share;
+        }
+        if !(0.001..=1.0).contains(&c.blend_mm) {
+            c.blend_mm = d.blend_mm;
+        }
+        c
+    }
+
+    pub fn load() -> Self {
+        if cfg!(test) {
+            return OutputChoices::default();
+        }
+        settings_file("output-choices.json").and_then(|f| crate::platform::read_to_string(f).ok()).map_or_else(OutputChoices::default, |t| OutputChoices::from_text(&t))
+    }
+
+    pub fn save(&self) {
+        if cfg!(test) {
+            return;
+        }
+        if let (Some(file), Ok(text)) = (settings_file("output-choices.json"), serde_json::to_string_pretty(self)) {
+            if let Some(folder) = file.parent() {
+                let _ = std::fs::create_dir_all(folder);
+            }
+            let _ = crate::platform::write(file, text);
+        }
+    }
+}
+
+impl App {
+    /// The machine file choices as they are now, to be kept.
+    pub fn output_choices(&self) -> OutputChoices {
+        OutputChoices { corner_slow: self.corner_slow, corner_share: self.corner_share, blend: self.blend, blend_mm: self.blend_mm }
+    }
+}
+
 /// Whether all the visible toolpaths go to one file, as it was left last time.
 pub fn load_one_file() -> bool {
     if cfg!(test) {
@@ -273,5 +331,21 @@ mod tests {
         use std::path::PathBuf;
         assert_eq!(with_extension(PathBuf::from("/a/plate"), "tap"), PathBuf::from("/a/plate.tap"));
         assert_eq!(with_extension(PathBuf::from("/a/plate.nc"), "tap"), PathBuf::from("/a/plate.nc"));
+    }
+}
+
+#[cfg(test)]
+mod output_choice_tests {
+    use super::OutputChoices;
+
+    #[test]
+    fn output_choices_are_kept_and_bad_ones_forgotten() {
+        let mine = OutputChoices { corner_slow: true, corner_share: 0.4, blend: true, blend_mm: 0.05 };
+        assert_eq!(OutputChoices::from_text(&serde_json::to_string(&mine).unwrap()), mine);
+        assert_eq!(OutputChoices::from_text("not json"), OutputChoices::default());
+        // A file from before a choice existed keeps the others.
+        assert_eq!(OutputChoices::from_text(r#"{"blend": true}"#), OutputChoices { blend: true, ..OutputChoices::default() });
+        let odd = OutputChoices::from_text(r#"{"blend_mm": 50.0, "corner_share": 0.0}"#);
+        assert_eq!((odd.blend_mm, odd.corner_share), (OutputChoices::default().blend_mm, OutputChoices::default().corner_share));
     }
 }
