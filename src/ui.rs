@@ -530,6 +530,7 @@ impl App {
             self.start_screen(ui);
         } else {
             egui::Panel::bottom("status").exact_size(22.0).frame(Frame::new().fill(CHROME).inner_margin(Margin::symmetric(4, 2))).show(ui, |ui| self.status_bar(ui));
+            self.follow_persona();
             self.left_panel(ui);
             self.right_panel(ui);
             egui::CentralPanel::default().frame(Frame::new().fill(WORKSPACE)).show(ui, |ui| self.centre(ui));
@@ -792,13 +793,24 @@ impl App {
             self.left_tab = tab;
             self.left_open = true;
             self.close_left_form();
+            if self.persona == Persona::Machining {
+                self.set_persona(Persona::Design);
+            }
         }
         if fired(Action::LeftPanel) {
-            self.left_open = !self.left_open;
+            if self.persona == Persona::Machining {
+                self.set_persona(Persona::Design);
+            } else {
+                self.left_open = !self.left_open;
+            }
             self.auto_fit = true;
         }
         if fired(Action::RightPanel) {
-            self.right_open = !self.right_open;
+            if self.persona == Persona::Design {
+                self.set_persona(Persona::Machining);
+            } else {
+                self.right_open = !self.right_open;
+            }
             self.auto_fit = true;
         }
         if !self.view3d {
@@ -958,6 +970,10 @@ impl App {
             ui.add_space(2.0);
             bold_sized(ui, "Burin", 14.0, ACCENT);
             ui.add_space(4.0);
+            if work && self.persona != Persona::Both {
+                self.persona_switch(ui);
+                ui.add_space(6.0);
+            }
             self.main_menus(ui, work);
             if work {
                 self.quick_actions(ui);
@@ -1147,10 +1163,10 @@ impl App {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
                 let tile = (width - 12.0) / 2.0;
-                if start_tile(ui, Icon::Doc, crate::i18n::tr("Create a new file"), tile) {
+                if start_tile(ui, Icon::New, crate::i18n::tr("Start a new project"), tile) {
                     self.leave_for(Leave::New);
                 }
-                if start_tile(ui, Icon::Folder, crate::i18n::tr("Open an existing file"), tile) {
+                if start_tile(ui, Icon::Folder, crate::i18n::tr("Open a project"), tile) {
                     self.leave_for(Leave::Open);
                 }
             });
@@ -1187,7 +1203,81 @@ impl App {
 
     // ----- Left panel -----
 
+    /// Goes to the workspace that what was just opened belongs to: a toolpath's form, the
+    /// preview or the material to Machining; a drawing form or the job's setup to Design.
+    fn follow_persona(&mut self) {
+        let right = match self.right {
+            RightMode::List => 0,
+            RightMode::Op { .. } => 1,
+            RightMode::Preview => 2,
+            RightMode::Material(_) => 3,
+            RightMode::Save => 4,
+        };
+        let left = match self.left {
+            LeftForm::Job { .. } => 2,
+            LeftForm::Draw(_) | LeftForm::Xform(_) | LeftForm::Shape(_) | LeftForm::Trace(_) | LeftForm::Relief(_) => 1,
+            _ => 0,
+        };
+        let (was_right, was_left) = (self.persona_seen.0, self.persona_seen.1);
+        self.persona_seen = (right, left);
+        if self.persona == Persona::Both {
+            return;
+        }
+        if right != was_right && right != 0 {
+            self.set_persona(Persona::Machining);
+        } else if left != was_left && left != 0 {
+            self.set_persona(Persona::Design);
+        }
+    }
+
+    /// Shows one workspace and puts the other's panels away.
+    pub fn set_persona(&mut self, persona: Persona) {
+        if self.persona != persona {
+            self.auto_fit = true;
+        }
+        self.persona = persona;
+        match persona {
+            Persona::Design => self.left_open = true,
+            Persona::Machining => self.right_open = true,
+            Persona::Both => {}
+        }
+    }
+
+    /// The two workspace buttons, at the far left as in Affinity.
+    fn persona_switch(&mut self, ui: &mut Ui) {
+        let both = [(Persona::Design, Icon::Curve, crate::i18n::tr("Design"), crate::i18n::tr("Draw and model: shapes, text, 3D")), (Persona::Machining, Icon::TpPocket, crate::i18n::tr("Machining"), crate::i18n::tr("Toolpaths, preview and machine files"))];
+        let (outer, _) = ui.allocate_exact_size(vec2(0.0, 26.0), Sense::hover());
+        let mut x = outer.left();
+        let mut rects = Vec::new();
+        for (_, _, label, _) in both {
+            let w = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.5), TEXT).size().x + 34.0;
+            rects.push(Rect::from_min_size(pos2(x, outer.top()), vec2(w, 26.0)));
+            x += w;
+        }
+        let whole = Rect::from_min_max(rects[0].min, rects[rects.len() - 1].max);
+        ui.allocate_rect(whole, Sense::hover());
+        ui.painter().rect(whole, 7.0, CARD, Stroke::new(1.0, LINE), StrokeKind::Inside);
+        for ((persona, icon, label, tip), r) in both.into_iter().zip(rects) {
+            let resp = ui.interact(r, ui.scope_id().with(("persona", label)), Sense::click()).on_hover_text(tip);
+            let on = self.persona == persona;
+            if on {
+                ui.painter().rect_filled(r.shrink(2.0), 5.0, ACCENT.gamma_multiply(0.35));
+            } else if resp.hovered() {
+                ui.painter().rect_filled(r.shrink(2.0), 5.0, LINE);
+            }
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(r.left() + 15.0, r.center().y), vec2(18.0, 18.0)), icon, true);
+            ui.painter().text(pos2(r.left() + 27.0, r.center().y), Align2::LEFT_CENTER, label, FontId::proportional(12.5), if on { Color32::WHITE } else { TEXT });
+            label_widget(&resp, label);
+            if resp.clicked() {
+                self.set_persona(persona);
+            }
+        }
+    }
+
     fn left_panel(&mut self, ui: &mut Ui) {
+        if self.persona == Persona::Machining {
+            return;
+        }
         if !self.left_open {
             self.collapsed_strip(ui, true);
             return;
@@ -1207,9 +1297,9 @@ impl App {
             let tabs = Rect::from_min_max(pos2(whole.left(), whole.bottom() - tabs_h), whole.max);
             let body = Rect::from_min_max(pos2(whole.left(), header.bottom()), pos2(whole.right(), tabs.top()));
             let title = match self.left_tab {
-                LeftTab::Drawing => crate::i18n::tr("Drawing"),
-                LeftTab::Modeling => crate::i18n::tr("Modeling"),
-                LeftTab::Clipart => crate::i18n::tr("Clipart"),
+                LeftTab::Drawing => crate::i18n::tr("Draw"),
+                LeftTab::Modeling => crate::i18n::tr("3D Model"),
+                LeftTab::Clipart => crate::i18n::tr("Library"),
                 LeftTab::Layers => crate::i18n::tr("Layers"),
             };
             self.panel_header(ui, header, title, true);
@@ -1231,7 +1321,7 @@ impl App {
             // Tabs along the bottom.
             let strip = ui.painter();
             strip.rect_filled(tabs, 0.0, CHROME);
-            let specs = [(LeftTab::Drawing, crate::i18n::tr("Drawing")), (LeftTab::Modeling, crate::i18n::tr("Modeling")), (LeftTab::Clipart, crate::i18n::tr("Clipart")), (LeftTab::Layers, crate::i18n::tr("Layers"))];
+            let specs = [(LeftTab::Drawing, crate::i18n::tr("Draw")), (LeftTab::Modeling, crate::i18n::tr("3D Model")), (LeftTab::Clipart, crate::i18n::tr("Library")), (LeftTab::Layers, crate::i18n::tr("Layers"))];
             let mut x = tabs.left() + 2.0;
             for (tab, label) in specs {
                 // As wide as its word, which depends on the language.
@@ -1249,7 +1339,7 @@ impl App {
 
     fn collapsed_strip(&mut self, ui: &mut Ui, left: bool) {
         let panel = if left { egui::Panel::left("left_strip") } else { egui::Panel::right("right_strip") };
-        let label = if left { crate::i18n::tr("Drawing") } else { crate::i18n::tr("Toolpaths") };
+        let label = if left { crate::i18n::tr("Draw") } else { crate::i18n::tr("Toolpaths") };
         panel.exact_size(22.0).resizable(false).frame(Frame::new().fill(CHROME)).show(ui, |ui| {
             let r = ui.max_rect();
             let tab = Rect::from_min_size(r.min + vec2(1.0, 6.0), vec2(20.0, 70.0));
@@ -1311,12 +1401,12 @@ impl App {
                 let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
                 wood_block(ui.painter(), r);
                 ui.add_space(8.0);
-                bold(ui, crate::i18n::tr("Job Setup"));
+                bold(ui, crate::i18n::tr("Material and Zero"));
             });
             card(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        bold(ui, crate::i18n::tr("Job Type"));
+                        bold(ui, crate::i18n::tr("Sides to Cut"));
                         let (r, _) = ui.allocate_exact_size(vec2(58.0, 32.0), Sense::hover());
                         wood_block(ui.painter(), r);
                     });
@@ -1338,7 +1428,7 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(56.0);
-                        bold(ui, crate::i18n::tr("Job Size"));
+                        bold(ui, crate::i18n::tr("Material Size"));
                         let (r, _) = ui.allocate_exact_size(vec2(58.0, 44.0), Sense::hover());
                         wood_block(ui.painter(), r);
                     });
@@ -1369,12 +1459,12 @@ impl App {
                 });
             });
             card(ui, |ui| {
-                bold(ui, crate::i18n::tr("Z Zero Position"));
+                bold(ui, crate::i18n::tr("Height Zero (Z)"));
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(60.0, 40.0), Sense::hover());
                     wood_block(ui.painter(), r);
                     let datum_y = if self.doc.job.z_on_bed { r.bottom() - 4.0 } else { r.top() + 16.0 };
-                    ui.painter().circle_filled(pos2(r.left() + 4.0, datum_y), 4.0, Color32::from_rgb(200, 30, 30));
+                    zero_marker(ui.painter(), pos2(r.left() + 4.0, datum_y));
                     ui.add_space(26.0);
                     ui.vertical(|ui| {
                         if ui.radio(!self.doc.job.z_on_bed, crate::i18n::tr("Material Surface")).clicked() {
@@ -1387,10 +1477,14 @@ impl App {
                 });
             });
             card(ui, |ui| {
-                bold(ui, crate::i18n::tr("XY Datum Position"));
+                bold(ui, crate::i18n::tr("Zero on the Sheet (X, Y)"));
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(52.0, 56.0), Sense::hover());
-                    wood_block(ui.painter(), Rect::from_center_size(r.center(), vec2(52.0, 30.0)));
+                    let slab = Rect::from_center_size(r.center(), vec2(52.0, 30.0));
+                    wood_block(ui.painter(), slab);
+                    let (job, zero) = (&self.doc.job, self.doc.job.origin());
+                    let (u, v) = (((zero[0] / job.width) as f32).clamp(0.0, 1.0), ((zero[1] / job.height) as f32).clamp(0.0, 1.0));
+                    zero_marker(ui.painter(), wood_top_point(slab, u, v));
                     let (square, _) = ui.allocate_exact_size(vec2(58.0, 58.0), Sense::hover());
                     let inner = square.shrink(7.0);
                     ui.painter().rect_stroke(inner, 0.0, Stroke::new(1.0, LINE), StrokeKind::Inside);
@@ -1440,7 +1534,7 @@ impl App {
             }
             card(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
-                bold(ui, crate::i18n::tr("Modeling Resolution"));
+                bold(ui, crate::i18n::tr("3D Detail"));
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(26.0, 22.0), Sense::hover());
                     icons::paint(ui.painter(), r, Icon::BlockCopy, true);
@@ -1504,6 +1598,11 @@ impl App {
         j.width = j.width.max(0.01);
         j.height = j.height.max(0.01);
         j.thickness = j.thickness.max(0.001);
+        // A new job's 3D detail is kept for the next new job, but not the highest, as the
+        // original does (`0x140332cc0` saves "Resolution" only for a new file and below 3).
+        if matches!(self.left, LeftForm::Job { first: true, .. }) && j.resolution < NEW_JOB_REMEMBERED_RESOLUTIONS {
+            remember_new_job_resolution(j.resolution);
+        }
         // Editing an existing job is one step of undo, and what it affects gets pointed out.
         if let LeftForm::Job { backup: Some(before), .. } = &self.left {
             let (old, new) = (&before.job, &self.doc.job);
@@ -1782,6 +1881,9 @@ impl App {
     // ----- Right panel -----
 
     fn right_panel(&mut self, ui: &mut Ui) {
+        if self.persona == Persona::Design {
+            return;
+        }
         if !self.right_open {
             self.collapsed_strip(ui, false);
             return;
@@ -2556,15 +2658,26 @@ pub(crate) fn wood_top_point(r: Rect, u: f32, v: f32) -> egui::Pos2 {
     low.lerp(high, v)
 }
 
+/// The material as a slab: a teal top face on slate sides, outlined. Burin's own picture of the
+/// job, wherever the material is shown small.
 pub(crate) fn wood_block(p: &egui::Painter, r: Rect) {
     let c = r.center();
     let (w, h) = (r.width() * 0.46, r.height() * 0.36);
     let top = vec![c + vec2(-w * 0.55, -h), c + vec2(w, -h), c + vec2(w * 0.55, h * 0.1), c + vec2(-w, h * 0.1)];
     let side = vec![c + vec2(-w, h * 0.1), c + vec2(w * 0.55, h * 0.1), c + vec2(w * 0.55, h), c + vec2(-w, h)];
     let end = vec![c + vec2(w * 0.55, h * 0.1), c + vec2(w, -h), c + vec2(w, h * 0.1), c + vec2(w * 0.55, h)];
-    p.add(Shape::convex_polygon(side, Color32::from_rgb(196, 136, 84), Stroke::NONE));
-    p.add(Shape::convex_polygon(end, Color32::from_rgb(158, 104, 62), Stroke::NONE));
-    p.add(Shape::convex_polygon(top, Color32::from_rgb(226, 172, 120), Stroke::NONE));
+    let edge = Stroke::new(1.0, Color32::from_rgb(120, 200, 184));
+    p.add(Shape::convex_polygon(side, Color32::from_rgb(56, 66, 82), edge));
+    p.add(Shape::convex_polygon(end, Color32::from_rgb(42, 50, 64), edge));
+    p.add(Shape::convex_polygon(top, Color32::from_rgb(40, 112, 100), edge));
+}
+
+/// Where the machine's zero is, on the slab: a white crosshair in a ring.
+pub(crate) fn zero_marker(p: &egui::Painter, at: egui::Pos2) {
+    let white = Stroke::new(1.4, Color32::WHITE);
+    p.circle_stroke(at, 4.0, white);
+    p.line_segment([at - vec2(7.0, 0.0), at + vec2(7.0, 0.0)], white);
+    p.line_segment([at - vec2(0.0, 7.0), at + vec2(0.0, 7.0)], white);
 }
 
 /// The two halves of the view area, the first one for the view in use, with a small gap between.

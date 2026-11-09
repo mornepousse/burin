@@ -1452,6 +1452,7 @@ pub fn nest_value(v: f64) -> f64 {
 
 /// How far nesting turns a part at a time when it may turn: a quarter turn, the step each part
 /// the original hands its nester starts with (`0x14090b960`, 90.0 at `+0x30`).
+#[allow(dead_code)]
 pub const NEST_STEP: f64 = 90.0;
 /// The turn step the nest form starts with, 45 degrees, with turning and part in part ticked:
 /// how the original sets up its nesting settings (`0x14090b8c0`, called from the form's

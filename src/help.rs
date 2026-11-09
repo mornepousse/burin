@@ -28,12 +28,12 @@ impl Page {
 pub const PAGES: [Page; 9] = [
     Page {
         title: "Getting Started",
-        text: "Start with File > New, or Create a new file on the start screen. Give the size and thickness of the material, \
+        text: "Start with File > New, or Start a new project on the start screen. Give the size and thickness of the material, \
                where its zero is (a corner or the middle) and whether that zero is on the top of the material or on the table.\n\n\
                You can change all of this later in Edit > Job Setup. Open a file from another program with File > Open: its \
                drawing, layers, toolpaths and notes come in.",
         titre: "Pour commencer",
-        texte: "Commencez par Fichier > Nouveau, ou par « Créer un nouveau fichier » sur l'écran d'accueil. Donnez la taille et \
+        texte: "Commencez par Fichier > Nouveau, ou par « Commencer un projet » sur l'écran d'accueil. Donnez la taille et \
                 l'épaisseur de la matière, où se trouve son zéro (un coin ou le milieu), et si ce zéro est sur le dessus de la \
                 matière ou sur la table.\n\n\
                 Tout cela se change ensuite dans Édition > Configuration du projet. Un fichier d'un autre logiciel s'ouvre avec \
@@ -41,13 +41,13 @@ pub const PAGES: [Page; 9] = [
     },
     Page {
         title: "Drawing",
-        text: "The Drawing tab on the left creates and edits shapes: circles, rectangles, polygons, stars, lines, curves and text. \
+        text: "In the Design workspace (button at the top left), the Draw tab creates and edits shapes: circles, rectangles, polygons, stars, lines, curves and text. \
                Click a shape to select it; drag it to move it, or drag its handles to scale or turn it.\n\n\
                While moving, turning or scaling, type a value and press Enter for an exact result: x,y or a distance for a move, \
-               degrees for a turn, a percentage for a scale. Edit Objects joins, trims, offsets and lines up shapes. Layers keep \
+               degrees for a turn, a percentage for a scale. Edit Shapes joins, trims, offsets and lines up shapes. Layers keep \
                shapes apart and can be hidden.",
         titre: "Dessin",
-        texte: "L'onglet Dessin, à gauche, crée et modifie les formes : cercles, rectangles, polygones, étoiles, lignes, courbes et \
+        texte: "Dans l'espace Dessin (bouton en haut à gauche), l'onglet Dessiner crée et modifie les formes : cercles, rectangles, polygones, étoiles, lignes, courbes et \
                 texte. Cliquez sur une forme pour la choisir ; faites-la glisser pour la déplacer, ou tirez ses poignées pour la \
                 redimensionner ou la tourner.\n\n\
                 Pendant un déplacement, une rotation ou un redimensionnement, tapez une valeur puis Entrée pour un résultat \
@@ -56,21 +56,21 @@ pub const PAGES: [Page; 9] = [
     },
     Page {
         title: "Modelling",
-        text: "The Modeling tab builds a 3D shape from closed shapes of your drawing: rounded, angled or flat, added to or \
+        text: "The 3D Model tab builds a 3D shape from closed shapes of your drawing: rounded, angled or flat, added to or \
                taken away from each other. The 3D view shows the result. Toolpaths > 3D Roughing and 3D Finishing carve it.",
         titre: "Modélisation",
-        texte: "L'onglet Modélisation construit une forme en 3D à partir des formes fermées du dessin : arrondie, en pente ou \
+        texte: "L'onglet 3D construit une forme en 3D à partir des formes fermées du dessin : arrondie, en pente ou \
                 plate, ajoutée aux autres ou retirée. La vue 3D montre le résultat. Parcours > Ebauche 3D et Finition 3D la \
                 sculptent.",
     },
     Page {
         title: "Toolpaths",
-        text: "The Toolpaths tab on the right makes the cuts: profiles around or inside shapes, pockets, V-carving, drilling and 3D. \
+        text: "In the Machining workspace (button at the top left), the Toolpaths panel makes the cuts: profiles around or inside shapes, pockets, V-carving, drilling and 3D. \
                Select the shapes first, then pick a toolpath, a tool and the depths.\n\n\
                Tools live in Toolpaths > Tool Database. Give each tool its flute length, so a cut deeper than the flutes is caught, \
                and use Suggest in the tool to get a feed from the material and the number of flutes.",
         titre: "Parcours",
-        texte: "L'onglet Parcours, à droite, crée les coupes : contours autour ou à l'intérieur des formes, poches, gravure en V, \
+        texte: "Dans l'espace Usinage (bouton en haut à gauche), le panneau Parcours crée les coupes : contours autour ou à l'intérieur des formes, poches, gravure en V, \
                 perçage et 3D. Choisissez d'abord les formes, puis un parcours, un outil et les profondeurs.\n\n\
                 Les outils sont dans Parcours > Base d'outils. Donnez à chaque outil sa longueur de coupe, pour qu'une passe plus \
                 profonde que ses dents soit signalée, et utilisez « Proposer » dans l'outil pour obtenir une avance d'après la \

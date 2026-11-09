@@ -656,7 +656,7 @@ fn open_state(app: &mut App, state: &str) {
             }
             app.tool_group_picked = Some("Roughing/Big".into());
         }
-        "modeling" | "clipart" | "layers" | "material" | "pocket" | "vcarve" | "rough" | "finish" | "drill" | "engrave" | "save" => {
+        "modeling" | "clipart" | "layers" | "material" | "pocket" | "vcarve" | "rough" | "finish" | "drill" | "engrave" | "save" | "machining" => {
             app.new_file();
             app.left = LeftForm::None;
             circle(app);
@@ -672,6 +672,8 @@ fn open_state(app: &mut App, state: &str) {
                 "finish" => app.start_op(toolpath::OpKind::Finish3D),
                 "drill" => app.start_op(toolpath::OpKind::Drill),
                 "engrave" => app.start_op(toolpath::OpKind::Engrave),
+                // The Machining workspace with its list of operations.
+                "machining" => app.set_persona(app::Persona::Machining),
                 _ => app.right = RightMode::Save,
             }
         }

@@ -112,7 +112,7 @@ impl App {
     pub fn drawing_tab(&mut self, ui: &mut Ui) {
         let some = !self.selected.is_empty();
         let many = self.selected.len() >= 2;
-        if self.section_open(ui, crate::i18n::tr("Create Vectors")) {
+        if self.section_open(ui, crate::i18n::tr("Shapes")) {
             icon_row(ui, |ui| {
                 for (icon, tip, kind) in [
                     (Icon::Circle, crate::i18n::tr("Draw circle"), DrawKind::Circle),
@@ -158,7 +158,7 @@ impl App {
         ui.add_space(6.0);
         self.transform_section(ui, some);
         ui.add_space(6.0);
-        if self.section_open(ui, crate::i18n::tr("Edit Objects")) {
+        if self.section_open(ui, crate::i18n::tr("Edit Shapes")) {
             self.edit_rows(ui, some, many);
             icon_row(ui, |ui| {
                 if icon_button(ui, Icon::Weld, crate::i18n::tr("Weld shapes"), many, false).clicked() {
@@ -202,7 +202,7 @@ impl App {
             });
         }
         ui.add_space(6.0);
-        if self.section_open(ui, crate::i18n::tr("Offset and Layout")) {
+        if self.section_open(ui, crate::i18n::tr("Offset and Repeat")) {
             icon_row(ui, |ui| {
                 if icon_button(ui, Icon::Offset, crate::i18n::tr("Offset"), some, false).clicked() {
                     self.start_xform(Xform::Offset);
@@ -260,7 +260,7 @@ impl App {
     }
 
     fn transform_section(&mut self, ui: &mut Ui, some: bool) {
-        if self.section_open(ui, crate::i18n::tr("Transform Objects")) {
+        if self.section_open(ui, crate::i18n::tr("Move and Size")) {
             icon_row(ui, |ui| {
                 for (icon, tip, kind) in [
                     (Icon::Move, crate::i18n::tr("Move"), Xform::Move),
@@ -345,7 +345,7 @@ impl App {
         let some = !self.selected.is_empty();
         let many = self.selected.len() >= 2;
         let comp = self.selected_comp.is_some();
-        if self.section_open(ui, crate::i18n::tr("Modeling Tools")) {
+        if self.section_open(ui, crate::i18n::tr("3D Shapes")) {
             icon_row(ui, |ui| {
                 if icon_button(ui, Icon::Dome, crate::i18n::tr("Create shape from selection"), true, false).clicked() {
                     self.open_shape_form(None);
@@ -381,11 +381,11 @@ impl App {
         ui.add_space(6.0);
         self.transform_section(ui, some);
         ui.add_space(6.0);
-        if self.section_open(ui, crate::i18n::tr("Edit Objects")) {
+        if self.section_open(ui, crate::i18n::tr("Edit Shapes")) {
             self.edit_rows(ui, some, many);
         }
         ui.add_space(6.0);
-        if self.section_open(ui, crate::i18n::tr("Array Objects")) {
+        if self.section_open(ui, crate::i18n::tr("Repeat")) {
             icon_row(ui, |ui| self.array_buttons(ui, some));
         }
         ui.add_space(8.0);
@@ -1498,37 +1498,37 @@ impl App {
         egui::Frame::new().inner_margin(egui::Margin { left: 14, right: 8, top: 10, bottom: 8 }).show(ui, |ui| {
             ui.set_width(width - 22.0);
             ui.spacing_mut().item_spacing.y = 4.0;
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(170.0);
-                    bold(ui, crate::i18n::tr("Material"));
-                    ui.horizontal(|ui| {
-                        if wide(ui, crate::i18n::tr("Set ..."), 60.0).clicked() {
-                            self.right = RightMode::Material(Box::new(self.doc.clone()));
-                        }
-                        let (r, _) = ui.allocate_exact_size(vec2(50.0, 40.0), Sense::hover());
-                        wood_block(ui.painter(), r);
-                    });
-                });
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("XY").color(theme::MUTED));
-                    let (r, resp) = ui.allocate_exact_size(vec2(46.0, 30.0), Sense::click());
+            // One card for the material: the slab with its zero, then its size and the zero's place.
+            egui::Frame::new().fill(theme::CARD).stroke(egui::Stroke::new(1.0, theme::LINE)).corner_radius(8.0).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+                ui.set_width(width - 40.0);
+                ui.horizontal(|ui| {
+                    let (r, resp) = ui.allocate_exact_size(vec2(72.0, 50.0), Sense::click());
                     wood_block(ui.painter(), r);
                     let (job, zero) = (&self.doc.job, self.doc.job.origin());
                     let (u, v) = (((zero[0] / job.width) as f32).clamp(0.0, 1.0), ((zero[1] / job.height) as f32).clamp(0.0, 1.0));
-                    ui.painter().circle_filled(crate::ui::wood_top_point(r, u, v), 3.0, egui::Color32::from_rgb(220, 30, 30));
-                    let text = format!("X: {}  Y: {}", toolpath::trim(zero[0]), toolpath::trim(zero[1]));
+                    crate::ui::zero_marker(ui.painter(), crate::ui::wood_top_point(r, u, v));
                     label_widget(&resp, crate::i18n::tr("X/Y zero"));
                     if resp.on_hover_text(crate::i18n::tr("Where the machine's X0 Y0 is. Click to change it.")).clicked() {
                         self.right = RightMode::Material(Box::new(self.doc.clone()));
                     }
-                    ui.label(RichText::new(text).size(11.0).color(theme::MUTED));
+                    ui.add_space(6.0);
+                    ui.vertical(|ui| {
+                        bold(ui, crate::i18n::tr("Material"));
+                        let size = format!("{} \u{d7} {} \u{d7} {} {}", toolpath::trim(job.width), toolpath::trim(job.height), toolpath::trim(job.thickness), job.unit());
+                        ui.label(RichText::new(size).size(12.0).color(theme::TEXT));
+                        let text = format!("X0 Y0: {}, {}", toolpath::trim(zero[0]), toolpath::trim(zero[1]));
+                        ui.label(RichText::new(text).size(11.0).color(theme::MUTED));
+                        if wide(ui, crate::i18n::tr("Set ..."), 60.0).clicked() {
+                            self.right = RightMode::Material(Box::new(self.doc.clone()));
+                        }
+                    });
                 });
             });
+            ui.add_space(2.0);
             let (safe, home) = (self.doc.machine.safe_z, self.doc.machine.home);
             note(ui, &tf!("Safe Z: {}   Home: X{} Y{} Z{}", toolpath::trim(safe), toolpath::trim(home[0]), toolpath::trim(home[1]), toolpath::trim(home[2])));
             ui.add_space(6.0);
-            if self.section_open(ui, crate::i18n::tr("Toolpath Operations")) {
+            if self.section_open(ui, crate::i18n::tr("New Toolpath")) {
                 icon_row(ui, |ui| {
                     for (icon, tip, kind) in [
                         (Icon::TpProfile, crate::i18n::tr("Profile toolpath"), OpKind::Profile),

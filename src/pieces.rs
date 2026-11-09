@@ -195,7 +195,7 @@ impl App {
         crate::ui::bold(ui, tr("Pieces"));
         let rows = self.doc.pieces();
         if rows.is_empty() {
-            ui.label(RichText::new(tr("None yet. Select shapes, then use Make Piece in Edit Objects.")).size(11.5).color(crate::theme::MUTED));
+            ui.label(RichText::new(tr("None yet. Select shapes, then use Make Piece in Edit Shapes.")).size(11.5).color(crate::theme::MUTED));
             return;
         }
         for row in rows {

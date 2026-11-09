@@ -1821,43 +1821,138 @@ fn row_spans(row: (P, P, f64), sample: f64, inside: &dyn Fn(f64, f64) -> bool) -
 }
 
 /// Cuts every row back and forth at height `z`.
-fn cut_rows(e: &mut Emit, rows: Vec<(P, P, f64)>, sample: f64, z: f64, reach: f64, inside: &dyn Fn(f64, f64) -> bool) {
+fn cut_rows(e: &mut Emit, rows: Vec<(P, P, f64)>, sample: f64, z: f64, edges: &[Vec<P>], inside: &dyn Fn(f64, f64) -> bool) {
+    // The stretches of each row, in the row's own direction.
+    let rows: Vec<Vec<(P, P)>> = rows.into_iter().map(|row| row_spans(row, sample, inside)).collect();
+    let edge = Edge::new(edges, rows.iter().flatten().flat_map(|(a, b)| [*a, *b]), 2.0 * sample);
+    let mut done: Vec<Vec<bool>> = rows.iter().map(|r| vec![false; r.len()]).collect();
     let mut forward = true;
     let mut down = false;
-    for row in rows {
-        // Each row goes the other way to the one before, whether or not there was anything to cut.
-        let this_way = forward;
-        forward = !forward;
-        let forward = this_way;
-        let mut spans = row_spans(row, sample, inside);
-        if spans.is_empty() {
-            continue;
-        }
-        if !forward {
-            spans.reverse();
-        }
-        for (a, b) in spans {
-            let (from, to) = if forward { (a, b) } else { (b, a) };
-            // On to the next row without lifting, as long as the way there stays where the tool may go.
-            let last = e.last();
-            let across = (from[0] - last[0]).hypot(from[1] - last[1]);
-            let clear = down && across <= reach && {
-                let steps = ((across / sample).ceil() as usize).max(1);
-                (0..=steps).all(|k| {
-                    let t = k as f64 / steps as f64;
-                    inside(last[0] + (from[0] - last[0]) * t, last[1] + (from[1] - last[1]) * t)
-                })
-            };
-            if clear {
-                e.join(from[0], from[1], z);
-            } else {
-                e.go_to(from[0], from[1], z);
+    // Region by region, as the original (`0x1408cf3a0` sorts the rows into regions, `0x1408cfc00`
+    // cuts each one whole): start at the first stretch not cut yet, then keep going to the stretch of
+    // the next row the edge leads to (`0x1408cef30`), and lift only to start the next region.
+    while let Some((mut r, mut k)) = (0..rows.len()).find_map(|r| done[r].iter().position(|d| !d).map(|k| (r, k))) {
+        let (a, b) = rows[r][k];
+        let (mut from, mut to) = if forward { (a, b) } else { (b, a) };
+        let mut walk: Option<Vec<P>> = None;
+        loop {
+            match walk.take() {
+                Some(points) if down => {
+                    for q in points {
+                        e.join(q[0], q[1], z);
+                    }
+                    e.join(from[0], from[1], z);
+                }
+                _ => e.go_to(from[0], from[1], z),
             }
             e.feed(to[0], to[1], z);
+            done[r][k] = true;
             down = true;
+            forward = !forward;
+            // The next row's stretch reached along the edge from here, with no other row end on the way.
+            let Some(next) = rows.get(r + 1) else { break };
+            let found = next.iter().enumerate().filter(|(j, _)| !done[r + 1][*j]).find_map(|(j, (a, b))| {
+                [(*a, *b), (*b, *a)].into_iter().find_map(|(s, t)| edge.walk(to, s).map(|w| (j, s, t, w)))
+            });
+            let Some((j, s, t, w)) = found else { break };
+            r += 1;
+            k = j;
+            from = s;
+            to = t;
+            walk = Some(w);
         }
     }
     e.retract();
+}
+
+/// The outlines raster rows end on, with where each row end sits along them, for going from one
+/// row to the next along the edge.
+struct Edge<'a> {
+    loops: &'a [Vec<P>],
+    /// Each loop's length, and its points' distance along it from its first point.
+    lengths: Vec<(f64, Vec<f64>)>,
+    /// Row ends that sit on an outline: which one, and how far along.
+    ends: Vec<(usize, f64)>,
+    near: f64,
+}
+
+impl<'a> Edge<'a> {
+    fn new(loops: &'a [Vec<P>], ends: impl Iterator<Item = P>, near: f64) -> Self {
+        let lengths = loops
+            .iter()
+            .map(|l| {
+                let mut along = Vec::with_capacity(l.len());
+                let mut total = 0.0;
+                for (i, p) in l.iter().enumerate() {
+                    along.push(total);
+                    let q = l[(i + 1) % l.len()];
+                    total += (q[0] - p[0]).hypot(q[1] - p[1]);
+                }
+                (total, along)
+            })
+            .collect();
+        let mut edge = Self { loops, lengths, ends: Vec::new(), near };
+        edge.ends = ends.filter_map(|p| edge.place(p)).collect();
+        edge
+    }
+
+    /// Which outline a point is on, within reach, and how far along it.
+    fn place(&self, p: P) -> Option<(usize, f64)> {
+        let mut best: Option<(f64, usize, f64)> = None;
+        for (k, l) in self.loops.iter().enumerate() {
+            if l.len() < 2 {
+                continue;
+            }
+            for i in 0..l.len() {
+                let (a, b) = (l[i], l[(i + 1) % l.len()]);
+                let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+                let len2 = dx * dx + dy * dy;
+                let t = if len2 > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+                let d = (a[0] + dx * t - p[0]).hypot(a[1] + dy * t - p[1]);
+                if best.is_none_or(|(bd, _, _)| d < bd) {
+                    best = Some((d, k, self.lengths[k].1[i] + t * len2.sqrt()));
+                }
+            }
+        }
+        best.filter(|(d, _, _)| *d <= self.near).map(|(_, k, s)| (k, s))
+    }
+
+    /// The corners of the outline met going from one row end to the next the shorter way that has
+    /// no other row end on it, or None when both ways do or the two aren't on one outline.
+    fn walk(&self, from: P, to: P) -> Option<Vec<P>> {
+        let (k, a) = self.place(from)?;
+        let (k2, b) = self.place(to)?;
+        if k != k2 {
+            return None;
+        }
+        let (total, along) = &self.lengths[k];
+        let tiny = (self.near * 0.01).max(1e-9);
+        // How far along from `a` going forward, round the loop.
+        let ahead = |s: f64| (s - a).rem_euclid(*total);
+        let forward_len = ahead(b);
+        let backward_len = *total - forward_len;
+        let clear = |forward: bool| {
+            self.ends.iter().filter(|(kk, _)| *kk == k).all(|(_, s)| {
+                let d = if forward { ahead(*s) } else { (*total - ahead(*s)).rem_euclid(*total) };
+                let len = if forward { forward_len } else { backward_len };
+                d <= tiny || d >= len - tiny
+            })
+        };
+        let mut ways = [(forward_len, true), (backward_len, false)];
+        ways.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let (_, forward) = *ways.iter().find(|(_, f)| clear(*f))?;
+        let l = &self.loops[k];
+        let n = l.len();
+        let mut corners: Vec<(f64, P)> = (0..n)
+            .map(|i| {
+                let d = if forward { ahead(along[i]) } else { (*total - ahead(along[i])).rem_euclid(*total) };
+                (d, l[i])
+            })
+            .filter(|(d, _)| *d > tiny && *d < if forward { forward_len } else { backward_len } - tiny)
+            .collect();
+        corners.sort_by(|x, y| x.0.total_cmp(&y.0));
+        Some(corners.into_iter().map(|(_, p)| p).collect())
+    }
 }
 
 fn step_of(op: &Op) -> f64 {
@@ -1990,7 +2085,7 @@ fn pocket_set(e: &mut Emit, op: &Op) {
             // Rows may come short of the full distance by a hair, as the original offsets by the distance
             // less its tolerance (`0x140820030`): a row that just touches the edge is still cut, as in saved jobs.
             let reach = clear - field.cell * RASTER_TOLERANCE_CELLS;
-            cut_rows(e, rows, field.cell, *z, op.tool.dia * 1.5, &|x, y| field.sample(x, y) >= reach);
+            cut_rows(e, rows, field.cell, *z, &offset.iter().map(|p| p.pts.clone()).collect::<Vec<_>>(), &|x, y| field.sample(x, y) >= reach);
             if op.profile_pass == ProfilePass::Last {
                 ring(e, radius, *z, *z);
             }
@@ -2006,13 +2101,14 @@ fn pocket_set(e: &mut Emit, op: &Op) {
                 ring(e, *l, *z, previous);
             }
         }
-        e.retract();
-        // What the passes above didn't reach, worked out once and cut at every depth. A pocket that
-        // only clears the rest of a larger tool leaves the other tool's share on purpose.
+        // What the passes above didn't reach, worked out once and cut at every depth, going on from
+        // the passes without lifting. A pocket that only clears the rest of a larger tool leaves the
+        // other tool's share on purpose.
         if !op.rest_only {
             let spots = spots.get_or_insert_with(|| leftovers(&field, op.tool.dia / 2.0, radius, op.allowance, &e.moves[cut_from..]));
             cut_spots(e, spots, *z, &field, radius);
         }
+        e.retract();
         previous = *z;
     }
 }
@@ -2414,25 +2510,121 @@ fn cut_spots(e: &mut Emit, spots: &[P], z: f64, field: &Field, centre_at: f64) {
     let mut left = spots.to_vec();
     let last = e.last();
     let mut at = [last[0], last[1]];
-    let mut down = false;
+    // Already down in the pocket, when the rings have just been cut at this depth.
+    let mut down = (last[2] - z).abs() < 1e-9;
+    let clear = |a: P, b: P| {
+        let steps = (((b[0] - a[0]).hypot(b[1] - a[1]) / field.cell).ceil() as usize).max(1);
+        (0..=steps).all(|k| {
+            let t = k as f64 / steps as f64;
+            field.sample(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t) >= centre_at - field.cell * 0.1
+        })
+    };
     while !left.is_empty() {
         let far = |p: &P| (p[0] - at[0]).hypot(p[1] - at[1]);
         let i = (0..left.len()).min_by(|a, b| far(&left[*a]).total_cmp(&far(&left[*b]))).unwrap_or(0);
         let next = left.swap_remove(i);
-        let steps = ((far(&next) / field.cell).ceil() as usize).max(1);
-        let clear = down && (0..=steps).all(|k| {
-            let t = k as f64 / steps as f64;
-            field.sample(at[0] + (next[0] - at[0]) * t, at[1] + (next[1] - at[1]) * t) >= centre_at - field.cell * 0.1
-        });
-        if clear {
-            e.join(next[0], next[1], z);
+        // Across the pocket's floor, cleared at this depth by the rings, without lifting: straight
+        // when that keeps clear of the walls, otherwise round by the cleared middle. The original
+        // cuts its corners as part of each ring, so it doesn't lift for them either; this way of
+        // getting there is Burin's.
+        let route = if !down {
+            None
+        } else if clear(at, next) {
+            Some(vec![next])
         } else {
-            e.go_to(next[0], next[1], z);
+            safe_route(field, at, next, centre_at).map(|r| straighten(at, &r, &clear))
+        };
+        match route {
+            Some(points) => {
+                for q in points {
+                    e.join(q[0], q[1], z);
+                }
+            }
+            None => e.go_to(next[0], next[1], z),
         }
         at = next;
         down = true;
     }
     e.retract();
+}
+
+/// A way from `from` to `to` through the cells of the pocket at least `min` from every wall, by the
+/// shortest chain of neighbouring cells, or None when there is none.
+fn safe_route(field: &Field, from: P, to: P, min: f64) -> Option<Vec<P>> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+    let (nx, ny) = (field.nx, field.ny);
+    let cell_of = |p: P| {
+        let ix = ((p[0] - field.x0) / field.cell).round().clamp(0.0, (nx - 1) as f64) as usize;
+        let iy = ((p[1] - field.y0) / field.cell).round().clamp(0.0, (ny - 1) as f64) as usize;
+        iy * nx + ix
+    };
+    let centre = |i: usize| [field.x0 + (i % nx) as f64 * field.cell, field.y0 + (i / nx) as f64 * field.cell];
+    let (start, goal) = (cell_of(from), cell_of(to));
+    let open = |i: usize| i == start || i == goal || field.d[i] as f64 >= min;
+    let g_end = centre(goal);
+    let guess = |i: usize| {
+        let c = centre(i);
+        ((c[0] - g_end[0]).hypot(c[1] - g_end[1]) / field.cell) as f32
+    };
+    let mut cost = vec![f32::INFINITY; nx * ny];
+    let mut came = vec![u32::MAX; nx * ny];
+    let mut heap = BinaryHeap::new();
+    cost[start] = 0.0;
+    heap.push(Reverse((guess(start).to_bits(), start)));
+    while let Some(Reverse((_, i))) = heap.pop() {
+        if i == goal {
+            let mut chain = vec![to];
+            let mut k = came[i];
+            while k != u32::MAX && k as usize != start {
+                chain.push(centre(k as usize));
+                k = came[k as usize];
+            }
+            chain.reverse();
+            return Some(chain);
+        }
+        let (x, y) = ((i % nx) as i64, (i / nx) as i64);
+        for (dx, dy, step) in [(1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0), (1, 1, std::f32::consts::SQRT_2), (1, -1, std::f32::consts::SQRT_2), (-1, 1, std::f32::consts::SQRT_2), (-1, -1, std::f32::consts::SQRT_2)] {
+            let (a, b) = (x + dx, y + dy);
+            if a < 0 || b < 0 || a >= nx as i64 || b >= ny as i64 {
+                continue;
+            }
+            let j = b as usize * nx + a as usize;
+            if !open(j) {
+                continue;
+            }
+            let c = cost[i] + step;
+            if c < cost[j] {
+                cost[j] = c;
+                came[j] = i as u32;
+                heap.push(Reverse(((c + guess(j)).to_bits(), j)));
+            }
+        }
+    }
+    None
+}
+
+/// The fewest corners of a chain that still keep each straight stretch where `clear` allows.
+fn straighten(from: P, chain: &[P], clear: &dyn Fn(P, P) -> bool) -> Vec<P> {
+    let mut out = Vec::new();
+    let mut anchor = from;
+    let mut i = 0;
+    while i < chain.len() {
+        // The furthest point still in a straight line of sight; the next one at least.
+        let mut j = i;
+        let mut k = chain.len() - 1;
+        while k > i {
+            if clear(anchor, chain[k]) {
+                j = k;
+                break;
+            }
+            k -= 1;
+        }
+        out.push(chain[j]);
+        anchor = chain[j];
+        i = j + 1;
+    }
+    out
 }
 
 fn drill(e: &mut Emit, op: &Op) {
@@ -2483,7 +2675,7 @@ fn engrave(e: &mut Emit, op: &Op) {
                     angles.push(op.raster_angle + 90.0);
                 }
                 for a in angles {
-                    cut_rows(e, scan_rows(lo, hi, a, step), field.cell, z, 0.0, &|x, y| field.sample(x, y) >= 0.0);
+                    cut_rows(e, scan_rows(lo, hi, a, step), field.cell, z, &[], &|x, y| field.sample(x, y) >= 0.0);
                 }
             } else {
                 let mut level = step;
@@ -3856,6 +4048,84 @@ mod tests {
         // Without them a fast move takes their place, or a cut: nothing else is marked.
         let plain = generate(&op(OpKind::Profile, vec![Path::closed(rect([5.0, 5.0], 3.0, 3.0, 0.0))]), M, &J, None).unwrap();
         assert!(plain.iter().all(|m| !m.join));
+    }
+
+    /// Raster rows go on to the next one along the pocket's edge, as the original does
+    /// (`0x1408cef30`), however far that is, never coming closer to a wall than the tool's radius.
+    /// In a U, each prong is cleared on its own, so the rows lift once per depth, into the second prong.
+    #[test]
+    fn raster_rows_follow_the_edge_to_the_next_row() {
+        let u = vec![[0.0, 0.0], [6.0, 0.0], [6.0, 5.0], [4.0, 5.0], [4.0, 1.5], [2.0, 1.5], [2.0, 5.0], [0.0, 5.0]];
+        let mut o = op(OpKind::Pocket, vec![Path::closed(u.clone())]);
+        o.raster = true;
+        o.raster_angle = 0.0;
+        o.profile_pass = ProfilePass::None;
+        let m = generate(&o, M, &J, None).unwrap();
+        let radius = o.tool.dia / 2.0;
+        let wall = |p: [f64; 3]| {
+            (0..u.len())
+                .map(|i| {
+                    let (a, b) = (u[i], u[(i + 1) % u.len()]);
+                    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+                    let t = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+                    (a[0] + dx * t - p[0]).hypot(a[1] + dy * t - p[1])
+                })
+                .fold(f64::MAX, f64::min)
+        };
+        let mut joins = 0;
+        for i in 1..m.len() {
+            if m[i].join {
+                joins += 1;
+                for k in 0..=10 {
+                    let t = k as f64 / 10.0;
+                    let q = [m[i - 1].p[0] + (m[i].p[0] - m[i - 1].p[0]) * t, m[i - 1].p[1] + (m[i].p[1] - m[i - 1].p[1]) * t, 0.0];
+                    assert!(wall(q) >= radius - 0.02, "a link comes {} from a wall at {q:?}", wall(q));
+                }
+            }
+        }
+        let rows = (5.0 / (o.tool.dia * o.tool.stepover)).floor() as usize;
+        let lifts = m.windows(2).filter(|w| w[1].rapid && w[1].p[2] > w[0].p[2] + 1e-9).count();
+        assert!(joins >= rows, "{joins} links for about {rows} rows");
+        let mut levels: Vec<f64> = m.iter().filter(|x| !x.rapid && x.p[2] < -1e-9).map(|x| x.p[2]).collect();
+        levels.sort_by(|a, b| a.total_cmp(b));
+        levels.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        // Per depth: one lift into the second prong, the corner clean-up after the rows, and the way
+        // down to the next depth. Row by row across both prongs it was 145.
+        assert!(lifts <= 5 * levels.len(), "{lifts} lifts over {} levels", levels.len());
+    }
+
+    /// After the rings, the corners they left are cut without lifting: across the cleared floor,
+    /// never closer to a wall than the tool's radius, and only one lift per pocket and depth.
+    #[test]
+    fn ring_pockets_reach_their_corners_without_lifting() {
+        // A long thin triangle and an L: their sharp corners are where rings leave something.
+        let shapes = vec![Path::closed(vec![[0.0, 0.0], [5.0, 0.0], [0.0, 2.2]]), Path::closed(vec![[6.0, 0.0], [9.5, 0.0], [9.5, 1.1], [7.2, 1.1], [7.2, 4.0], [6.0, 4.0]])];
+        let mut o = op(OpKind::Pocket, shapes);
+        // A wide stepover leaves the corners between rings.
+        o.stepover = o.tool.dia * 0.85;
+        let m = generate(&o, M, &J, None).unwrap();
+        let radius = o.tool.dia / 2.0;
+        let field = Field::build(&o.paths, o.tool.dia, 400).unwrap();
+        let mut levels: Vec<f64> = m.iter().filter(|x| !x.rapid && x.p[2] < -1e-9).map(|x| x.p[2]).collect();
+        levels.sort_by(|a, b| a.total_cmp(b));
+        levels.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        let mut joins = 0;
+        for i in 1..m.len() {
+            if m[i].join {
+                joins += 1;
+                assert!((m[i].p[2] - m[i - 1].p[2]).abs() < 1e-9, "across at one depth");
+                for k in 0..=20 {
+                    let t = k as f64 / 20.0;
+                    let q = [m[i - 1].p[0] + (m[i].p[0] - m[i - 1].p[0]) * t, m[i - 1].p[1] + (m[i].p[1] - m[i - 1].p[1]) * t];
+                    assert!(field.sample(q[0], q[1]) >= radius - 2.0 * field.cell, "{q:?} is {} from a wall", field.sample(q[0], q[1]));
+                }
+            }
+        }
+        let lifts = m.windows(2).filter(|w| w[1].rapid && !w[0].rapid).count();
+        assert!(joins > 0, "the corners are reached without lifting");
+        // Per depth: the L lifts once, to go on; the triangle twice, as its innermost ring is a
+        // single point the rings go on from with a lift. None is for the corners.
+        assert!(lifts <= 3 * levels.len(), "{lifts} lifts");
     }
 
     #[test]

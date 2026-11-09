@@ -149,7 +149,6 @@ names and the name of your home folder are never in it.
 
 No real job file is included: `.gitignore` keeps projects and machine files out.
 
-
 ## Licence
 
 Burin is free software, under the [GNU General Public License, version 3 or later](LICENSE)

@@ -656,6 +656,15 @@ pub const TILE_HORIZONTAL_COMMAND: u32 = 57651;
 pub const TILE_VERTICAL_COMMAND: u32 = 57652;
 pub const CASCADE_COMMAND: u32 = 57650;
 
+/// Which workspace shows, as Affinity's personas: drawing and modelling, or machining. Each has
+/// its own panels; the other's are put away until it's chosen. `Both` shows the two side by side.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Persona {
+    Both,
+    Design,
+    Machining,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LeftTab {
     Drawing,
@@ -1107,6 +1116,10 @@ pub struct App {
     pub right: RightMode,
     pub left_open: bool,
     pub right_open: bool,
+    /// The workspace showing.
+    pub persona: Persona,
+    /// What the two panels held last frame, to switch workspace when that changes.
+    pub persona_seen: (u8, u8),
     pub view3d: bool,
     /// Both views shown at once, and how.
     pub tiled: Option<Tiling>,
@@ -1254,6 +1267,9 @@ pub struct App {
     pub surface_job: Option<crate::view3d::SurfaceJob>,
     /// The tests and the screenshot option want each picture at once.
     pub surface_in_background: bool,
+    /// Pictures are made a slice at a time between frames instead of on a thread: in a browser,
+    /// which has no threads.
+    pub surface_sliced: bool,
     pub quality3d: Quality3d,
     /// The keyboard shortcuts in use, and the window that changes them.
     pub keys: crate::keys::Keys,
@@ -1415,6 +1431,38 @@ impl Quality3d {
     }
 }
 
+/// How many of the 3D detail choices, from the first, a new job remembers for the next one; the
+/// highest isn't kept (`0x140332cc0`: saved when the index is below 3).
+pub const NEW_JOB_REMEMBERED_RESOLUTIONS: usize = 3;
+
+fn new_job_resolution_file() -> Option<PathBuf> {
+    recent_file().map(|f| f.with_file_name("new-job-resolution.txt"))
+}
+
+/// The 3D detail a new job starts with: the one last chosen for a new job, or the first.
+fn new_job_resolution() -> usize {
+    if cfg!(test) {
+        return 0;
+    }
+    new_job_resolution_file()
+        .and_then(|f| crate::platform::read_to_string(f).ok())
+        .and_then(|t| t.trim().parse::<usize>().ok())
+        .filter(|r| *r < NEW_JOB_REMEMBERED_RESOLUTIONS)
+        .unwrap_or(0)
+}
+
+pub fn remember_new_job_resolution(resolution: usize) {
+    if cfg!(test) {
+        return;
+    }
+    if let Some(file) = new_job_resolution_file() {
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = crate::platform::write(file, resolution.to_string());
+    }
+}
+
 fn quality_file() -> Option<PathBuf> {
     recent_file().map(|f| f.with_file_name("3d-quality.txt"))
 }
@@ -1453,6 +1501,9 @@ impl Default for App {
             right: RightMode::List,
             left_open: true,
             right_open: false,
+            // The tests see both sides at once, as most were written that way.
+            persona: if cfg!(test) { Persona::Both } else { Persona::Design },
+            persona_seen: (0, 0),
             view3d: false,
             tiled: None,
             last_draw: None,
@@ -1562,6 +1613,7 @@ impl Default for App {
             mesh: None,
             surface_job: None,
             surface_in_background: !cfg!(test),
+            surface_sliced: crate::platform::WEB,
             quality3d: load_quality(),
             keys: crate::keys::load(),
             prefs_open: false,
@@ -1640,7 +1692,8 @@ impl Default for App {
             preview_seconds: None,
             preview_started: None,
             next_cut_picture: None,
-            quick_pixels: if cfg!(test) { crate::view3d::MOST_QUICK_PIXELS } else { 400_000.0 },
+            // A browser has one thread for everything, so it starts smaller and grows if it keeps up.
+            quick_pixels: if cfg!(test) { crate::view3d::MOST_QUICK_PIXELS } else if crate::platform::WEB { 100_000.0 } else { 400_000.0 },
             surface_rev: 1,
             ornament: None,
             view_rect: egui::Rect::NOTHING,
@@ -1889,6 +1942,7 @@ impl App {
 
     pub fn new_file(&mut self) {
         self.doc = Doc::default();
+        self.doc.job.resolution = new_job_resolution();
         if self.metric_by_default {
             self.doc.set_units(Units::Mm);
             (self.doc.job.width, self.doc.job.height, self.doc.job.thickness) = (600.0, 400.0, 18.0);
