@@ -38,7 +38,10 @@ mkdir -p "$OUT"
 "$WASM_TOOLS/bin/wasm-bindgen" --target web --no-typescript --out-dir "$OUT" --out-name burin "$CARGO_TARGET_DIR/wasm32-unknown-unknown/release/burin.wasm"
 # Smaller to download; the same program.
 wasm-opt -Os --strip-debug --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals -o "$OUT/burin_bg.wasm" "$OUT/burin_bg.wasm"
-cp release/web/index.html release/burin.png "$OUT/"
+# The build's mark, from the program itself: a new build is a new address for both halves.
+BUILD=$(sha256sum "$OUT/burin_bg.wasm" | cut -c1-12)
+sed "s/{{BUILD}}/$BUILD/g" release/web/index.html > "$OUT/index.html"
+cp release/burin.png "$OUT/"
 
 if strings -a "$OUT/burin_bg.wasm" | grep -F -e "$HOME" -e "$PWD" | head -n 3 | grep . ; then
     echo "Paths on this computer are still in the web version" >&2
