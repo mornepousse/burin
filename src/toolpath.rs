@@ -1962,6 +1962,10 @@ impl<'a> Edge<'a> {
 /// whatever lies between (`0x1407b5500`: the distance under the stepover times 1.001, `0x1421cf160`).
 pub const RING_LINK_STEPS: f64 = 1.001;
 
+/// How much of the way on, in stepovers, is left out at each end when looking for crossings
+/// (`0x1407b5500`: the stepover times 0.01, `0x1420fbbb0`).
+pub const RING_LINK_TRIM: f64 = 0.01;
+
 /// When a pocket's next ring may go on from the one before without lifting.
 #[derive(Clone, Copy, Debug)]
 enum Link {
@@ -1975,14 +1979,15 @@ enum Link {
 }
 
 /// Whether the straight way from `a` to `b` crosses one of these loops anywhere but at its ends.
-fn crosses_rings(a: P, b: P, loops: &[&[P]]) -> bool {
+fn crosses_rings(a: P, b: P, loops: &[&[P]], trim: f64) -> bool {
     let r = [b[0] - a[0], b[1] - a[1]];
     let len = r[0].hypot(r[1]);
     if len < 1e-9 {
         return false;
     }
-    // The ends lie on rings themselves: crossings right at them don't count.
-    let end = (1e-6 / len).max(1e-6);
+    // The ends lie on rings themselves: crossings this close to them don't count. The original
+    // shortens the way by 1% of the stepover at each end (`0x1407b5500`, `0x1420fbbb0`).
+    let end = (trim.max(1e-6) / len).max(1e-6);
     loops.iter().any(|l| {
         (0..l.len()).any(|i| {
             let (c, d) = (l[i], l[(i + 1) % l.len()]);
@@ -2067,7 +2072,7 @@ fn pocket_set(e: &mut Emit, op: &Op) {
         let linked = match link {
             Link::No => false,
             Link::Near => near,
-            Link::Clear => near || !crosses_rings([last[0], last[1]], to, walls),
+            Link::Clear => near || !crosses_rings([last[0], last[1]], to, walls, step * RING_LINK_TRIM),
         };
         let stays_down = ramp.is_none() && (last[2] - z).abs() < 1e-9 && linked && {
             let steps = ((across / field.cell).ceil() as usize).max(1);
@@ -2132,7 +2137,10 @@ fn pocket_set(e: &mut Emit, op: &Op) {
                 let (i, j) = (stack[at].0, stack[at].1);
                 if stack[at].2.is_empty() {
                     stack.pop();
-                    let walls: Vec<&[P]> = rings[i].iter().chain(rings.get(i + 1).into_iter().flatten()).map(|w| w.as_slice()).collect();
+                    // What the way on mustn't cross: this ring and its own inner rings, the last of
+                    // which was just cut (`0x1407b5500` looks at the two rings and the outer one's
+                    // other inner rings).
+                    let walls: Vec<&[P]> = std::iter::once(&rings[i][j]).chain(children[i][j].iter().map(|c| &rings[i + 1][*c])).map(|w| w.as_slice()).collect();
                     let link = if children[i][j].is_empty() { Link::Near } else { Link::Clear };
                     cut_ring(e, rings[i][j].clone(), z, from, link, &walls);
                 } else {
