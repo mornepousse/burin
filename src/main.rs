@@ -47,6 +47,7 @@ mod support;
 mod templates;
 mod opdialogs;
 mod panels;
+mod starters;
 mod steps;
 mod thumbs;
 mod inspector;
@@ -653,6 +654,10 @@ fn open_state(app: &mut App, state: &str) {
             app.set_persona(app::Persona::Machining);
             app.selected_tp = Some(0);
         }
+        // The models to start from.
+        "plaque" => app.load_starter(starters::Starter::Plaque),
+        "coaster" => app.load_starter(starters::Starter::Coaster),
+        "box" => app.load_starter(starters::Starter::BoxPanels),
         // The command search open, a word typed.
         "palette" => {
             app.new_file();
