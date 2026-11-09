@@ -38,6 +38,16 @@ const TEAL: Color32 = Color32::from_rgb(70, 205, 190);
 const SLATE: Color32 = Color32::from_rgb(58, 66, 80);
 const SLATE_EDGE: Color32 = Color32::from_rgb(96, 108, 128);
 
+thread_local! {
+    /// What the icons' teal is drawn in for now: the colour of the section they're in.
+    static TINT: std::cell::Cell<Option<Color32>> = const { std::cell::Cell::new(None) };
+}
+
+/// Icons drawn from here on take this colour where they'd be teal; None for teal again.
+pub fn set_tint(colour: Option<Color32>) {
+    TINT.with(|t| t.set(colour));
+}
+
 fn faded(c: Color32) -> Color32 {
     // Blended towards the panel grey, still tinted so it reads as a dimmed icon.
     let mix = |v: u8, panel: f32| (v as f32 * 0.3 + panel * 0.7) as u8;
@@ -47,7 +57,19 @@ fn faded(c: Color32) -> Color32 {
 pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
     let c = rect.center();
     let s = rect.width().min(rect.height()) / 24.0;
-    let tone = |col: Color32| if enabled { col } else { faded(col) };
+    let tint = TINT.with(|t| t.get());
+    let tone = |col: Color32| {
+        // The section's colour for the teal, and a pale version of it for the light lines.
+        let pale = |t: Color32| Color32::from_rgb(((t.r() as u16 + 2 * 236) / 3) as u8, ((t.g() as u16 + 2 * 238) / 3) as u8, ((t.b() as u16 + 2 * 241) / 3) as u8);
+        let col = match tint {
+            Some(t) if col == TEAL => t,
+            Some(t) if col == BLACK => pale(t),
+            // The slate of boxes and outlines, leaning towards it.
+            Some(t) if col == PAPER || col == SLATE_EDGE => Color32::from_rgb(((t.r() as u16 + col.r() as u16) / 2) as u8, ((t.g() as u16 + col.g() as u16) / 2) as u8, ((t.b() as u16 + col.b() as u16) / 2) as u8),
+            _ => col,
+        };
+        if enabled { col } else { faded(col) }
+    };
     let at = |x: f32, y: f32| c + vec2(x, y) * s;
     let stroke = |col: Color32, w: f32| Stroke::new(w * s.max(0.8), tone(col));
     let line = |pts: &[(f32, f32)], col: Color32, w: f32| {
