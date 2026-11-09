@@ -375,6 +375,28 @@ mod tests {
     }
 
     #[test]
+    fn the_linuxcnc_corner_tolerance_is_written_only_when_asked() {
+        let tp = cut(Units::Mm);
+        let mut a = App::default();
+        a.doc.job = Job { width: 100.0, height: 100.0, thickness: 18.0, units: Units::Mm, ..Default::default() };
+        let mm = toolpath::POSTS.iter().position(|p| p.0 == "Generic G-code (mm) (*.nc)").unwrap();
+        let inch = toolpath::POSTS.iter().position(|p| p.0 == "Generic G-code (inch) (*.nc)").unwrap();
+        let grbl = toolpath::POSTS.iter().position(|p| p.0.starts_with("GRBL (mm)")).unwrap();
+        a.post_index = mm;
+        assert!(!a.gcode_from(&[&tp], "x").unwrap().contains("G64"), "off at first");
+        a.blend = true;
+        let text = a.gcode_from(&[&tp], "x").unwrap();
+        assert!(text.contains("G21 G90 G17\nG64 P0.0300\n"), "{}", &text[..120]);
+        a.post_index = inch;
+        assert!(a.gcode_from(&[&tp], "x").unwrap().contains("G64 P0.0012\n"));
+        a.post_index = grbl;
+        assert!(!a.gcode_from(&[&tp], "x").unwrap().contains("G64"), "GRBL doesn't take it");
+        // The file still reads back as its toolpath.
+        a.post_index = mm;
+        assert!(file_follows(&a, &tp).is_none());
+    }
+
+    #[test]
     fn a_file_that_strays_from_its_toolpath_is_caught() {
         let square: Vec<Move> = [[0.0, 0.0], [50.0, 0.0], [50.0, 50.0], [0.0, 50.0], [0.0, 0.0]].iter().map(|q| Move { p: [q[0], q[1], -2.0], rapid: false, join: false }).collect();
         // A wall written as a wide arc: right at its ends, a millimetre off in its middle.

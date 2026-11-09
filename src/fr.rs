@@ -1498,6 +1498,8 @@ pub const FR: &[(&str, &str)] = &[
     ("Each pass goes {} {unit} deep, more than twice the tool's diameter: a lot to ask of it.", "Chaque passe descend de {} {unit}, plus de deux fois le diamètre de l'outil : c'est beaucoup lui demander."),
     ("Its tabs are {} {unit} thick: thin enough to break before the cut ends.", "Ses attaches font {} {unit} d'épaisseur : assez fin pour casser avant la fin de la coupe."),
     ("Read back, its machine file strays more than {} {unit} from the toolpath at {} points, the first near X{} Y{} Z{}: the machine wouldn't cut what the toolpath shows. Don't run it; save it with another machine, or without arcs.", "Relu, son fichier machine s'écarte de plus de {} {unit} du parcours en {} points, le premier vers X{} Y{} Z{} : la machine ne couperait pas ce que montre le parcours. Ne le lancez pas ; enregistrez-le pour une autre machine, ou sans arcs."),
+    ("Corner tolerance for LinuxCNC (G64 P)", "Tolérance d'angle pour LinuxCNC (G64 P)"),
+    ("Without it, LinuxCNC may round corners as far as it likes to keep its speed. Not in the original.", "Sans elle, LinuxCNC peut arrondir les angles autant qu'il veut pour garder sa vitesse. Absent de l'original."),
     ("{} fast moves go across below the top of the material, down to {} {unit}: unless that part is already cut away, the tool would hit it.", "{} déplacements rapides traversent sous le dessus de la matière, jusqu'à {} {unit} : sauf si cette partie est déjà enlevée, l'outil la heurterait."),
     ("{} cutting moves are outside the material.", "{} mouvements de coupe sont hors de la matière."),
     ("The clearance height is at or below the top of the material.", "La hauteur de dégagement est au niveau du dessus de la matière, ou en dessous."),

@@ -1721,6 +1721,17 @@ impl App {
                         ui.label("%");
                     });
                 });
+                if crate::toolpath::post_takes_blend(self.post_index) {
+                    ui.checkbox(&mut self.blend, crate::i18n::tr("Corner tolerance for LinuxCNC (G64 P)")).on_hover_text(crate::i18n::tr("Without it, LinuxCNC may round corners as far as it likes to keep its speed. Not in the original."));
+                    ui.horizontal(|ui| {
+                        ui.add_space(24.0);
+                        ui.add_enabled_ui(self.blend, |ui| {
+                            crate::ui::number(ui, &mut self.blend_mm, 50.0);
+                            self.blend_mm = self.blend_mm.clamp(0.001, 1.0);
+                            ui.label("mm");
+                        });
+                    });
+                }
                 ui.add_space(6.0);
                 bold(ui, crate::i18n::tr("Toolpaths to be saved ..."));
                 let names: Vec<&str> = self
