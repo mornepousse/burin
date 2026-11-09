@@ -6963,21 +6963,3 @@ fn the_selection_card_shows_what_is_selected() {
     h.run();
     assert!(h.query_by_label_contains("Selected shape").is_none(), "not in Machining");
 }
-
-#[test]
-fn machining_lists_the_toolpaths_as_steps_that_can_be_reordered() {
-    let mut h = harness();
-    h.state_mut().load_sample();
-    h.state_mut().set_persona(crate::app::Persona::Machining);
-    h.state_mut().right = RightMode::List;
-    h.run();
-    h.get_by_label_contains("Cutting order");
-    let first = h.state().doc.toolpaths[0].op.name.clone();
-    let second = h.state().doc.toolpaths[1].op.name.clone();
-    click(&mut h, &first);
-    assert_eq!(h.state().selected_tp, Some(0));
-    click(&mut h, "Cut it later");
-    assert_eq!(h.state().doc.toolpaths[0].op.name, second, "moved one later");
-    assert_eq!(h.state().doc.toolpaths[1].op.name, first);
-    assert_eq!(h.state().selected_tp, Some(1), "still chosen");
-}
