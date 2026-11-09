@@ -61,9 +61,15 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
     let tone = |col: Color32| {
         // The section's colour for the teal, and a pale version of it for the light lines.
         let pale = |t: Color32| Color32::from_rgb(((t.r() as u16 + 2 * 236) / 3) as u8, ((t.g() as u16 + 2 * 238) / 3) as u8, ((t.b() as u16 + 2 * 241) / 3) as u8);
+        // On the light look, the light lines are ink.
+        let col = if crate::theme::light() && col == BLACK { Color32::from_rgb(52, 48, 44) } else { col };
+        let col = if crate::theme::light() && col == TEAL { Color32::from_rgb(12, 140, 122) } else { col };
+        // And the slate plates are light paper.
+        let col = if crate::theme::light() && col == SLATE { Color32::from_rgb(228, 222, 211) } else { col };
         let col = match tint {
-            Some(t) if col == TEAL => t,
+            Some(t) if col == TEAL || col == Color32::from_rgb(12, 140, 122) => t,
             Some(t) if col == BLACK => pale(t),
+            Some(t) if col == Color32::from_rgb(52, 48, 44) => t,
             // The slate of boxes and outlines, leaning towards it.
             Some(t) if col == PAPER || col == SLATE_EDGE => Color32::from_rgb(((t.r() as u16 + col.r() as u16) / 2) as u8, ((t.g() as u16 + col.g() as u16) / 2) as u8, ((t.b() as u16 + col.b() as u16) / 2) as u8),
             _ => col,

@@ -453,7 +453,7 @@ fn the_grid_button_turns_on_a_grid_with_real_contrast() {
     use crate::theme::*;
     assert!(gap(GRID_FINE, SHEET) >= 15, "fine lines stand out from the sheet");
     assert!(gap(GRID_BOLD, SHEET) >= 40, "bold lines stand out more");
-    assert!(gap(GRID_BOLD_DARK, WORKSPACE) >= 20, "and around the sheet too");
+    assert!(gap(GRID_BOLD_DARK(), WORKSPACE()) >= 20, "and around the sheet too");
     click(&mut h, "Show grid");
     assert!(!h.state().grid);
 }
@@ -3136,7 +3136,7 @@ fn the_look_stays_dark_on_a_computer_set_to_light() {
     ctx.set_theme(egui::ThemePreference::Light);
     crate::ui::setup_style(&ctx);
     assert_eq!(ctx.options(|o| o.theme_preference), egui::ThemePreference::Dark);
-    assert_eq!(ctx.global_style().visuals.panel_fill, crate::theme::PANEL);
+    assert_eq!(ctx.global_style().visuals.panel_fill, crate::theme::PANEL());
     assert!(ctx.global_style().visuals.dark_mode);
 }
 

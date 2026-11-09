@@ -287,7 +287,7 @@ impl App {
             });
             labelled(ui, crate::i18n::tr("Width"), 44.0, &mut f.width, 60.0, unit);
             f.width = f.width.max(1e-3);
-            ui.label(RichText::new(tf!("Depth (Y): {} {unit}", crate::toolpath::trim(f.width * f.h as f64 / f.w as f64))).color(theme::MUTED));
+            ui.label(RichText::new(tf!("Depth (Y): {} {unit}", crate::toolpath::trim(f.width * f.h as f64 / f.w as f64))).color(theme::MUTED()));
         });
         card(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
@@ -298,7 +298,7 @@ impl App {
             f.base = f.base.max(0.0);
             if let Some(r) = f.true_ratio {
                 let natural = r * f.width;
-                ui.label(RichText::new(tf!("True proportions: {} {unit}", crate::toolpath::trim(natural))).color(theme::MUTED));
+                ui.label(RichText::new(tf!("True proportions: {} {unit}", crate::toolpath::trim(natural))).color(theme::MUTED()));
                 if ui.button(crate::i18n::tr("Use True Proportions")).clicked() {
                     f.height = natural;
                 }
@@ -325,7 +325,7 @@ impl App {
         });
         if !f.is_picture {
             card(ui, |ui| {
-                ui.label(RichText::new(crate::i18n::tr("The model is read from straight above: what is hidden underneath is filled in.")).color(theme::MUTED));
+                ui.label(RichText::new(crate::i18n::tr("The model is read from straight above: what is hidden underneath is filled in.")).color(theme::MUTED()));
             });
         }
         if self.form_buttons(ui, crate::i18n::tr("Apply")) {

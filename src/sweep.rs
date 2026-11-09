@@ -275,7 +275,7 @@ impl App {
         let unit = self.doc.job.unit();
         egui::Window::new(tr("Two Rail Sweep")).id(egui::Id::unique("two-rail-sweep")).open(&mut open).collapsible(false).resizable(false).default_pos(ctx.content_rect().left_top() + egui::vec2(260.0, 90.0)).show(ctx, |ui| {
             ui.set_max_width(300.0);
-            ui.label(egui::RichText::new(tr("Choose the two rails first, then the open cross sections, and click Use Selection.")).size(12.0).color(crate::theme::MUTED));
+            ui.label(egui::RichText::new(tr("Choose the two rails first, then the open cross sections, and click Use Selection.")).size(12.0).color(crate::theme::MUTED()));
             ui.label(tf!("Rail pairs: {}, cross sections: {}", form.rails.len() / 2, form.sections.len()));
             ui.horizontal(|ui| {
                 use_selection = ui.button(tr("Use Selection")).clicked();
@@ -871,7 +871,7 @@ impl App {
         let unit = self.doc.job.unit();
         egui::Window::new(tr("Extrude and Weave")).id(egui::Id::unique("extrude-weave")).open(&mut open).collapsible(false).resizable(false).default_pos(ctx.content_rect().left_top() + egui::vec2(260.0, 90.0)).show(ctx, |ui| {
             ui.set_max_width(300.0);
-            ui.label(egui::RichText::new(tr("Choose the rails first, then the open cross section last, and click Use Selection.")).size(12.0).color(crate::theme::MUTED));
+            ui.label(egui::RichText::new(tr("Choose the rails first, then the open cross section last, and click Use Selection.")).size(12.0).color(crate::theme::MUTED()));
             ui.label(tf!("Rails: {}, cross sections: {}", form.rails.len(), form.sections.len()));
             ui.horizontal(|ui| {
                 use_selection = ui.button(tr("Use Selection")).clicked();
@@ -885,7 +885,7 @@ impl App {
                 ui.label(egui::RichText::new(match name {
                     Some(n) => tf!("Cross section: the component {}", n),
                     None => tr("Without an open cross section, the chosen component is used.").to_string(),
-                }).size(12.0).color(crate::theme::MUTED));
+                }).size(12.0).color(crate::theme::MUTED()));
             }
             ui.checkbox(&mut form.sharp_corners, tr("Create sharp corners"));
             ui.add_enabled_ui(form.sections.is_empty(), |ui| {

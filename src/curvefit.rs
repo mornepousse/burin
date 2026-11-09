@@ -89,7 +89,7 @@ impl App {
         let mut apply = false;
         let unit = self.doc.job.unit();
         egui::Window::new(tr("Curve Fit Vectors")).id(egui::Id::unique("curve-fit")).open(&mut open).collapsible(false).resizable(false).default_width(360.0).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
-            ui.label(RichText::new(tr("Smooths the selected shapes: points closer than the tolerance to the line go, and a smooth curve passes through the rest.")).color(crate::theme::MUTED));
+            ui.label(RichText::new(tr("Smooths the selected shapes: points closer than the tolerance to the line go, and a smooth curve passes through the rest.")).color(crate::theme::MUTED()));
             ui.horizontal(|ui| {
                 ui.label(tr("Tolerance"));
                 ui.add(egui::DragValue::new(&mut self.curve_fit_tolerance).speed(0.01).range(0.0001..=100.0).suffix(format!(" {unit}")));

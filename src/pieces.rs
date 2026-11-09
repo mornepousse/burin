@@ -253,7 +253,7 @@ impl App {
         crate::ui::bold(ui, tr("Pieces"));
         let rows = self.doc.pieces();
         if rows.is_empty() {
-            ui.label(RichText::new(tr("None yet. Select shapes, then use Make Piece in Edit Shapes.")).size(11.5).color(crate::theme::MUTED));
+            ui.label(RichText::new(tr("None yet. Select shapes, then use Make Piece in Edit Shapes.")).size(11.5).color(crate::theme::MUTED()));
             return;
         }
         for row in rows {
@@ -282,7 +282,7 @@ impl App {
             let cutting = self.toolpaths_cutting(&row.shapes);
             let names: Vec<&str> = cutting.iter().map(|i| self.doc.toolpaths[*i].op.name.as_str()).collect();
             let text = if names.is_empty() { tf!("{} shapes. No toolpath yet.", row.shapes.len()) } else { tf!("{} shapes. Toolpaths: {}", row.shapes.len(), names.join(", ")) };
-            ui.add(egui::Label::new(RichText::new(text).size(11.5).color(crate::theme::MUTED)).wrap());
+            ui.add(egui::Label::new(RichText::new(text).size(11.5).color(crate::theme::MUTED())).wrap());
             if !self.all_behind && cutting.iter().any(|i| self.behind.contains(i)) {
                 let response = ui.button(tf!("Recalculate for {}", row.name)).on_hover_text(tr("Only the toolpaths that cut this piece and are out of date. A toolpath shared with other pieces is worked out for all of them."));
                 if response.clicked() {
@@ -308,7 +308,7 @@ impl App {
             }
         });
         if self.save_piece.is_some() {
-            ui.label(RichText::new(tr("Worked out again for this piece alone as the file is saved. The toolpaths in the project stay as they are.")).size(11.5).color(crate::theme::MUTED));
+            ui.label(RichText::new(tr("Worked out again for this piece alone as the file is saved. The toolpaths in the project stay as they are.")).size(11.5).color(crate::theme::MUTED()));
         }
     }
 }

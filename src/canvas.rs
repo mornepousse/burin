@@ -977,11 +977,11 @@ impl App {
 
     fn paint_sheet(&mut self, ui: &egui::Ui, rect: Rect) {
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0.0, theme::WORKSPACE);
+        painter.rect_filled(rect, 0.0, theme::WORKSPACE());
         let (w, h) = (self.doc.job.width, self.doc.job.height);
         let sheet = Rect::from_two_pos(self.to_screen([0.0, 0.0]), self.to_screen([w, h]));
         // Faint lines through the origin, as in the pictures.
-        let axis = Stroke::new(1.0, theme::CARD);
+        let axis = Stroke::new(1.0, theme::CARD());
         let zero = self.to_screen([0.0, 0.0]);
         painter.line_segment([pos2(rect.left(), zero.y), pos2(rect.right(), zero.y)], axis);
         painter.line_segment([pos2(zero.x, rect.top()), pos2(zero.x, rect.bottom())], axis);
@@ -1129,9 +1129,9 @@ impl App {
             if matches!(self.drag, Drag::Move { .. } | Drag::Rotate { .. } | Drag::Scale { .. }) {
                 if let Some(at) = ui.ctx().pointer_latest_pos() {
                     let shown = if self.typed.is_empty() { crate::i18n::tr("Type a value, then Enter").to_string() } else { self.typed.clone() };
-                    let r = painter.text(at + vec2(16.0, 18.0), egui::Align2::LEFT_TOP, shown, egui::FontId::proportional(12.5), theme::TEXT);
-                    painter.rect_filled(r.expand(4.0), 4.0, theme::CARD);
-                    painter.text(at + vec2(16.0, 18.0), egui::Align2::LEFT_TOP, if self.typed.is_empty() { crate::i18n::tr("Type a value, then Enter").to_string() } else { self.typed.clone() }, egui::FontId::proportional(12.5), theme::TEXT);
+                    let r = painter.text(at + vec2(16.0, 18.0), egui::Align2::LEFT_TOP, shown, egui::FontId::proportional(12.5), theme::TEXT());
+                    painter.rect_filled(r.expand(4.0), 4.0, theme::CARD());
+                    painter.text(at + vec2(16.0, 18.0), egui::Align2::LEFT_TOP, if self.typed.is_empty() { crate::i18n::tr("Type a value, then Enter").to_string() } else { self.typed.clone() }, egui::FontId::proportional(12.5), theme::TEXT());
                 }
             }
             let turning = self.rotate_handles();
@@ -1228,8 +1228,8 @@ impl App {
         let colours = |bold: bool, paper: bool| match (bold, paper) {
             (false, true) => theme::GRID_FINE,
             (true, true) => theme::GRID_BOLD,
-            (false, false) => theme::GRID_FINE_DARK,
-            (true, false) => theme::GRID_BOLD_DARK,
+            (false, false) => theme::GRID_FINE_DARK(),
+            (true, false) => theme::GRID_BOLD_DARK(),
         };
         for paper in [false, true] {
             let target = if paper { &on_sheet } else { painter };
@@ -1365,23 +1365,23 @@ impl App {
         // On the bottom side of a two-sided job the rulers turn orange, as the original's do
         // (its Bottom Side Ruler Colour, `secondaryRulerColour`, `0x64C2ED` at `0x142e6100c`).
         let bottom = self.doc.job.two_sided && self.doc.active_face == 1;
-        let bg = if bottom { theme::BOTTOM_RULER } else { theme::CHROME };
+        let bg = if bottom { theme::BOTTOM_RULER } else { theme::CHROME() };
         let top = Rect::from_min_max(pos2(sheet.left(), full.top()), pos2(sheet.right(), sheet.top()));
         let left = Rect::from_min_max(pos2(full.left(), sheet.top()), pos2(sheet.left(), sheet.bottom()));
         painter.rect_filled(top, 0.0, bg);
         painter.rect_filled(left, 0.0, bg);
         let corner = Rect::from_min_max(full.min, sheet.min);
-        painter.rect_filled(corner, 0.0, theme::CHROME);
-        painter.rect_stroke(corner.shrink(4.0), 0.0, Stroke::new(1.0, theme::LINE), StrokeKind::Inside);
-        let edge = Stroke::new(1.0, theme::LINE);
+        painter.rect_filled(corner, 0.0, theme::CHROME());
+        painter.rect_stroke(corner.shrink(4.0), 0.0, Stroke::new(1.0, theme::LINE()), StrokeKind::Inside);
+        let edge = Stroke::new(1.0, theme::LINE());
         painter.line_segment([top.left_bottom(), top.right_bottom()], edge);
         painter.line_segment([left.right_top(), left.right_bottom()], edge);
 
         let major = nice_step(170.0 / self.scale as f64);
         let minor = major / 16.0;
-        let tick = Stroke::new(1.0, if bottom { theme::SHEET_INK } else { theme::FAINT });
+        let tick = Stroke::new(1.0, if bottom { theme::SHEET_INK } else { theme::FAINT() });
         let font = FontId::proportional(12.0);
-        let text_c = if bottom { theme::SHEET_INK } else { theme::MUTED };
+        let text_c = if bottom { theme::SHEET_INK } else { theme::MUTED() };
         let tick_len = |i: i64| -> f32 {
             if i % 16 == 0 { 10.0 } else if i % 8 == 0 { 8.0 } else if i % 4 == 0 { 6.0 } else if i % 2 == 0 { 4.0 } else { 2.5 }
         };
@@ -1437,8 +1437,8 @@ impl App {
         let pos_y = (self.origin.y - h - sheet.top() + sheet.height()) / total_y;
 
         let painter = ui.painter();
-        let trough = theme::CHROME;
-        let thumb_fill = theme::BUTTON;
+        let trough = theme::CHROME();
+        let thumb_fill = theme::BUTTON();
         let thumb_line = Stroke::NONE;
         for bar in [bar_h, bar_v] {
             painter.rect_filled(bar, 0.0, trough);
@@ -1454,7 +1454,7 @@ impl App {
         for t in [h_thumb, v_thumb] {
             painter.rect(t, 4.0, thumb_fill, thumb_line, StrokeKind::Inside);
         }
-        let arrow = theme::MUTED;
+        let arrow = theme::MUTED();
         let tri = |c: Pos2, dir: egui::Vec2| {
             let side = vec2(-dir.y, dir.x);
             Shape::convex_polygon(vec![c + dir * 3.0, c - dir * 2.0 + side * 3.0, c - dir * 2.0 - side * 3.0], arrow, Stroke::NONE)

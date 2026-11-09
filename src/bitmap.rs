@@ -269,9 +269,9 @@ fn slider_ends(ui: &mut Ui, low: &str, high: &str) {
     let width = ui.spacing().slider_width;
     ui.allocate_ui_with_layout(vec2(width, 12.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.set_width(width);
-        ui.label(RichText::new(low).size(10.5).color(theme::MUTED));
+        ui.label(RichText::new(low).size(10.5).color(theme::MUTED()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(RichText::new(high).size(10.5).color(theme::MUTED));
+            ui.label(RichText::new(high).size(10.5).color(theme::MUTED()));
         });
     });
 }
@@ -478,7 +478,7 @@ impl App {
                             let mut on = f.ticked.get(k).copied().unwrap_or(false);
                             let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
                             ui.painter().rect_filled(r, 2.0, Color32::from_rgb(c[0], c[1], c[2]));
-                            ui.painter().rect_stroke(r, 2.0, egui::Stroke::new(1.0, theme::LINE), egui::StrokeKind::Inside);
+                            ui.painter().rect_stroke(r, 2.0, egui::Stroke::new(1.0, theme::LINE()), egui::StrokeKind::Inside);
                             if ui.checkbox(&mut on, "").changed() {
                                 if let Some(t) = f.ticked.get_mut(k) {
                                     *t = on;
@@ -490,7 +490,7 @@ impl App {
                 }
                 None => {
                     bold(ui, crate::i18n::tr("No bitmap selected"));
-                    ui.label(RichText::new(crate::i18n::tr("Import a picture to fit vectors to.")).color(theme::MUTED));
+                    ui.label(RichText::new(crate::i18n::tr("Import a picture to fit vectors to.")).color(theme::MUTED()));
                 }
             }
         });

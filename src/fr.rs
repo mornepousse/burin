@@ -15,6 +15,8 @@ pub const FR: &[(&str, &str)] = &[
     ("Don't Save", "Ne pas enregistrer"),
     ("Cancel", "Annuler"),
     ("Find a command", "Chercher une commande"),
+    ("Look", "Apparence"),
+    ("Light (workshop)", "Clair (atelier)"),
     ("Selected shape", "Forme sélectionnée"),
     ("{} shapes selected", "{} formes sélectionnées"),
     ("W", "L"),

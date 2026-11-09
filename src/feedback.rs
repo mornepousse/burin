@@ -149,7 +149,7 @@ impl App {
                 });
             });
             ui.add_space(4.0);
-            ui.label(RichText::new(tr("Burin sends nothing by itself. The draft opens in your browser and goes nowhere until you submit it. Your job and its file names are never in it.")).size(12.0).color(theme::MUTED));
+            ui.label(RichText::new(tr("Burin sends nothing by itself. The draft opens in your browser and goes nowhere until you submit it. Your job and its file names are never in it.")).size(12.0).color(theme::MUTED()));
             ui.add_space(6.0);
             let ready = !form.title.trim().is_empty();
             ui.horizontal_wrapped(|ui| {
@@ -183,7 +183,7 @@ impl App {
                 }
             });
             if self.issues_page.is_none() {
-                ui.label(RichText::new(tr("This copy of Burin doesn't know where to send drafts. Copy the text instead.")).size(12.0).color(theme::MUTED));
+                ui.label(RichText::new(tr("This copy of Burin doesn't know where to send drafts. Copy the text instead.")).size(12.0).color(theme::MUTED()));
             }
             if let Some(said) = &form.said {
                 ui.label(RichText::new(said).color(theme::ACCENT));
@@ -208,10 +208,10 @@ impl App {
         let mut remove_all = false;
         egui::Window::new(tr("Crash Reports")).id(egui::Id::unique("crash-reports")).open(&mut open).collapsible(false).default_width(640.0).default_height(420.0).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
             if reports.is_empty() {
-                ui.label(RichText::new(tr("No crash reports.")).color(theme::MUTED));
+                ui.label(RichText::new(tr("No crash reports.")).color(theme::MUTED()));
                 return;
             }
-            ui.label(RichText::new(tr("These stay on this computer. Nothing is sent unless you choose to report one.")).size(12.0).color(theme::MUTED));
+            ui.label(RichText::new(tr("These stay on this computer. Nothing is sent unless you choose to report one.")).size(12.0).color(theme::MUTED()));
             ui.add_space(4.0);
             egui::ScrollArea::vertical().id_salt("crash-list").max_height(130.0).show(ui, |ui| {
                 for (i, r) in reports.iter().enumerate() {

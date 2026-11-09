@@ -12,7 +12,7 @@ use crate::ui::{bold, card, primary, count_box, icon_button, icon_button_saying,
 use egui::{vec2, Rect, RichText, Sense, Stroke, StrokeKind, TextEdit, Ui};
 
 fn note(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).size(11.5).color(theme::MUTED));
+    ui.label(RichText::new(text).size(11.5).color(theme::MUTED()));
 }
 
 /// Picks one of the four corners or the middle of a box.
@@ -25,7 +25,7 @@ pub fn anchor_grid(ui: &mut Ui, value: &mut Datum, name: &str) {
 pub fn anchor_grid_with(ui: &mut Ui, value: &mut Datum, name: &str, centre: bool) {
     let (square, _) = ui.allocate_exact_size(vec2(58.0, 54.0), Sense::hover());
     let inner = square.shrink(7.0);
-    ui.painter().rect_stroke(inner, 0.0, Stroke::new(1.0, theme::LINE), StrokeKind::Inside);
+    ui.painter().rect_stroke(inner, 0.0, Stroke::new(1.0, theme::LINE()), StrokeKind::Inside);
     for (spot, datum) in [
         (inner.left_top(), Datum::TopLeft),
         (inner.right_top(), Datum::TopRight),
@@ -38,7 +38,7 @@ pub fn anchor_grid_with(ui: &mut Ui, value: &mut Datum, name: &str, centre: bool
         }
         let hit = Rect::from_center_size(spot, vec2(14.0, 14.0));
         let resp = ui.interact(hit, ui.make_persistent_id((name, format!("{datum:?}"))), Sense::click());
-        ui.painter().circle(spot, 5.5, theme::INPUT, Stroke::new(1.0, theme::MUTED));
+        ui.painter().circle(spot, 5.5, theme::INPUT(), Stroke::new(1.0, theme::MUTED()));
         if *value == datum {
             ui.painter().circle_filled(spot, 3.0, theme::ACCENT);
         }
@@ -253,7 +253,7 @@ impl App {
                     self.start_constraint_form();
                 }
                 if !self.doc.constraints.is_empty() {
-                    ui.label(RichText::new(tf!("{} rules", self.doc.constraints.len())).color(theme::MUTED));
+                    ui.label(RichText::new(tf!("{} rules", self.doc.constraints.len())).color(theme::MUTED()));
                 }
             });
         }
@@ -505,8 +505,8 @@ impl App {
 
     fn clip_tile(&mut self, ui: &mut Ui, name: &str, paths: &[geom::Path]) -> bool {
         let (rect, resp) = ui.allocate_exact_size(vec2(66.0, 66.0), Sense::click());
-        let line = if resp.hovered() { theme::ACCENT } else { theme::LINE };
-        ui.painter().rect(rect, 5.0, theme::INPUT, Stroke::new(1.0, line), StrokeKind::Inside);
+        let line = if resp.hovered() { theme::ACCENT } else { theme::LINE() };
+        ui.painter().rect(rect, 5.0, theme::INPUT(), Stroke::new(1.0, line), StrokeKind::Inside);
         if let Some((lo, hi)) = geom::bbox(paths) {
             let k = 50.0 / ((hi[0] - lo[0]).max(hi[1] - lo[1]).max(1e-9)) as f32;
             let c = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
@@ -515,7 +515,7 @@ impl App {
                 if p.closed && !pts.is_empty() {
                     pts.push(pts[0]);
                 }
-                ui.painter().add(egui::Shape::line(pts, Stroke::new(1.2, theme::TEXT)));
+                ui.painter().add(egui::Shape::line(pts, Stroke::new(1.2, theme::TEXT())));
             }
         }
         label_widget(&resp, name);
@@ -1499,7 +1499,7 @@ impl App {
             ui.set_width(width - 22.0);
             ui.spacing_mut().item_spacing.y = 4.0;
             // One card for the material: the slab with its zero, then its size and the zero's place.
-            egui::Frame::new().fill(theme::CARD).stroke(egui::Stroke::new(1.0, theme::LINE)).corner_radius(8.0).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+            egui::Frame::new().fill(theme::CARD()).stroke(egui::Stroke::new(1.0, theme::LINE())).corner_radius(8.0).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
                 ui.set_width(width - 40.0);
                 ui.horizontal(|ui| {
                     let (r, resp) = ui.allocate_exact_size(vec2(72.0, 50.0), Sense::click());
@@ -1515,9 +1515,9 @@ impl App {
                     ui.vertical(|ui| {
                         bold(ui, crate::i18n::tr("Material"));
                         let size = format!("{} \u{d7} {} \u{d7} {} {}", toolpath::trim(job.width), toolpath::trim(job.height), toolpath::trim(job.thickness), job.unit());
-                        ui.label(RichText::new(size).size(12.0).color(theme::TEXT));
+                        ui.label(RichText::new(size).size(12.0).color(theme::TEXT()));
                         let text = format!("X0 Y0: {}, {}", toolpath::trim(zero[0]), toolpath::trim(zero[1]));
-                        ui.label(RichText::new(text).size(11.0).color(theme::MUTED));
+                        ui.label(RichText::new(text).size(11.0).color(theme::MUTED()));
                         if wide(ui, crate::i18n::tr("Set ..."), 60.0).clicked() {
                             self.right = RightMode::Material(Box::new(self.doc.clone()));
                         }
@@ -1543,7 +1543,7 @@ impl App {
                     }
                 });
                 // The 3D and textured cuts in amber, the edge cuts in violet: a colour per family.
-                crate::icons::set_tint(Some(theme::HUE_AMBER));
+                crate::icons::set_tint(Some(theme::HUE_AMBER()));
                 icon_row(ui, |ui| {
                     for (icon, tip, kind) in [
                         (Icon::TpPrism, crate::i18n::tr("Prism carve toolpath"), OpKind::Prism),
@@ -1557,7 +1557,7 @@ impl App {
                         }
                     }
                 });
-                crate::icons::set_tint(Some(theme::HUE_VIOLET));
+                crate::icons::set_tint(Some(theme::HUE_VIOLET()));
                 icon_row(ui, |ui| {
                     for (icon, tip, kind) in [(Icon::TpFlute, crate::i18n::tr("Fluting toolpath"), OpKind::Flute), (Icon::TpChamfer, crate::i18n::tr("Chamfer toolpath"), OpKind::Chamfer)] {
                         if icon_button(ui, icon, tip, true, false).clicked() {
@@ -1567,7 +1567,7 @@ impl App {
                 });
             }
             // The tools for toolpaths already made, in blue.
-            crate::icons::set_tint(Some(theme::HUE_BLUE));
+            crate::icons::set_tint(Some(theme::HUE_BLUE()));
             let some = self.selected_tp.is_some();
             let any = !self.doc.toolpaths.is_empty();
             icon_row(ui, |ui| {
@@ -1747,7 +1747,7 @@ impl App {
                     .map(|(_, t)| t.op.name.as_str())
                     .collect();
                 if names.is_empty() {
-                    ui.label(RichText::new(crate::i18n::tr("No Toolpaths")).color(theme::MUTED));
+                    ui.label(RichText::new(crate::i18n::tr("No Toolpaths")).color(theme::MUTED()));
                 }
                 for n in &names {
                     ui.label(*n);
@@ -1942,7 +1942,7 @@ impl App {
         });
         // Always in view, however long the form above it.
         ui.scope_builder(egui::UiBuilder::new().max_rect(bar), |ui| {
-            ui.painter().hline(bar.x_range(), bar.top(), egui::Stroke::new(1.0, theme::LINE));
+            ui.painter().hline(bar.x_range(), bar.top(), egui::Stroke::new(1.0, theme::LINE()));
             egui::Frame::new().inner_margin(egui::Margin { left: 14, right: 14, top: 8, bottom: 8 }).show(ui, |ui| {
                 ui.set_width(bar.width() - 30.0);
                 if let Some(e) = &error {
@@ -2002,7 +2002,7 @@ impl App {
                             if flat {
                                 crate::ui::number_formula(ui, &mut op.flat_depth, &mut op.formulas.flat_depth, 50.0);
                             } else {
-                                ui.label(RichText::new(crate::i18n::tr("None")).color(theme::FAINT));
+                                ui.label(RichText::new(crate::i18n::tr("None")).color(theme::FAINT()));
                             }
                             ui.label(unit);
                         });
@@ -2245,7 +2245,7 @@ impl App {
             ui.allocate_ui(vec2(600.0, 470.0), |ui| ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(226.0);
-                    egui::Frame::new().fill(theme::INPUT).corner_radius(5).inner_margin(6).show(ui, |ui| {
+                    egui::Frame::new().fill(theme::INPUT()).corner_radius(5).inner_margin(6).show(ui, |ui| {
                         ui.set_width(214.0);
                         let mut dropped: Option<(usize, String)> = None;
                         let mut moved: Option<(String, String)> = None;
@@ -2420,7 +2420,7 @@ impl App {
                     bold(ui, crate::i18n::tr("Cutting Parameters"));
                     labelled(ui, crate::i18n::tr("Pass Depth"), 86.0, &mut t.pass_depth, 64.0, unit);
                     labelled(ui, crate::i18n::tr("Flute Length"), 86.0, &mut t.flute_length, 64.0, unit).then_some(()).unwrap_or(());
-                    ui.label(egui::RichText::new(crate::i18n::tr("How deep it can cut. 0 if not known.")).size(11.5).color(crate::theme::MUTED));
+                    ui.label(egui::RichText::new(crate::i18n::tr("How deep it can cut. 0 if not known.")).size(11.5).color(crate::theme::MUTED()));
                     ui.horizontal(|ui| {
                         let mut across = t.dia * t.stepover;
                         if labelled(ui, crate::i18n::tr("Stepover"), 86.0, &mut across, 64.0, unit) && t.dia > 0.0 {

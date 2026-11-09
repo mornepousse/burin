@@ -214,7 +214,7 @@ impl App {
             ui.add(egui::Label::new(text).truncate());
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("{} s", waited.as_secs())).size(11.5).color(crate::theme::MUTED));
+                ui.label(RichText::new(format!("{} s", waited.as_secs())).size(11.5).color(crate::theme::MUTED()));
                 ui.add_space((ui.available_width() - 66.0).max(0.0));
                 stop = ui.button(crate::i18n::tr("Stop")).clicked();
             });

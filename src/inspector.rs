@@ -31,11 +31,11 @@ impl App {
         let mut keep_ratio = self.inspector_keep_ratio;
         let (mut moved, mut sized) = (false, false);
         egui::Area::new(egui::Id::unique("inspector")).fixed_pos(at).order(egui::Order::Foreground).show(ctx, |ui| {
-            egui::Frame::new().fill(theme::CARD).stroke(egui::Stroke::new(1.0, theme::LINE)).corner_radius(10.0).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+            egui::Frame::new().fill(theme::CARD()).stroke(egui::Stroke::new(1.0, theme::LINE())).corner_radius(10.0).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
                 ui.set_width(CARD_W - 20.0);
                 let count = self.selected.len();
                 let title = if count == 1 { tr("Selected shape").to_string() } else { tf!("{} shapes selected", count) };
-                ui.label(RichText::new(title).strong().color(theme::HUE_BLUE));
+                ui.label(RichText::new(title).strong().color(theme::HUE_BLUE()));
                 ui.add_space(2.0);
                 egui::Grid::new("inspector-grid").num_columns(4).spacing([6.0, 4.0]).show(ui, |ui| {
                     ui.label("X");
@@ -59,7 +59,7 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut keep_ratio, tr("Keep proportions"));
-                    ui.label(RichText::new(unit).size(11.0).color(theme::MUTED));
+                    ui.label(RichText::new(unit).size(11.0).color(theme::MUTED()));
                 });
                 if layers.len() > 1 {
                     let shown = layer.and_then(|l| layers.get(l).cloned()).unwrap_or_else(|| tr("Several layers").to_string());

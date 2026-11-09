@@ -958,7 +958,7 @@ impl App {
         let (mut apply, mut cancel) = (false, false);
         egui::Window::new(tr("Create Texture Area")).id(egui::Id::unique("texture-area")).open(&mut open).collapsible(false).resizable(false).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
             ui.set_max_width(320.0);
-            ui.label(egui::RichText::new(tr("The chosen component is repeated inside the chosen closed shapes, or over the whole job. Values are percent of its size.")).size(12.0).color(crate::theme::MUTED));
+            ui.label(egui::RichText::new(tr("The chosen component is repeated inside the chosen closed shapes, or over the whole job. Values are percent of its size.")).size(12.0).color(crate::theme::MUTED()));
             for (label, values, least) in [(tr("Spacing"), &mut form.spacing, TEXTURE_SPACING_LEAST), (tr("Shift every other row or column"), &mut form.shift, 0.0)] {
                 ui.label(egui::RichText::new(label).strong());
                 for (k, axis) in ["X", "Y"].into_iter().enumerate() {
@@ -1032,7 +1032,7 @@ impl App {
         egui::Window::new(tr("Emboss Component")).id(egui::Id::unique("emboss")).open(&mut open).collapsible(false).resizable(false).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
             ui.set_max_width(320.0);
             // The original's warning (`0x3f8`), shown in the form rather than before it.
-            ui.label(egui::RichText::new(tr("Embossing is meant for imported components or 3D models, and works best with high relief.")).size(12.0).color(crate::theme::MUTED));
+            ui.label(egui::RichText::new(tr("Embossing is meant for imported components or 3D models, and works best with high relief.")).size(12.0).color(crate::theme::MUTED()));
             let mut scale = form.scale * 100.0;
             ui.horizontal(|ui| {
                 ui.label(tr("Scale Height"));
@@ -1140,7 +1140,7 @@ impl App {
                 crate::ui::number(ui, &mut wanted, 60.0);
                 ui.label(unit);
             });
-            ui.label(egui::RichText::new(tr("Every visible component is scaled up or down by the same amount.")).size(12.0).color(crate::theme::MUTED));
+            ui.label(egui::RichText::new(tr("Every visible component is scaled up or down by the same amount.")).size(12.0).color(crate::theme::MUTED()));
             ui.horizontal(|ui| {
                 apply = ui.add_enabled(wanted > 0.0, egui::Button::new(tr("OK"))).clicked();
                 cancel = ui.button(tr("Cancel")).clicked();
@@ -1266,7 +1266,7 @@ impl App {
         let (mut apply, mut close) = (false, false);
         egui::Window::new(tr("Add Draft to Model")).id(egui::Id::unique("draft-model")).open(&mut open).collapsible(false).resizable(false).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
             ui.set_max_width(320.0);
-            ui.label(egui::RichText::new(tr("Adjust the angle and press Apply to create a new component: the visible model with the draft angle added.")).size(12.0).color(crate::theme::MUTED));
+            ui.label(egui::RichText::new(tr("Adjust the angle and press Apply to create a new component: the visible model with the draft angle added.")).size(12.0).color(crate::theme::MUTED()));
             ui.horizontal(|ui| {
                 ui.label(tr("Draft Angle"));
                 ui.add(egui::Slider::new(&mut angle, 0.0..=DRAFT_SLIDER_MOST).step_by(1.0).suffix("°"));
@@ -1406,9 +1406,9 @@ impl App {
             let bands = range.map(|(lo, hi)| slice_bands(lo, hi, thickness)).unwrap_or_default();
             if let (Some(first), Some(top)) = (bands.first(), bands.last()) {
                 let (_, hi) = range.unwrap_or((0.0, 0.0));
-                ui.label(egui::RichText::new(tf!("Number of Slices: {}", bands.len())).color(crate::theme::MUTED));
-                ui.label(egui::RichText::new(tf!("Slice Thickness: {} {}", crate::toolpath::trim(first.1 - first.0), unit)).color(crate::theme::MUTED));
-                ui.label(egui::RichText::new(tf!("Top Slice Thickness: {} {}", crate::toolpath::trim(hi - top.0), unit)).color(crate::theme::MUTED));
+                ui.label(egui::RichText::new(tf!("Number of Slices: {}", bands.len())).color(crate::theme::MUTED()));
+                ui.label(egui::RichText::new(tf!("Slice Thickness: {} {}", crate::toolpath::trim(first.1 - first.0), unit)).color(crate::theme::MUTED()));
+                ui.label(egui::RichText::new(tf!("Top Slice Thickness: {} {}", crate::toolpath::trim(hi - top.0), unit)).color(crate::theme::MUTED()));
             }
             ui.checkbox(&mut form.boundaries, tr("Create Boundary Vectors"));
             ui.horizontal(|ui| {
@@ -1472,7 +1472,7 @@ impl App {
         let unit = self.doc.job.unit();
         egui::Window::new(tr("Offset Model")).id(egui::Id::unique("offset-model")).open(&mut open).collapsible(false).resizable(false).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
             ui.set_max_width(320.0);
-            ui.label(egui::RichText::new(tr("Give the offset distance, then OK makes a new component: the visible model with that offset added. Below 0 it goes inward.")).size(12.0).color(crate::theme::MUTED));
+            ui.label(egui::RichText::new(tr("Give the offset distance, then OK makes a new component: the visible model with that offset added. Below 0 it goes inward.")).size(12.0).color(crate::theme::MUTED()));
             ui.horizontal(|ui| {
                 ui.label(tr("Offset Distance"));
                 crate::ui::number(ui, &mut form.distance, 60.0);
