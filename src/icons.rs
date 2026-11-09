@@ -35,7 +35,8 @@ const PAPER: Color32 = Color32::from_rgb(92, 100, 114);
 const WOOD: Color32 = Color32::from_rgb(214, 160, 104);
 const WOOD_DARK: Color32 = Color32::from_rgb(142, 92, 52);
 const TEAL: Color32 = Color32::from_rgb(70, 205, 190);
-const FOLDER: Color32 = Color32::from_rgb(244, 208, 96);
+const SLATE: Color32 = Color32::from_rgb(58, 66, 80);
+const SLATE_EDGE: Color32 = Color32::from_rgb(96, 108, 128);
 
 fn faded(c: Color32) -> Color32 {
     // Blended towards the panel grey, still tinted so it reads as a dimmed icon.
@@ -68,6 +69,38 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
     let dot = |x: f32, y: f32, col: Color32| {
         p.circle_filled(at(x, y), 1.6 * s, tone(col));
     };
+    // The drawing tools' own look: a soft filled shape with a light outline, and small square
+    // handles where it can be grabbed.
+    let wash = |col: Color32| {
+        let t = tone(col);
+        Color32::from_rgba_unmultiplied(t.r(), t.g(), t.b(), 70)
+    };
+    let soft = |pts: &[(f32, f32)], col: Color32| {
+        // A plain mesh fanned from the middle: shapes that aren't convex fill too, and without
+        // the smoothed edges a flat sliver of a triangle would stretch far out of the icon.
+        let mid = pts.iter().fold((0.0, 0.0), |a, q| (a.0 + q.0 / pts.len() as f32, a.1 + q.1 / pts.len() as f32));
+        let colour = wash(col);
+        let mut mesh = egui::epaint::Mesh::default();
+        mesh.colored_vertex(at(mid.0, mid.1), colour);
+        for q in pts {
+            mesh.colored_vertex(at(q.0, q.1), colour);
+        }
+        let n = pts.len() as u32;
+        for i in 0..n {
+            mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
+        }
+        p.add(Shape::mesh(std::sync::Arc::new(mesh)));
+    };
+    let handle = |x: f32, y: f32| {
+        let r = Rect::from_center_size(at(x, y), vec2(3.2 * s, 3.2 * s));
+        p.rect_filled(r, 0.0, tone(BLACK));
+        p.rect_stroke(r, 0.0, Stroke::new(0.8 * s.max(0.8), tone(INK)), StrokeKind::Inside);
+    };
+    // The toolpath icons' base: a slate plate, with the cut drawn on it in teal.
+    let plate = || {
+        p.rect_filled(rect_at(-10.5, -9.5, 10.5, 9.5), 3.0 * s, tone(SLATE));
+        p.rect_stroke(rect_at(-10.5, -9.5, 10.5, 9.5), 3.0 * s, stroke(SLATE_EDGE, 1.0), StrokeKind::Inside);
+    };
     let ring = |x: f32, y: f32, r: f32, col: Color32, w: f32| {
         p.circle_stroke(at(x, y), r * s, stroke(col, w));
     };
@@ -82,32 +115,47 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
 
     match icon {
         Icon::New | Icon::Doc => {
-            fill(&[(-6.0, -9.0), (3.0, -9.0), (7.0, -5.0), (7.0, 9.0), (-6.0, 9.0)], PAPER);
-            closed(&[(-6.0, -9.0), (3.0, -9.0), (7.0, -5.0), (7.0, 9.0), (-6.0, 9.0)], SKY, 1.1);
-            line(&[(3.0, -9.0), (3.0, -5.0), (7.0, -5.0)], SKY, 1.0);
+            let page = [(-7.0, -9.0), (2.0, -9.0), (7.0, -4.0), (7.0, 9.0), (-7.0, 9.0)];
+            fill(&page, SLATE);
+            closed(&page, SLATE_EDGE, 1.1);
+            if icon == Icon::New {
+                p.circle_filled(at(4.0, 5.0), 5.0 * s, tone(TEAL));
+                line(&[(1.5, 5.0), (6.5, 5.0)], INK, 1.6);
+                line(&[(4.0, 2.5), (4.0, 7.5)], INK, 1.6);
+            } else {
+                for y in [-3.0, 0.5, 4.0] {
+                    line(&[(-4.0, y), (4.0, y)], TEAL, 1.0);
+                }
+            }
         }
         Icon::Open | Icon::Folder => {
-            fill(&[(-9.0, -6.0), (-3.0, -6.0), (-1.0, -3.0), (8.0, -3.0), (8.0, 7.0), (-9.0, 7.0)], FOLDER);
-            fill(&[(-7.0, 0.0), (10.0, 0.0), (8.0, 7.0), (-9.0, 7.0)], Color32::from_rgb(252, 228, 140));
-            closed(&[(-9.0, -6.0), (-3.0, -6.0), (-1.0, -3.0), (8.0, -3.0), (8.0, 7.0), (-9.0, 7.0)], Color32::from_rgb(170, 130, 40), 0.9);
+            // A tray with what's in it coming up and out.
+            line(&[(-9.0, 1.0), (-9.0, 8.0), (9.0, 8.0), (9.0, 1.0)], SLATE_EDGE, 1.8);
+            soft(&[(-9.0, 3.0), (9.0, 3.0), (9.0, 8.0), (-9.0, 8.0)], TEAL);
+            line(&[(0.0, 4.0), (0.0, -8.0)], TEAL, 2.0);
+            line(&[(-4.0, -4.0), (0.0, -8.5), (4.0, -4.0)], TEAL, 2.0);
         }
         Icon::Save | Icon::SaveTp => {
-            filled(-8.0, -8.0, 8.0, 8.0, SKY);
-            filled(-5.0, -8.0, 5.0, -2.0, PAPER);
-            filled(-4.0, 2.0, 4.0, 8.0, Color32::from_rgb(235, 90, 80));
+            // Down into a tray.
+            line(&[(-9.0, 1.0), (-9.0, 8.0), (9.0, 8.0), (9.0, 1.0)], SLATE_EDGE, 1.8);
+            soft(&[(-9.0, 3.0), (9.0, 3.0), (9.0, 8.0), (-9.0, 8.0)], TEAL);
+            line(&[(0.0, -9.0), (0.0, 3.5)], TEAL, 2.0);
+            line(&[(-4.0, -0.5), (0.0, 4.0), (4.0, -0.5)], TEAL, 2.0);
             if icon == Icon::SaveTp {
-                line(&[(-10.0, 10.0), (10.0, 10.0)], WOOD_DARK, 2.0);
+                line(&[(-7.0, 11.0), (-3.0, 9.5), (1.0, 11.0), (5.0, 9.5)], BLACK, 1.0);
             }
         }
         Icon::Import => {
-            fill(&[(-9.0, -6.0), (-3.0, -6.0), (-1.0, -3.0), (8.0, -3.0), (8.0, 7.0), (-9.0, 7.0)], FOLDER);
-            line(&[(0.0, -9.0), (0.0, 3.0)], BLUE, 1.8);
-            line(&[(-3.0, 0.0), (0.0, 3.5), (3.0, 0.0)], BLUE, 1.8);
+            // In from the side, into the tray.
+            line(&[(-9.0, 1.0), (-9.0, 8.0), (9.0, 8.0), (9.0, 1.0)], SLATE_EDGE, 1.8);
+            line(&[(9.0, -8.0), (1.0, -8.0), (1.0, 4.0)], TEAL, 2.0);
+            line(&[(-2.5, 0.5), (1.0, 4.5), (4.5, 0.5)], TEAL, 2.0);
         }
         Icon::Export => {
-            fill(&[(-9.0, -6.0), (-3.0, -6.0), (-1.0, -3.0), (8.0, -3.0), (8.0, 7.0), (-9.0, 7.0)], FOLDER);
-            line(&[(0.0, 5.0), (0.0, -8.0)], BLUE, 1.8);
-            line(&[(-3.0, -5.0), (0.0, -8.5), (3.0, -5.0)], BLUE, 1.8);
+            // Up out of the tray and away to the side.
+            line(&[(-9.0, 1.0), (-9.0, 8.0), (9.0, 8.0), (9.0, 1.0)], SLATE_EDGE, 1.8);
+            line(&[(-1.0, 4.0), (-1.0, -6.0), (8.0, -6.0)], TEAL, 2.0);
+            line(&[(4.5, -9.5), (8.5, -6.0), (4.5, -2.5)], TEAL, 2.0);
         }
         Icon::SelectAll => {
             boxed(-8.0, -8.0, 8.0, 8.0, BLUE, 1.0);
@@ -123,10 +171,10 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
             ring(5.0, 7.0, 3.0, RED, 1.4);
         }
         Icon::Copy | Icon::Duplicate => {
-            fill(&[(-8.0, -8.0), (2.0, -8.0), (2.0, 4.0), (-8.0, 4.0)], PAPER);
-            closed(&[(-8.0, -8.0), (2.0, -8.0), (2.0, 4.0), (-8.0, 4.0)], BLUE, 1.0);
-            fill(&[(-2.0, -3.0), (8.0, -3.0), (8.0, 9.0), (-2.0, 9.0)], PAPER);
-            closed(&[(-2.0, -3.0), (8.0, -3.0), (8.0, 9.0), (-2.0, 9.0)], BLUE, 1.0);
+            p.rect_filled(rect_at(-9.0, -9.0, 3.0, 3.0), 2.5 * s, tone(SLATE));
+            p.rect_stroke(rect_at(-9.0, -9.0, 3.0, 3.0), 2.5 * s, stroke(SLATE_EDGE, 1.2), StrokeKind::Inside);
+            p.rect_filled(rect_at(-3.0, -3.0, 9.0, 9.0), 2.5 * s, wash(TEAL));
+            p.rect_stroke(rect_at(-3.0, -3.0, 9.0, 9.0), 2.5 * s, stroke(TEAL, 1.5), StrokeKind::Inside);
         }
         Icon::Paste => {
             filled(-8.0, -7.0, 7.0, 9.0, Color32::from_rgb(190, 150, 90));
@@ -146,114 +194,171 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
             line(&[(k * -8.0, -5.0), (k * -6.5, 2.5), (k * -1.0, -1.0)], BLUE, 1.6);
         }
         Icon::Circle => {
-            ring(0.0, 0.0, 8.0, BLUE, 1.5);
-            dot(0.0, 0.0, YELLOW);
-            dot(8.0, 0.0, YELLOW);
+            p.circle_filled(at(0.0, 0.0), 8.5 * s, wash(TEAL));
+            ring(0.0, 0.0, 8.5, TEAL, 1.6);
+            // Its radius, from the middle out to a handle.
+            line(&[(0.0, 0.0), (6.0, -6.0)], BLACK, 1.1);
+            handle(6.0, -6.0);
         }
         Icon::Ellipse => {
+            // Tilted, with its long axis drawn across.
+            let (sa, ca) = (-0.45f32).sin_cos();
+            let turn = |x: f32, y: f32| (x * ca - y * sa, x * sa + y * ca);
             let pts: Vec<(f32, f32)> = (0..32)
                 .map(|i| {
                     let a = std::f32::consts::TAU * i as f32 / 32.0;
-                    (9.0 * a.cos(), 5.5 * a.sin())
+                    turn(10.0 * a.cos(), 5.0 * a.sin())
                 })
                 .collect();
-            closed(&pts, BLUE, 1.5);
-            dot(0.0, 0.0, YELLOW);
-            dot(9.0, 0.0, YELLOW);
+            soft(&pts, TEAL);
+            closed(&pts, TEAL, 1.6);
+            let (e0, e1) = (turn(-10.0, 0.0), turn(10.0, 0.0));
+            line(&[e0, e1], BLACK, 0.9);
+            handle(e1.0, e1.1);
         }
-        Icon::Rect => boxed(-9.0, -7.0, 9.0, 7.0, BLUE, 1.6),
+        Icon::Rect => {
+            p.rect_filled(rect_at(-9.0, -6.5, 9.0, 6.5), 3.0 * s, wash(TEAL));
+            p.rect_stroke(rect_at(-9.0, -6.5, 9.0, 6.5), 3.0 * s, stroke(TEAL, 1.6), StrokeKind::Inside);
+            handle(9.0, 6.5);
+        }
         Icon::Polygon => {
-            let pts: Vec<(f32, f32)> = (0..5)
+            let pts: Vec<(f32, f32)> = (0..6)
                 .map(|i| {
-                    let a = std::f32::consts::TAU * (i as f32 / 5.0 - 0.25);
-                    (9.0 * a.cos(), 9.0 * a.sin())
+                    let a = std::f32::consts::TAU * i as f32 / 6.0;
+                    (9.5 * a.cos(), 9.5 * a.sin())
                 })
                 .collect();
-            closed(&pts, BLUE, 1.5);
-            dot(0.0, 0.0, YELLOW);
+            soft(&pts, TEAL);
+            closed(&pts, TEAL, 1.6);
+            handle(9.5, 0.0);
         }
         Icon::Star => {
-            let pts: Vec<(f32, f32)> = (0..10)
+            let pts: Vec<(f32, f32)> = (0..12)
                 .map(|i| {
-                    let a = std::f32::consts::TAU * (i as f32 / 10.0 - 0.25);
-                    let r = if i % 2 == 0 { 10.0 } else { 4.2 };
+                    let a = std::f32::consts::TAU * (i as f32 / 12.0 - 0.25);
+                    let r = if i % 2 == 0 { 10.0 } else { 5.0 };
                     (r * a.cos(), r * a.sin())
                 })
                 .collect();
-            closed(&pts, BLUE, 1.5);
-            dot(0.0, 0.0, YELLOW);
+            soft(&pts, TEAL);
+            closed(&pts, TEAL, 1.4);
         }
         Icon::Lines => {
-            line(&[(-8.0, -7.0), (7.0, -7.0), (-6.0, 1.0), (8.0, 7.0)], BLUE, 1.6);
-            dot(-8.0, -7.0, YELLOW);
-            dot(8.0, 7.0, YELLOW);
+            let pts = [(-10.0, -6.0), (-5.0, 7.0), (0.0, -2.0), (5.0, 7.0), (10.0, -6.0)];
+            line(&pts, TEAL, 2.0);
+            for q in pts {
+                handle(q.0, q.1);
+            }
         }
         Icon::Arc => {
-            let pts: Vec<(f32, f32)> = (0..=12)
+            // An arch over a dotted chord.
+            let pts: Vec<(f32, f32)> = (0..=16)
                 .map(|i| {
-                    let a = std::f32::consts::PI * (1.0 + i as f32 / 24.0);
-                    (-9.0 + 18.0 * (a.cos() + 1.0).abs(), 9.0 + 18.0 * a.sin())
+                    let a = std::f32::consts::PI * (1.0 + i as f32 / 16.0);
+                    (9.5 * a.cos(), 5.0 + 11.0 * a.sin())
                 })
                 .collect();
-            line(&pts, BLUE, 1.6);
-            dot(-9.0, 9.0, YELLOW);
-            dot(9.0, -9.0, YELLOW);
+            line(&pts, TEAL, 2.0);
+            for k in 0..5 {
+                let x = -8.0 + k as f32 * 4.0;
+                line(&[(x, 5.0), (x + 2.0, 5.0)], BLACK, 0.9);
+            }
+            handle(-9.5, 5.0);
+            handle(9.5, 5.0);
         }
         Icon::Curve => {
-            let pts: Vec<(f32, f32)> = (0..=24)
+            // A wave across, with the pull of one of its controls.
+            let pts: Vec<(f32, f32)> = (0..=28)
                 .map(|i| {
-                    let t = i as f32 / 24.0;
-                    (8.0 - 16.0 * t, 8.0 * (std::f32::consts::TAU * t).cos() * if t < 0.5 { -1.0 } else { 1.0 } * (1.0 - t * 0.2))
+                    let t = i as f32 / 28.0;
+                    (-10.0 + 20.0 * t, 5.0 * (std::f32::consts::TAU * t).sin())
                 })
                 .collect();
-            line(&pts, BLUE, 2.0);
+            line(&pts, TEAL, 2.2);
+            line(&[(-5.0, -5.0), (-1.0, -9.0)], BLACK, 0.9);
+            p.circle_filled(at(-1.0, -9.0), 1.5 * s, tone(BLACK));
+            handle(-10.0, 0.0);
+            handle(10.0, 0.0);
         }
         Icon::Spiral => {
             let pts: Vec<(f32, f32)> = (0..=60)
                 .map(|i| {
                     let t = i as f32 / 60.0;
-                    let a = std::f32::consts::TAU * 3.0 * t;
+                    let a = std::f32::consts::TAU * 2.5 * t;
                     (9.5 * t * a.cos(), 9.5 * t * a.sin())
                 })
                 .collect();
-            line(&pts, BLUE, 1.5);
+            line(&pts, TEAL, 1.8);
+            handle(pts[60].0, pts[60].1);
         }
-        Icon::Text => word("T", 24.0, BLUE),
+        Icon::Text => {
+            p.text(at(-4.5, 1.0), Align2::CENTER_CENTER, "A", FontId::proportional(20.0 * s), tone(TEAL));
+            p.text(at(5.0, 3.0), Align2::CENTER_CENTER, "a", FontId::proportional(14.0 * s), tone(BLACK));
+        }
         Icon::Measure => {
-            line(&[(-9.0, 6.0), (9.0, 6.0)], BLACK, 1.5);
-            line(&[(-9.0, 3.0), (-9.0, 9.0)], BLACK, 1.5);
-            line(&[(9.0, 3.0), (9.0, 9.0)], BLACK, 1.5);
-            word("?", 14.0, BLACK);
+            // A ruler laid across, with its marks.
+            let r = [(-10.0, 1.0), (10.0, 1.0), (10.0, 7.0), (-10.0, 7.0)];
+            fill(&r, WOOD);
+            closed(&r, WOOD_DARK, 1.0);
+            for k in 0..9 {
+                let x = -8.0 + k as f32 * 2.0;
+                let tall = if k % 2 == 0 { 3.0 } else { 1.8 };
+                line(&[(x, 1.0), (x, 1.0 + tall)], INK, 0.8);
+            }
+            line(&[(-8.0, -6.0), (8.0, -6.0)], TEAL, 1.2);
+            handle(-8.0, -6.0);
+            handle(8.0, -6.0);
         }
         Icon::Move => {
-            boxed(-9.0, 0.0, 0.0, 9.0, SKY, 1.2);
-            boxed(-3.0, -8.0, 7.0, 2.0, BLUE, 1.5);
-            line(&[(-5.0, 5.0), (3.0, -4.0)], RED, 1.2);
+            // A shape with arrows out on all four sides.
+            p.rect_filled(rect_at(-3.5, -3.5, 3.5, 3.5), 1.5 * s, wash(TEAL));
+            p.rect_stroke(rect_at(-3.5, -3.5, 3.5, 3.5), 1.5 * s, stroke(TEAL, 1.3), StrokeKind::Inside);
+            for (dx, dy) in [(1.0f32, 0.0f32), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                let (tx, ty) = (dx * 10.0, dy * 10.0);
+                line(&[(dx * 5.5, dy * 5.5), (tx, ty)], BLACK, 1.2);
+                fill(&[(tx + dx * 0.5, ty + dy * 0.5), (tx - dx * 3.0 - dy * 2.5, ty - dy * 3.0 + dx * 2.5), (tx - dx * 3.0 + dy * 2.5, ty - dy * 3.0 - dx * 2.5)], BLACK);
+            }
         }
         Icon::Scale => {
-            boxed(-9.0, -3.0, 2.0, 8.0, SKY, 1.2);
-            boxed(-9.0, -9.0, 9.0, 8.0, BLUE, 1.2);
-            line(&[(-1.0, 1.0), (7.0, -7.0)], RED, 1.2);
+            // A small square grown into a large one from its corner.
+            p.rect_stroke(rect_at(-9.0, -9.0, 9.0, 9.0), 2.0 * s, stroke(SLATE_EDGE, 1.2), StrokeKind::Inside);
+            p.rect_filled(rect_at(-9.0, 1.0, 1.0, 9.0), 1.5 * s, wash(TEAL));
+            p.rect_stroke(rect_at(-9.0, 1.0, 1.0, 9.0), 1.5 * s, stroke(TEAL, 1.3), StrokeKind::Inside);
+            line(&[(-1.0, 1.0), (7.0, -7.0)], BLACK, 1.2);
+            line(&[(2.5, -7.0), (7.0, -7.0), (7.0, -2.5)], BLACK, 1.2);
         }
         Icon::Rotate => {
-            boxed(-5.0, -5.0, 5.0, 5.0, BLUE, 1.3);
-            let pts: Vec<(f32, f32)> = (0..=20)
+            // A tilted shape with the way it turns.
+            let r = [(0.0, -6.0), (6.0, 0.0), (0.0, 6.0), (-6.0, 0.0)];
+            soft(&r, TEAL);
+            closed(&r, TEAL, 1.3);
+            let pts: Vec<(f32, f32)> = (0..=18)
                 .map(|i| {
-                    let a = std::f32::consts::TAU * (0.05 + 0.7 * i as f32 / 20.0);
+                    let a = std::f32::consts::TAU * (0.6 + 0.55 * i as f32 / 18.0);
                     (9.5 * a.cos(), 9.5 * a.sin())
                 })
                 .collect();
-            line(&pts, RED, 1.2);
+            line(&pts, BLACK, 1.2);
+            let (tx, ty) = pts[18];
+            fill(&[(tx + 2.0, ty - 2.5), (tx + 2.5, ty + 2.5), (tx - 2.5, ty + 1.0)], BLACK);
         }
         Icon::Mirror => {
-            line(&[(0.0, -10.0), (0.0, 10.0)], RED, 1.1);
-            closed(&[(-3.0, -7.0), (-3.0, 7.0), (-9.0, 5.0), (-9.0, -5.0)], BLUE, 1.3);
-            closed(&[(3.0, -7.0), (3.0, 7.0), (9.0, 5.0), (9.0, -5.0)], SKY, 1.3);
+            // A triangle and its reflection across a dashed line.
+            for k in 0..5 {
+                let y = -10.0 + k as f32 * 4.5;
+                line(&[(0.0, y), (0.0, y + 2.5)], BLACK, 1.0);
+            }
+            soft(&[(-2.5, -6.0), (-2.5, 7.0), (-10.0, 7.0)], TEAL);
+            closed(&[(-2.5, -6.0), (-2.5, 7.0), (-10.0, 7.0)], TEAL, 1.3);
+            closed(&[(2.5, -6.0), (2.5, 7.0), (10.0, 7.0)], SLATE_EDGE, 1.3);
         }
         Icon::Align => {
-            line(&[(0.0, -10.0), (0.0, 10.0)], RED, 1.1);
-            boxed(-7.0, -8.0, 7.0, -3.0, BLUE, 1.3);
-            boxed(-4.0, 2.0, 4.0, 7.0, BLUE, 1.3);
+            // Bars of different lengths, all against one line.
+            line(&[(-9.0, -10.0), (-9.0, 10.0)], BLACK, 1.2);
+            for (y, len) in [(-6.0, 16.0), (0.0, 10.0), (6.0, 13.0)] {
+                p.rect_filled(rect_at(-8.0, y - 2.0, -8.0 + len, y + 2.0), 1.0 * s, wash(TEAL));
+                p.rect_stroke(rect_at(-8.0, y - 2.0, -8.0 + len, y + 2.0), 1.0 * s, stroke(TEAL, 1.1), StrokeKind::Inside);
+            }
         }
         Icon::Select => {
             fill(&[(-5.0, -10.0), (6.0, 2.0), (1.0, 2.0)], PAPER);
@@ -359,8 +464,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
             filled(-2.5, -3.0, 2.5, 3.0, BLUE);
         }
         Icon::Delete | Icon::Trash => {
-            line(&[(-8.0, -8.0), (8.0, 8.0)], RED, 2.4);
-            line(&[(8.0, -8.0), (-8.0, 8.0)], RED, 2.4);
+            // A bin with its lid.
+            line(&[(-9.0, -6.0), (9.0, -6.0)], RED, 1.8);
+            line(&[(-3.0, -6.0), (-2.0, -9.0), (2.0, -9.0), (3.0, -6.0)], RED, 1.4);
+            closed(&[(-6.5, -4.0), (6.5, -4.0), (5.0, 9.0), (-5.0, 9.0)], RED, 1.6);
+            for x in [-2.5, 2.5] {
+                line(&[(x, -1.0), (x * 0.8, 6.0)], RED, 1.0);
+            }
         }
         Icon::Offset => {
             boxed(-10.0, -10.0, 10.0, 10.0, RED, 1.2);
@@ -393,67 +503,102 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
             closed(&pts, Color32::from_gray(190), 1.2);
         }
         Icon::TpProfile => {
-            tile();
-            closed(&[(-6.0, -3.0), (4.0, -5.5), (7.0, 3.0), (-3.0, 5.5)], INK, 1.8);
+            plate();
+            p.rect_stroke(rect_at(-6.5, -5.5, 6.5, 5.5), 2.5 * s, stroke(TEAL, 1.8), StrokeKind::Middle);
+            // Which way the cut goes round.
+            line(&[(-1.5, -8.0), (1.5, -5.5), (-1.5, -3.0)], BLACK, 1.3);
         }
         Icon::TpPocket => {
-            tile();
-            fill(&[(-6.0, -2.5), (4.0, -5.0), (6.5, 2.5), (-3.5, 5.0)], WOOD_DARK);
+            plate();
+            p.rect_filled(rect_at(-7.0, -6.0, 7.0, 6.0), 2.5 * s, wash(TEAL));
+            for (k, r) in [(0.0, 2.5), (2.6, 1.6), (5.0, 0.8)] {
+                p.rect_stroke(rect_at(-7.0 + k, -6.0 + k, 7.0 - k, 6.0 - k), r * s, stroke(TEAL, 1.3), StrokeKind::Middle);
+            }
         }
         Icon::TpDrill => {
-            tile();
-            for (x, y) in [(-5.0, -2.0), (0.0, -3.5), (5.0, -4.5), (-3.0, 3.0), (2.0, 2.0), (6.0, 1.0)] {
-                p.circle_filled(at(x, y), 1.4 * s, tone(Color32::from_rgb(70, 45, 25)));
+            plate();
+            for (x, y) in [(-5.0, 3.0), (0.0, -3.5), (5.0, 3.0)] {
+                ring(x, y, 2.6, TEAL, 1.3);
+                line(&[(x - 4.0, y), (x + 4.0, y)], BLACK, 0.7);
+                line(&[(x, y - 4.0), (x, y + 4.0)], BLACK, 0.7);
             }
         }
         Icon::TpEngrave => {
-            word("T", 26.0, WOOD);
+            plate();
+            // A single line, as an engraving tool follows it.
+            let pts: Vec<(f32, f32)> = (0..=40).map(|i| {
+                let t = i as f32 / 40.0;
+                let a = std::f32::consts::TAU * 1.5 * t;
+                (-8.0 + 16.0 * t + 2.5 * a.sin(), 3.0 - 5.0 * a.cos() * (1.0 - t * 0.4))
+            }).collect();
+            line(&pts, TEAL, 1.4);
         }
         Icon::TpVCarve => {
-            tile();
-            line(&[(-4.0, -4.0), (0.0, 5.0), (4.0, -5.0)], INK, 1.8);
+            plate();
+            // The groove a V-bit leaves, seen end on.
+            soft(&[(-4.0, -3.0), (4.0, -3.0), (0.0, 6.0)], TEAL);
+            line(&[(-9.0, -3.0), (-4.0, -3.0), (0.0, 6.0), (4.0, -3.0), (9.0, -3.0)], TEAL, 1.6);
         }
         Icon::TpRough => {
-            tile();
-            for i in 0..4 {
-                let o = i as f32 * 3.2 - 5.0;
-                line(&[(-6.0 + o * 0.25, o - 1.0), (6.0 + o * 0.25, o - 4.0)], WOOD_DARK, 1.4);
-            }
+            plate();
+            // Terraces, level by level.
+            line(&[(-9.0, 6.5), (-9.0, 3.0), (-5.5, 3.0), (-5.5, -0.5), (-2.0, -0.5), (-2.0, -4.0), (2.0, -4.0), (2.0, -0.5), (5.5, -0.5), (5.5, 3.0), (9.0, 3.0), (9.0, 6.5)], TEAL, 1.6);
         }
         Icon::TpFinish => {
-            p.circle_filled(at(0.0, 0.0), 8.0 * s, tone(Color32::from_rgb(120, 110, 100)));
-            p.circle_filled(at(-2.5, -3.0), 3.5 * s, tone(Color32::from_rgb(226, 220, 210)));
+            plate();
+            // A smooth hill, with the fine passes that leave it so.
+            let hill: Vec<(f32, f32)> = (0..=20).map(|i| {
+                let t = i as f32 / 20.0 * 2.0 - 1.0;
+                (t * 9.0, 6.0 - 10.0 * (1.0 - t * t))
+            }).collect();
+            for k in -3..=3 {
+                let x = k as f32 * 2.4;
+                let t = x / 9.0;
+                line(&[(x, 6.5), (x, 6.0 - 10.0 * (1.0 - t * t) + 1.0)], SLATE_EDGE, 0.8);
+            }
+            line(&hill, TEAL, 1.8);
         }
         Icon::Tools => {
-            for x in [-7.0f32, 0.0, 7.0] {
-                filled(x - 1.5, -9.0, x + 1.5, 1.0, Color32::from_gray(150));
-                filled(x - 1.5, 1.0, x + 1.5, 9.0, Color32::from_rgb(220, 180, 80));
+            // One bit: its shank and its flutes, upright.
+            filled(-2.5, -10.0, 2.5, -1.0, SLATE_EDGE);
+            fill(&[(-3.0, -1.0), (3.0, -1.0), (3.0, 7.0), (0.0, 10.0), (-3.0, 7.0)], TEAL);
+            for y in [1.0, 4.0, 7.0] {
+                line(&[(-3.0, y + 1.5), (3.0, y - 1.5)], INK, 1.0);
             }
         }
         Icon::Edit => {
-            fill(&[(-8.0, -9.0), (5.0, -9.0), (5.0, 9.0), (-8.0, 9.0)], PAPER);
-            closed(&[(-8.0, -9.0), (5.0, -9.0), (5.0, 9.0), (-8.0, 9.0)], BLUE, 1.0);
-            line(&[(-2.0, 6.0), (9.0, -6.0)], RED, 2.2);
+            // Sliders, set to different places.
+            for (y, k) in [(-6.0, -3.0), (0.0, 4.0), (6.0, -1.0)] {
+                line(&[(-9.0, y), (9.0, y)], SLATE_EDGE, 1.4);
+                p.circle_filled(at(k, y), 2.6 * s, tone(TEAL));
+            }
         }
         Icon::Clock => {
-            p.circle_filled(c, 9.0 * s, tone(PAPER));
-            ring(0.0, 0.0, 9.0, RED, 1.6);
-            line(&[(0.0, -6.0), (0.0, 0.0), (4.0, 2.0)], BLACK, 1.4);
+            // A stopwatch.
+            p.circle_filled(at(0.0, 2.0), 8.0 * s, tone(SLATE));
+            ring(0.0, 2.0, 8.0, TEAL, 1.6);
+            filled(-2.0, -10.0, 2.0, -7.0, TEAL);
+            line(&[(0.0, 2.0), (3.5, -2.5)], BLACK, 1.4);
         }
         Icon::Preview => {
-            tile();
-            p.circle_filled(at(0.0, -3.0), 4.0 * s, tone(Color32::from_rgb(120, 76, 36)));
-            filled(-1.0, -11.0, 1.0, -4.0, Color32::from_rgb(214, 180, 70));
+            plate();
+            fill(&[(-4.0, -6.0), (6.5, 0.0), (-4.0, 6.0)], TEAL);
         }
         Icon::Recalc => {
-            let pts: Vec<(f32, f32)> = (0..=22)
-                .map(|i| {
-                    let a = std::f32::consts::TAU * (0.1 + 0.8 * i as f32 / 22.0);
-                    (8.0 * a.cos(), 8.0 * a.sin())
-                })
-                .collect();
-            line(&pts, BLUE, 2.0);
-            fill(&[(8.0, -7.0), (10.0, 1.0), (3.0, -2.0)], BLUE);
+            // Two arrows chasing each other round.
+            for half in [0.0f32, 0.5] {
+                let pts: Vec<(f32, f32)> = (0..=12)
+                    .map(|i| {
+                        let a = std::f32::consts::TAU * (half + 0.05 + 0.36 * i as f32 / 12.0);
+                        (8.0 * a.cos(), 8.0 * a.sin())
+                    })
+                    .collect();
+                line(&pts, TEAL, 2.0);
+                let a = std::f32::consts::TAU * (half + 0.41);
+                let (tx, ty) = (8.0 * a.cos(), 8.0 * a.sin());
+                let (dx, dy) = (-a.sin(), a.cos());
+                fill(&[(tx + dx * 3.5, ty + dy * 3.5), (tx - dy * 3.0, ty + dx * 3.0), (tx + dy * 3.0, ty - dx * 3.0)], TEAL);
+            }
         }
         Icon::Snap => {
             boxed(-9.0, -9.0, 9.0, 9.0, BLUE, 1.4);
@@ -580,20 +725,27 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
             line(&[(3.0, -5.0), (-3.0, 0.0), (3.0, 5.0)], Color32::WHITE, 2.0);
         }
         Icon::TextCurve => {
-            let curve: Vec<(f32, f32)> = (0..=16).map(|i| {
-                let t = i as f32 / 16.0 * 2.0 - 1.0;
-                (t * 10.0, 7.0 - 6.0 * (1.0 - t * t))
+            // Letters riding a wave.
+            let wave: Vec<(f32, f32)> = (0..=20).map(|i| {
+                let t = i as f32 / 20.0;
+                (-10.0 + 20.0 * t, 6.0 + 2.5 * (std::f32::consts::TAU * t).sin())
             }).collect();
-            line(&curve, RED, 1.2);
-            word("abc", 13.0, BLUE);
+            line(&wave, TEAL, 1.4);
+            for (k, ch) in ["a", "b", "c"].iter().enumerate() {
+                let x = -6.0 + k as f32 * 6.0;
+                let y = 6.0 + 2.5 * (std::f32::consts::TAU * ((x + 10.0) / 20.0)).sin() - 5.0;
+                p.text(at(x, y), Align2::CENTER_CENTER, *ch, FontId::proportional(11.0 * s), tone(BLACK));
+            }
         }
         Icon::Dimension => {
-            line(&[(-9.0, 5.0), (9.0, 5.0)], BLACK, 1.3);
-            line(&[(-9.0, 2.0), (-9.0, 8.0)], BLACK, 1.3);
-            line(&[(9.0, 2.0), (9.0, 8.0)], BLACK, 1.3);
-            line(&[(-6.0, 3.0), (-9.0, 5.0), (-6.0, 7.0)], BLACK, 1.1);
-            line(&[(6.0, 3.0), (9.0, 5.0), (6.0, 7.0)], BLACK, 1.1);
-            p.text(at(0.0, -4.0), Align2::CENTER_CENTER, "12", FontId::proportional(11.0 * s), tone(BLUE));
+            // A part's width with its figure in a tag above.
+            p.rect_filled(rect_at(-9.0, 3.0, 9.0, 9.0), 1.5 * s, wash(TEAL));
+            p.rect_stroke(rect_at(-9.0, 3.0, 9.0, 9.0), 1.5 * s, stroke(TEAL, 1.2), StrokeKind::Inside);
+            line(&[(-9.0, -1.0), (9.0, -1.0)], BLACK, 1.0);
+            line(&[(-9.0, -3.0), (-9.0, 1.0)], BLACK, 1.0);
+            line(&[(9.0, -3.0), (9.0, 1.0)], BLACK, 1.0);
+            p.rect_filled(rect_at(-6.0, -10.5, 6.0, -3.0), 1.5 * s, tone(PAPER));
+            p.text(at(0.0, -6.8), Align2::CENTER_CENTER, "12", FontId::proportional(9.0 * s), tone(BLACK));
         }
         Icon::Trim => {
             ring(-5.0, 7.0, 2.6, BLACK, 1.2);
@@ -633,20 +785,38 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
             filled(4.0, -1.0, 7.0, 7.0, SKY);
         }
         Icon::TpPrism => {
-            tile();
-            fill(&[(-4.0, 3.0), (-1.0, -5.0), (5.0, -1.0)], WOOD_DARK);
-            closed(&[(-4.0, 3.0), (-1.0, -5.0), (5.0, -1.0)], INK, 1.1);
+            plate();
+            soft(&[(-8.0, 6.0), (0.0, -6.0), (8.0, 6.0)], TEAL);
+            closed(&[(-8.0, 6.0), (0.0, -6.0), (8.0, 6.0)], TEAL, 1.5);
+            line(&[(0.0, -6.0), (0.0, 6.0)], BLACK, 0.8);
         }
         Icon::TpTexture => {
-            tile();
-            for (x, y) in [(-6.0, -2.0), (-1.0, -4.0), (4.0, -5.0), (-4.0, 2.0), (1.0, 1.0), (6.0, 0.0), (-1.0, 5.0), (4.0, 4.0)] {
-                line(&[(x, y), (x + 3.0, y - 0.8)], INK, 1.3);
+            plate();
+            // Rows of little scoops.
+            for (row, y) in [(0, -3.5), (1, 3.5)] {
+                for k in 0..4 {
+                    let x0 = -8.0 + k as f32 * 4.5 + if row == 1 { 2.2 } else { 0.0 };
+                    let cup: Vec<(f32, f32)> = (0..=8).map(|i| {
+                        let a = std::f32::consts::PI * i as f32 / 8.0;
+                        (x0 + 1.8 - 1.8 * a.cos(), y + 1.8 * a.sin())
+                    }).collect();
+                    line(&cup, TEAL, 1.2);
+                }
             }
         }
         Icon::TpMoulding => {
-            fill(&[(-9.0, 7.0), (-3.0, -7.0), (4.0, -7.0), (-2.0, 7.0)], WOOD);
-            fill(&[(-2.0, 7.0), (4.0, -7.0), (9.0, -3.0), (4.0, 9.0)], WOOD_DARK);
-            line(&[(-9.0, 7.0), (-3.0, -7.0)], INK, 1.0);
+            plate();
+            // A moulding's profile: an S, standing on its back.
+            let ogee: Vec<(f32, f32)> = (0..=20).map(|i| {
+                let t = i as f32 / 20.0;
+                (-7.0 + 14.0 * t, -6.0 + 12.0 * (0.5 - 0.5 * (std::f32::consts::PI * t).cos()) + 2.0 * (std::f32::consts::TAU * t).sin())
+            }).collect();
+            let mut shape = ogee.clone();
+            shape.push((7.0, 7.0));
+            shape.push((-7.0, 7.0));
+            soft(&shape, TEAL);
+            line(&ogee, TEAL, 1.6);
+            line(&[(-7.0, -6.0), (-7.0, 7.0), (7.0, 7.0)], BLACK, 0.9);
         }
         Icon::Eye | Icon::EyeOff => {
             let on = icon == Icon::Eye;
@@ -778,16 +948,24 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
             line(&[(-9.0, 0.0), (0.0, -5.0), (9.0, 0.0), (9.0, 3.0), (0.0, 8.0), (-9.0, 3.0), (-9.0, 0.0)], BLUE, 1.1);
         }
         Icon::TpFlute => {
-            tile();
-            for x in [-5.0, 0.0, 5.0] {
-                fill(&[(x, -7.0), (x + 1.7, 0.0), (x, 7.0), (x - 1.7, 0.0)], INK);
+            plate();
+            // Slots that taper in and out, side by side.
+            for y in [-5.0, 0.0, 5.0] {
+                let lens: Vec<(f32, f32)> = (0..16).map(|i| {
+                    let a = std::f32::consts::TAU * i as f32 / 16.0;
+                    (8.0 * a.cos(), y + 1.6 * a.sin())
+                }).collect();
+                soft(&lens, TEAL);
+                closed(&lens, TEAL, 1.1);
             }
         }
         Icon::TpChamfer => {
-            fill(&[(-9.0, 8.0), (-9.0, -3.0), (2.0, -3.0), (9.0, 4.0), (9.0, 8.0)], WOOD);
-            line(&[(2.0, -3.0), (9.0, 4.0)], YELLOW, 2.0);
-            line(&[(-9.0, -3.0), (2.0, -3.0)], INK, 1.0);
-            line(&[(9.0, 4.0), (9.0, 8.0)], INK, 1.0);
+            plate();
+            // An edge with its corner cut at an angle.
+            soft(&[(-8.0, -5.0), (2.0, -5.0), (8.0, 1.0), (8.0, 7.0), (-8.0, 7.0)], SLATE_EDGE);
+            line(&[(-8.0, -5.0), (2.0, -5.0)], BLACK, 1.0);
+            line(&[(2.0, -5.0), (8.0, 1.0)], TEAL, 2.2);
+            line(&[(8.0, 1.0), (8.0, 7.0)], BLACK, 1.0);
         }
         Icon::SnapShapes => {
             line(&[(-8.0, 7.0), (7.0, -8.0)], BLUE, 1.3);
@@ -805,18 +983,21 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
             boxed(-9.0, -8.0, 9.0, 8.0, BLUE, 1.2);
         }
         Icon::Distort => {
-            let top: Vec<(f32, f32)> = (0..=12).map(|i| {
-                let t = i as f32 / 12.0;
-                (-9.0 + 18.0 * t, -8.0 + 4.0 * (std::f32::consts::PI * t).sin())
-            }).collect();
-            line(&top, BLUE, 1.5);
-            let under: Vec<(f32, f32)> = top.iter().map(|q| (q.0, -q.1)).collect();
-            line(&under, BLUE, 1.5);
-            line(&[(-9.0, -8.0), (-9.0, 8.0)], BLUE, 1.5);
-            line(&[(9.0, -8.0), (9.0, 8.0)], BLUE, 1.5);
-            for (x, y) in [(-9.0, -8.0), (9.0, -8.0), (-9.0, 8.0), (9.0, 8.0)] {
-                dot(x, y, YELLOW);
+            // A grid bent into a wave.
+            let bend = |x: f32, y: f32| (x, y + 2.5 * (std::f32::consts::PI * (x + 9.0) / 9.0).sin());
+            for k in 0..4 {
+                let y = -7.5 + k as f32 * 5.0;
+                let row: Vec<(f32, f32)> = (0..=12).map(|i| bend(-9.0 + 1.5 * i as f32, y)).collect();
+                line(&row, TEAL, if k == 0 || k == 3 { 1.4 } else { 0.8 });
             }
+            for k in 0..4 {
+                let x = -9.0 + k as f32 * 6.0;
+                let col: Vec<(f32, f32)> = (0..=6).map(|i| bend(x, -7.5 + 2.5 * i as f32)).collect();
+                line(&col, TEAL, if k == 0 || k == 3 { 1.4 } else { 0.8 });
+            }
+            let (a, b) = (bend(-9.0, -7.5), bend(9.0, 7.5));
+            handle(a.0, a.1);
+            handle(b.0, b.1);
         }
         Icon::Similar => {
             for (x, y, on) in [(-6.0, -6.0, true), (6.0, -6.0, true), (-6.0, 6.0, true), (6.0, 6.0, false)] {
@@ -839,6 +1020,44 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
         Icon::Sample => {
             p.circle_filled(c, 9.0 * s, tone(Color32::from_gray(45)));
             fill(&[(-5.0, 3.0), (3.0, -6.0), (5.0, -4.0), (-3.0, 5.0)], Color32::from_gray(220));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every icon stays inside its own square, give or take a stroke's width: one that drew
+    /// further would leave lines across the panel.
+    #[test]
+    fn every_icon_stays_in_its_square() {
+        let ctx = egui::Context::default();
+        let shown: Vec<Icon> = {
+            use Icon::*;
+            vec![
+                New, Open, Save, Import, Export, SelectAll, Cut, Copy, Paste, Undo, Redo, Circle, Ellipse, Rect, Polygon, Star, Lines, Arc, Curve, Spiral, Text, Measure, Move, Scale, Rotate, Mirror, Align, Select, Nodes, Group, Ungroup, UngroupAll, MakePiece, SelectPiece, AdjustPiece, ReleasePiece, Join, Close, Weld, Subtract, Intersect, Delete, Offset, BlockCopy, CircularCopy, Dome, Layer, Up, Down, TpProfile, TpPocket, TpDrill, TpEngrave, TpVCarve, TpRough, TpFinish, Tools, Edit, Duplicate, Trash, Clock, Preview, Recalc, SaveTp, Snap, SnapObjects, Grid, Pan, ZoomBox, ZoomFit, ZoomSel, ShowVectors, ShowPaths, ShowModel, TileSide, TileStacked, FlipAroundX, FlipAroundY, SideTop, SideBottom, ViewFit, ViewIso, ViewZ, ViewX, ViewY, Play, Pause, Step, End, Rewind, Pin, Collapse, Doc, Folder, Sample, TextCurve, Dimension, Trim, Fillet, Validate, CopyAlong, Nest, TpPrism, TpTexture, TpMoulding, Eye, EyeOff, Locked, Unlocked, Similar, Bulk, Constraint, Trace, Distort, JobSetup, ReliefPicture, ImportModel, ZeroPlane, TpFlute, TpChamfer, SnapShapes,
+            ]
+        };
+        for icon in shown {
+            let square = Rect::from_min_size(egui::pos2(100.0, 100.0), vec2(24.0, 24.0));
+            let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let p = ui.painter().with_clip_rect(Rect::EVERYTHING);
+                paint(&p, square, icon, true);
+            });
+            // The points actually drawn, after the edges are smoothed.
+            let reach = square.expand(4.0);
+            let shapes: Vec<_> = out.shapes.into_iter().filter(|c| {
+                let r = c.shape.visual_bounding_rect();
+                !r.is_positive() || r.min.x > 90.0
+            }).collect();
+            for prim in ctx.tessellate(shapes, 1.0) {
+                if let egui::epaint::Primitive::Mesh(mesh) = prim.primitive {
+                    for v in &mesh.vertices {
+                        assert!(reach.contains(v.pos), "{icon:?} draws at {:?}, outside {square:?}", v.pos);
+                    }
+                }
+            }
         }
     }
 }

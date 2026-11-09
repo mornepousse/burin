@@ -5,7 +5,7 @@ use crate::relief::Grid;
 use egui::epaint::{Mesh, Vertex};
 use egui::{pos2, vec2, Color32, Pos2, Rect, Sense, Shape, Stroke};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -140,6 +140,8 @@ pub struct SurfaceJob {
     key: ImageKey,
     stop: Arc<AtomicBool>,
     pictures: Receiver<Finished>,
+    /// In a browser, which has no threads: the picture made a slice at a time between frames.
+    steps: Option<Box<Steps>>,
 }
 
 impl Drop for SurfaceJob {
@@ -215,8 +217,8 @@ enum Stage {
 const FIRST_EDGE_SAMPLES: usize = 3;
 
 impl Order {
-    fn draw(&self, baked: &Baked, wood: Option<&WoodTable>, stage: Stage, stop: &AtomicBool) -> egui::ColorImage {
-        let scene = Scene {
+    fn scene<'a>(&'a self, baked: &'a Baked, wood: Option<&'a WoodTable>, stage: Stage, stop: Option<&'a AtomicBool>) -> Scene<'a> {
+        Scene {
             proj: self.proj,
             baked,
             wood,
@@ -227,9 +229,13 @@ impl Order {
             palette: self.palette.clone(),
             light: self.light,
             quick: stage != Stage::Last,
-            stop: Some(stop),
+            stop,
             plane: self.plane,
-        };
+        }
+    }
+
+    /// The picture's width and height, and the spots per side of a pixel, then on its edges.
+    fn sizes(&self, baked: &Baked, stage: Stage) -> (usize, usize, usize, usize) {
         let (width, height, samples) = picture_size(self.rect, self.key.pixels_per_point, self.proj.scale, baked.cell, stage != Stage::Moving, self.quick_pixels);
         let (most, edges) = self.key.quality.samples();
         let (samples, refine) = match stage {
@@ -237,12 +243,29 @@ impl Order {
             Stage::First => (1, FIRST_EDGE_SAMPLES),
             Stage::Last => (samples.min(most), edges),
         };
+        (width, height, samples, refine)
+    }
+
+    fn draw(&self, baked: &Baked, wood: Option<&WoodTable>, stage: Stage, stop: &AtomicBool) -> egui::ColorImage {
+        let scene = self.scene(baked, wood, stage, Some(stop));
+        let (width, height, samples, refine) = self.sizes(baked, stage);
         egui::ColorImage::new([width, height], scene.render(self.rect, width, height, samples, refine))
     }
 
-    /// Makes the picture, handing over each one as it is ready, unless it is no longer wanted.
-    fn run(self, stop: &AtomicBool, hand_over: &mut dyn FnMut(Finished)) {
-        let started = crate::platform::Instant::now();
+    /// The stages a picture goes through: one small one while the view moves; otherwise something
+    /// good to look at right away, then as good as the chosen quality asks.
+    fn stages(&self) -> Vec<Stage> {
+        if !self.key.fine {
+            vec![Stage::Moving]
+        } else if self.key.quality != Quality3d::Light {
+            vec![Stage::First, Stage::Last]
+        } else {
+            vec![Stage::Last]
+        }
+    }
+
+    /// The surface and the wood, made if they aren't already.
+    fn prepare(&self) -> (Arc<Baked>, Option<Arc<WoodTable>>) {
         let wood = self.wood.clone().or_else(|| {
             self.wood_for.0.map(|m| {
                 let (_, a, b) = MATERIALS[m.min(MATERIALS.len() - 1)];
@@ -261,6 +284,13 @@ impl Order {
                 Arc::new(baked)
             }
         };
+        (baked, wood)
+    }
+
+    /// Makes the picture, handing over each one as it is ready, unless it is no longer wanted.
+    fn run(self, stop: &AtomicBool, hand_over: &mut dyn FnMut(Finished)) {
+        let started = crate::platform::Instant::now();
+        let (baked, wood) = self.prepare();
         if stop.load(Ordering::Relaxed) {
             return;
         }
@@ -283,6 +313,97 @@ impl Order {
         let picture = self.draw(&baked, wood.as_deref(), Stage::Last, stop);
         if !stop.load(Ordering::Relaxed) {
             hand_over(Finished { key: self.key, baked_for: self.baked_for, baked, wood_for: self.wood_for, wood, picture, seconds: started.elapsed().as_secs_f32() });
+        }
+    }
+}
+
+/// How long a slice of a picture made between frames may take, so a page with no threads keeps
+/// answering while it sharpens. Burin's choice.
+pub const PICTURE_SLICE_MS: f32 = 20.0;
+
+/// A picture made a few rows at a time, for a browser: there, nothing runs beside the page, so a
+/// whole sharp picture at once would freeze it for seconds after every move.
+pub struct Steps {
+    order: Order,
+    baked: Arc<Baked>,
+    wood: Option<Arc<WoodTable>>,
+    /// The stages still to make, first first.
+    stages: Vec<Stage>,
+    pass: Option<Pass>,
+    send: Sender<Finished>,
+    started: crate::platform::Instant,
+}
+
+/// One stage of a picture, part made.
+struct Pass {
+    stage: Stage,
+    width: usize,
+    height: usize,
+    samples: usize,
+    refine: usize,
+    out: Vec<Color32>,
+    /// The picture before its edges were looked at again, once that has begun.
+    first: Option<Vec<Color32>>,
+    row: usize,
+}
+
+impl Steps {
+    fn new(order: Order, send: Sender<Finished>) -> Steps {
+        let started = crate::platform::Instant::now();
+        let (baked, wood) = order.prepare();
+        let mut stages = order.stages();
+        stages.reverse();
+        Steps { order, baked, wood, stages, pass: None, send, started }
+    }
+
+    /// Goes on for about `ms` milliseconds. True once every stage is handed over.
+    fn step(&mut self, ms: f32) -> bool {
+        let began = crate::platform::Instant::now();
+        loop {
+            if self.pass.is_none() {
+                let Some(stage) = self.stages.pop() else { return true };
+                let (width, height, samples, refine) = self.order.sizes(&self.baked, stage);
+                self.pass = Some(Pass { stage, width, height, samples, refine, out: vec![Color32::TRANSPARENT; width * height], first: None, row: 0 });
+            }
+            let pass = self.pass.as_mut().unwrap();
+            let scene = self.order.scene(&self.baked, self.wood.as_deref(), pass.stage, None);
+            let rect = self.order.rect;
+            let (pw, ph) = (rect.width() / pass.width as f32, rect.height() / pass.height as f32);
+            while pass.row < pass.height {
+                let y = pass.row;
+                let line = &mut pass.out[y * pass.width..(y + 1) * pass.width];
+                match &pass.first {
+                    None => scene.base_row(rect, pw, ph, y, line, pass.samples),
+                    Some(first) => scene.refine_row(rect, pw, ph, pass.width, pass.height, first, y, line, pass.refine),
+                }
+                pass.row += 1;
+                if began.elapsed().as_secs_f32() * 1000.0 >= ms {
+                    break;
+                }
+            }
+            if pass.row < pass.height {
+                return false;
+            }
+            if pass.first.is_none() && pass.refine > pass.samples {
+                pass.first = Some(pass.out.clone());
+                pass.row = 0;
+                continue;
+            }
+            let pass = self.pass.take().unwrap();
+            // A first picture is handed over as not yet the sharp one, as when made on a thread.
+            let fine = self.order.key.fine && pass.stage != Stage::First;
+            let _ = self.send.send(Finished {
+                key: ImageKey { fine, ..self.order.key.clone() },
+                baked_for: self.order.baked_for,
+                baked: self.baked.clone(),
+                wood_for: self.order.wood_for,
+                wood: self.wood.clone(),
+                picture: egui::ColorImage::new([pass.width, pass.height], pass.out),
+                seconds: self.started.elapsed().as_secs_f32(),
+            });
+            if began.elapsed().as_secs_f32() * 1000.0 >= ms {
+                return self.stages.is_empty();
+            }
         }
     }
 }
@@ -858,37 +979,48 @@ impl Scene<'_> {
             if self.stopped() {
                 return;
             }
-            for (x, pixel) in row.iter_mut().enumerate() {
-                *pixel = self.pixel(rect, pw, ph, x, y, samples);
-            }
+            self.base_row(rect, pw, ph, y, row, samples);
         });
         if refine <= samples || self.stopped() {
             return out;
         }
         let first = out.clone();
-        let jump = |a: Color32, b: Color32| {
-            let d = |p: u8, q: u8| (p as i32 - q as i32).abs();
-            d(a.r(), b.r()) + d(a.g(), b.g()) + d(a.b(), b.b()) + d(a.a(), b.a()) > 14
-        };
         let first_ref = &first;
         par_rows(&mut out, width, |y, row| {
             if self.stopped() {
                 return;
             }
-            for (x, pixel) in row.iter_mut().enumerate() {
-                let here = first_ref[y * width + x];
-                let mut edge = false;
-                for ny in y.saturating_sub(1)..=(y + 1).min(height - 1) {
-                    for nx in x.saturating_sub(1)..=(x + 1).min(width - 1) {
-                        edge |= jump(here, first_ref[ny * width + nx]);
-                    }
-                }
-                if edge {
-                    *pixel = self.pixel(rect, pw, ph, x, y, refine);
-                }
-            }
+            self.refine_row(rect, pw, ph, width, height, first_ref, y, row, refine);
         });
         out
+    }
+
+    /// One row of the picture at `samples` spots a side.
+    fn base_row(&self, rect: Rect, pw: f32, ph: f32, y: usize, row: &mut [Color32], samples: usize) {
+        for (x, pixel) in row.iter_mut().enumerate() {
+            *pixel = self.pixel(rect, pw, ph, x, y, samples);
+        }
+    }
+
+    /// One row looked at again, closer, wherever its colour jumps from a neighbour's in `first`.
+    #[allow(clippy::too_many_arguments)]
+    fn refine_row(&self, rect: Rect, pw: f32, ph: f32, width: usize, height: usize, first: &[Color32], y: usize, row: &mut [Color32], refine: usize) {
+        let jump = |a: Color32, b: Color32| {
+            let d = |p: u8, q: u8| (p as i32 - q as i32).abs();
+            d(a.r(), b.r()) + d(a.g(), b.g()) + d(a.b(), b.b()) + d(a.a(), b.a()) > 14
+        };
+        for (x, pixel) in row.iter_mut().enumerate() {
+            let here = first[y * width + x];
+            let mut edge = false;
+            for ny in y.saturating_sub(1)..=(y + 1).min(height - 1) {
+                for nx in x.saturating_sub(1)..=(x + 1).min(width - 1) {
+                    edge |= jump(here, first[ny * width + nx]);
+                }
+            }
+            if edge {
+                *pixel = self.pixel(rect, pw, ph, x, y, refine);
+            }
+        }
     }
 }
 
@@ -1012,7 +1144,16 @@ impl App {
 
     /// Takes in the picture made away from the window, if it's ready.
     fn poll_surface(&mut self, ctx: &egui::Context) {
-        let Some(job) = &self.surface_job else { return };
+        let Some(job) = &mut self.surface_job else { return };
+        if let Some(steps) = job.steps.as_mut() {
+            if steps.step(PICTURE_SLICE_MS) {
+                // Done: the last picture is in the channel, and nothing more will come.
+                job.steps = None;
+            } else {
+                ctx.request_repaint();
+            }
+        }
+        let job = &*job;
         let mut ended = false;
         let mut latest = None;
         loop {
@@ -1083,6 +1224,12 @@ impl App {
             return;
         }
         let (send, pictures) = channel();
+        if self.surface_sliced {
+            let steps = Steps::new(order, send);
+            self.surface_job = Some(SurfaceJob { started: crate::platform::Instant::now(), key, stop, pictures, steps: Some(Box::new(steps)) });
+            ctx.request_repaint();
+            return;
+        }
         let (worker_stop, repaint) = (stop.clone(), ctx.clone());
         crate::platform::spawn(move || {
             order.run(&worker_stop, &mut |done| {
@@ -1091,7 +1238,7 @@ impl App {
             });
             repaint.request_repaint();
         });
-        self.surface_job = Some(SurfaceJob { started: crate::platform::Instant::now(), key, stop, pictures });
+        self.surface_job = Some(SurfaceJob { started: crate::platform::Instant::now(), key, stop, pictures, steps: None });
     }
 
     fn gradient_background(painter: &egui::Painter, rect: Rect) {

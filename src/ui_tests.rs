@@ -43,7 +43,7 @@ fn click_at(h: &mut Harness<'static, App>, at: Pos2) {
 fn from_start_screen_to_a_carved_ring() {
     let mut h = harness();
     assert_eq!(h.state().screen, Screen::Start);
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     assert!(matches!(h.state().left, LeftForm::Job { .. }));
     click(&mut h, "OK");
     assert!(matches!(h.state().left, LeftForm::None));
@@ -95,7 +95,7 @@ fn from_start_screen_to_a_carved_ring() {
 #[test]
 fn select_move_and_undo_with_the_mouse() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     click(&mut h, "Draw rectangle");
     let (a, b) = {
@@ -131,7 +131,7 @@ fn select_move_and_undo_with_the_mouse() {
 #[test]
 fn lines_tool_builds_a_closed_shape() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     click(&mut h, "Draw lines");
     for p in [[2.0, 2.0], [5.0, 2.0], [5.0, 5.0]] {
@@ -149,12 +149,12 @@ fn lines_tool_builds_a_closed_shape() {
 #[test]
 fn modeling_tab_makes_a_shape_visible_in_3d() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle([5.0, 5.0], 2.0))], Prim::Free);
     h.state_mut().select_all();
     h.run();
-    click(&mut h, "Modeling");
+    click(&mut h, "3D Model");
     click(&mut h, "Create shape from selection");
     click(&mut h, "Apply");
     assert_eq!(h.state().doc.components.len(), 1);
@@ -166,9 +166,9 @@ fn modeling_tab_makes_a_shape_visible_in_3d() {
 #[test]
 fn tabs_clipart_and_layers_work() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
-    click(&mut h, "Clipart");
+    click(&mut h, "Library");
     click(&mut h, "Heart");
     assert_eq!(h.state().doc.vectors.len(), 1);
     click(&mut h, "Layers");
@@ -180,7 +180,7 @@ fn tabs_clipart_and_layers_work() {
 #[test]
 fn cancel_on_a_new_file_returns_to_the_start_screen() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "Cancel");
     assert_eq!(h.state().screen, Screen::Start);
 }
@@ -189,7 +189,7 @@ fn cancel_on_a_new_file_returns_to_the_start_screen() {
 fn view_tools_stay_clear_of_the_right_panel_in_a_narrow_window() {
     let mut h = Harness::builder().with_size(vec2(943.0, 700.0)).with_accessibility_check(false).build_ui_state(|ui, app: &mut App| app.frame(ui), App::default());
     crate::ui::setup_style(&h.ctx);
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().right_open = true;
     h.run();
@@ -202,7 +202,7 @@ fn view_tools_stay_clear_of_the_right_panel_in_a_narrow_window() {
 #[test]
 fn every_toolpath_form_opens_and_explains_what_it_needs() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().right_open = true;
     h.run();
@@ -231,7 +231,7 @@ fn every_toolpath_form_opens_and_explains_what_it_needs() {
 #[test]
 fn texture_needs_no_selection_and_save_form_lists_it() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().right_open = true;
     h.run();
@@ -248,7 +248,7 @@ fn texture_needs_no_selection_and_save_form_lists_it() {
 #[test]
 fn transform_forms_open_from_the_panel_and_apply() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([3.0, 3.0], 2.0, 2.0, 0.0))], Prim::Free);
     h.state_mut().selected = vec![id];
@@ -269,7 +269,7 @@ fn transform_forms_open_from_the_panel_and_apply() {
 #[test]
 fn fillet_form_rounds_the_clicked_corner() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 4.0, 4.0, 0.0))], Prim::Free);
     h.run();
@@ -282,7 +282,7 @@ fn fillet_form_rounds_the_clicked_corner() {
 #[test]
 fn tools_can_be_kept_in_a_group_of_their_own() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().right_open = true;
     h.run();
@@ -331,7 +331,7 @@ fn tools_can_be_kept_in_a_group_of_their_own() {
 #[test]
 fn the_tool_list_chooses_a_tool_for_the_form() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().right_open = true;
     h.run();
@@ -350,7 +350,7 @@ fn the_tool_list_chooses_a_tool_for_the_form() {
 #[test]
 fn material_setup_cancel_restores_values() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().right_open = true;
     h.run();
@@ -365,7 +365,7 @@ fn material_setup_cancel_restores_values() {
 #[test]
 fn all_holes_of_one_size_can_be_resized_from_the_form() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     for x in [2.0, 4.0, 6.0] {
         let (c, r) = ([x, 3.0], 0.08);
@@ -394,7 +394,7 @@ fn all_holes_of_one_size_can_be_resized_from_the_form() {
 #[test]
 fn a_rule_is_added_by_clicking_on_the_sheet() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     for (x, r) in [(3.0, 0.5), (7.0, 1.0)] {
         let c = [x, 5.0];
@@ -417,7 +417,7 @@ fn a_rule_is_added_by_clicking_on_the_sheet() {
 #[test]
 fn dragging_a_shape_keeps_its_rule() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let mut ids = Vec::new();
     for (x, r) in [(3.0, 0.5), (7.0, 1.0)] {
@@ -441,7 +441,7 @@ fn dragging_a_shape_keeps_its_rule() {
 #[test]
 fn the_grid_button_turns_on_a_grid_with_real_contrast() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     assert!(!h.state().grid);
     click(&mut h, "Show grid");
@@ -461,7 +461,7 @@ fn the_grid_button_turns_on_a_grid_with_real_contrast() {
 #[test]
 fn smart_dimension_with_clicks_then_type_a_value() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[2.0, 5.0], [6.0, 5.0]])], Prim::Free);
     h.run();
@@ -485,7 +485,7 @@ fn smart_dimension_with_clicks_then_type_a_value() {
 #[test]
 fn double_clicking_a_dimension_reopens_its_value_and_dragging_moves_its_label() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[2.0, 5.0], [6.0, 5.0]])], Prim::Free);
     use crate::constraints::{DimMode, Elem};
@@ -506,7 +506,7 @@ fn double_clicking_a_dimension_reopens_its_value_and_dragging_moves_its_label() 
 #[test]
 fn pick_things_first_then_only_fitting_relations_apply() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let a = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[1.0, 2.0], [5.0, 2.0]])], Prim::Free);
     let b = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[1.0, 6.0], [5.0, 8.0]])], Prim::Free);
@@ -531,7 +531,7 @@ fn pick_things_first_then_only_fitting_relations_apply() {
 #[test]
 fn normal_and_construction_can_be_switched_from_the_panel() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let (c, r) = ([5.0, 5.0], 1.0);
     let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle(c, r))], Prim::Circle { c, r });
@@ -546,7 +546,7 @@ fn normal_and_construction_can_be_switched_from_the_panel() {
 #[test]
 fn a_loaded_post_processor_shows_in_the_save_form_with_its_limits() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let def = crate::postp::PostDef::parse(
         "POST_NAME = \"Shop Router\"\nFILE_EXTENSION = \"tap\"\nSUBSTITUTE = \"x\"\nbegin RAPID_MOVE\n\"G0\"\nbegin FEED_MOVE\n\"G1\"\n",
@@ -572,7 +572,7 @@ fn a_loaded_post_processor_shows_in_the_save_form_with_its_limits() {
 fn trimming_a_ruled_shape_with_the_mouse_leaves_it_in_place() {
     use crate::constraints::{DimMode, Elem, Kind};
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let plate = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 6.0, 4.0, 0.0))], Prim::Rect { c: [5.0, 5.0], w: 6.0, h: 4.0, corner: 0.0 });
     h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[5.0, 1.0], [5.0, 9.0]])], Prim::Free);
@@ -606,7 +606,7 @@ fn trimming_a_ruled_shape_with_the_mouse_leaves_it_in_place() {
 fn the_value_box_explains_a_refused_value_and_stays_open() {
     use crate::constraints::{DimMode, Elem, Kind};
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let l = h.state_mut().doc.add_vector(vec![crate::geom::Path::open(vec![[2.0, 5.0], [6.0, 5.0]])], Prim::Free);
     let s = h.state_mut();
@@ -627,7 +627,7 @@ fn the_value_box_explains_a_refused_value_and_stays_open() {
 /// Lines that cross one tall line, ready to be trimmed from the Trim form.
 fn trim_setup() -> Harness<'static, App> {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let line = |p: [f64; 2], q: [f64; 2]| crate::geom::Path::open(vec![p, q]);
     for y in [3.0, 5.0, 7.0] {
@@ -706,7 +706,7 @@ fn a_sweep_that_starts_on_a_dimension_label_still_trims() {
 #[test]
 fn a_long_press_counts_as_a_click_for_the_other_sheet_tools() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 4.0, 4.0, 0.0))], Prim::Free);
     h.run();
@@ -726,7 +726,7 @@ fn a_long_press_counts_as_a_click_for_the_other_sheet_tools() {
 #[test]
 fn the_trace_form_walks_from_nothing_to_vectors() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     click(&mut h, "Trace bitmap");
     assert!(matches!(h.state().left, LeftForm::Trace(_)));
@@ -756,7 +756,7 @@ fn the_trace_form_walks_from_nothing_to_vectors() {
 #[test]
 fn dragging_a_distort_corner_reshapes_the_object() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 4.0, 4.0, 0.0))], Prim::Free);
     h.state_mut().selected = vec![id];
@@ -778,7 +778,7 @@ fn dragging_a_distort_corner_reshapes_the_object() {
 /// A started job with one square, nothing else open.
 fn job_with_square(at: [f64; 2]) -> Harness<'static, App> {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect(at, 2.0, 2.0, 0.0))], Prim::Free);
     h.state_mut().selected = vec![id];
@@ -872,7 +872,7 @@ fn an_svg_file_comes_in_selected_and_at_its_real_size() {
     let file = dir.join("plate.svg");
     std::fs::write(&file, r#"<svg width="2in" height="2in" viewBox="0 0 2 2"><rect x="0.5" y="0.5" width="1" height="1"/><text>hi</text></svg>"#).unwrap();
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let steps = h.state().undo.len();
     h.state_mut().import_drawing(&file).unwrap();
@@ -893,7 +893,7 @@ fn an_svg_file_comes_in_selected_and_at_its_real_size() {
 #[test]
 fn a_relief_form_goes_from_picture_to_3d_shape() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let img = crate::bitmap::Image { w: 4, h: 4, rgba: std::sync::Arc::new(vec![200; 64]) };
     h.state_mut().open_relief_picture("wood.png".into(), &img);
@@ -908,7 +908,7 @@ fn a_relief_form_goes_from_picture_to_3d_shape() {
 #[test]
 fn closing_the_relief_form_adds_nothing() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let img = crate::bitmap::Image { w: 4, h: 4, rgba: std::sync::Arc::new(vec![200; 64]) };
     h.state_mut().open_relief_picture("wood.png".into(), &img);
@@ -923,7 +923,7 @@ fn a_flute_and_a_chamfer_calculate_from_the_toolpath_panel() {
     use crate::toolpath::OpKind;
     for kind in [OpKind::Flute, OpKind::Chamfer] {
         let mut h = harness();
-        click(&mut h, "Create a new file");
+        click(&mut h, "Start a new project");
         click(&mut h, "OK");
         let line = crate::geom::Path::open(vec![[2.0, 2.0], [8.0, 8.0]]);
         let id = h.state_mut().doc.add_vector(vec![line], Prim::Free);
@@ -939,7 +939,7 @@ fn a_flute_and_a_chamfer_calculate_from_the_toolpath_panel() {
 #[test]
 fn the_new_toolpath_icons_open_their_forms() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().right_open = true;
     h.run();
@@ -1032,7 +1032,7 @@ fn the_side_ruler_gives_an_upright_guide_and_the_toolbar_switch_works() {
 #[test]
 fn the_save_form_offers_arcs_and_the_file_uses_them() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle([5.0, 5.0], 2.0))], Prim::Free);
     h.state_mut().selected = vec![id];
@@ -1158,7 +1158,7 @@ fn locked_and_hidden_layers_stay_out_and_shift_adds_without_repeating() {
 /// A started job with one shape selected.
 fn job_with_shape(prim: Prim) -> (Harness<'static, App>, u64) {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let id = h.state_mut().doc.add_vector(prim.paths(), prim);
     h.state_mut().selected = vec![id];
@@ -1249,7 +1249,7 @@ fn shapes_that_forgot_what_they_were_are_recognised_by_their_form() {
         ("Draw rectangle", Path::closed(rect([3.0, 4.0], 3.0, 2.0, 0.0))),
     ] {
         let mut h = harness();
-        click(&mut h, "Create a new file");
+        click(&mut h, "Start a new project");
         click(&mut h, "OK");
         let id = h.state_mut().doc.add_vector(vec![paths], Prim::Free);
         h.state_mut().selected = vec![id];
@@ -1331,7 +1331,7 @@ fn a_rule_on_the_shape_is_explained_when_it_wins() {
 /// A job with a 4 by 2 rectangle, nothing selected.
 fn sketch_rect() -> (Harness<'static, App>, u64) {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().snap = false;
     h.state_mut().snap_shapes = false;
@@ -1395,7 +1395,7 @@ fn a_rule_that_would_crush_a_line_is_refused() {
 fn a_dimension_keeps_a_rectangle_square_even_when_it_forgot_it_was_one() {
     use crate::constraints::{DimMode, Elem};
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 4.0, 2.0, 0.0))], Prim::Free);
     assert!(h.state_mut().make_dimension(&[Elem::Seg { v: id, path: 0, seg: 0 }], DimMode::Smart));
@@ -1449,7 +1449,7 @@ fn dragging_a_side_moves_it_and_a_dimension_stops_it() {
 fn a_fixed_shape_will_not_be_dragged_and_a_circle_drags_by_centre_or_edge() {
     use crate::constraints::{Elem, Kind};
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().snap = false;
     h.state_mut().snap_shapes = false;
@@ -1536,7 +1536,7 @@ fn the_form_tells_what_to_do_and_why_a_rule_was_refused() {
 #[test]
 fn the_planetcnc_format_is_in_the_list_and_uses_arcs() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().doc.set_units(crate::app::Units::Mm);
     let circle = Prim::Circle { c: [100.0, 100.0], r: 40.0 };
@@ -1580,7 +1580,7 @@ fn a_drawing_file_in_an_older_character_set_still_comes_in() {
     bytes.extend_from_slice(b"\n");
     std::fs::write(&file, bytes).unwrap();
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().import_drawing(&file).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
@@ -1866,7 +1866,7 @@ fn the_last_pass_cannot_be_removed_and_clearing_leaves_one() {
 #[test]
 fn the_selector_chooses_by_kind_and_keeps_following_the_drawing() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let hole = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle([2.0, 2.0], 0.2))], Prim::Free);
     let plate = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 2.0, 2.0, 0.0))], Prim::Free);
@@ -2251,7 +2251,7 @@ fn the_move_form_moves_the_zero_and_the_gcode_counts_from_it() {
     h.state_mut().close_left_form();
     h.run();
     // Seen in the toolpath panel, and one click from the settings.
-    h.get_by_label_contains("X: 2.0  Y: 1.0");
+    h.get_by_label_contains("X0 Y0: 2.0, 1.0");
     h.get_all_by_label("X/Y zero").last().unwrap().click();
     h.run();
     assert!(matches!(h.state().right, RightMode::Material(_)));
@@ -2315,7 +2315,7 @@ fn a_new_job_starts_in_millimetres_with_mm_tools() {
     let mut h = harness();
     h.state_mut().metric_by_default = true;
     h.run();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     let j = &h.state().doc.job;
     assert_eq!((j.units, j.width, j.height, j.thickness), (Units::Mm, 600.0, 400.0, 18.0));
@@ -2703,6 +2703,47 @@ fn the_sharp_3d_picture_is_made_away_from_the_window() {
     assert!(h.state().surface_job.is_none());
 }
 
+/// In a browser, which has no threads, the sharp picture is made a slice at a time between frames,
+/// so the page keeps answering: it takes several frames, none of them long, and moving the view
+/// meanwhile drops it at once.
+#[test]
+fn without_threads_the_sharp_picture_comes_a_slice_at_a_time() {
+    let mut h = carved_square();
+    h.state_mut().surface_sliced = true;
+    h.step();
+    assert!(h.state().surface_job.is_some(), "ordered, not made at once");
+    let mut frames = 0;
+    let mut longest = 0f32;
+    while h.state().surface_job.is_some() {
+        let started = std::time::Instant::now();
+        h.step();
+        longest = longest.max(started.elapsed().as_secs_f32() * 1000.0);
+        frames += 1;
+        assert!(frames < 20_000, "the picture never came");
+    }
+    h.step();
+    assert!(h.state().mesh_is_sharp());
+    assert!(frames > 1, "made over {frames} frames");
+    // A frame also draws the window; the slice itself is far shorter than a whole picture.
+    eprintln!("sharp picture over {frames} frames, the longest {longest:.0} ms");
+
+    // Moving the view drops the picture on its way and shows a quick one instead.
+    h.state_mut().cam.yaw += 0.2;
+    h.step();
+    assert!(h.state().surface_job.is_some());
+    let at = egui::pos2(900.0, 500.0);
+    h.hover_at(at);
+    h.step();
+    h.drag_at(at);
+    h.step();
+    h.hover_at(egui::pos2(920.0, 500.0));
+    h.step();
+    assert!(h.state().surface_job.is_none(), "nothing is waited for while it moves");
+    h.drop_at(egui::pos2(930.0, 500.0));
+    wait_for_picture(&mut h);
+    assert!(h.state().mesh_is_sharp());
+}
+
 #[test]
 fn moving_the_view_shows_a_quick_picture_and_the_sharp_one_comes_after() {
     let mut h = carved_square();
@@ -2879,7 +2920,7 @@ fn with_no_board_the_warning_starts_at_the_material_and_says_where_to_enter_one(
 #[test]
 fn the_board_is_set_in_the_job_and_material_forms_and_converts_with_units() {
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     h.get_by_label_contains("Cutting into it brings no warning");
     click(&mut h, "OK");
     h.state_mut().doc.job.spoil_board = 0.125;
@@ -2981,10 +3022,10 @@ fn a_file_of_several_toolpaths_goes_home_once_and_home_follows_the_zero() {
 fn a_panel_section_folds_away_and_comes_back() {
     let mut h = job_with_square([5.0, 5.0]);
     assert!(h.query_by_label("Draw circle").is_some());
-    click(&mut h, "Create Vectors");
+    click(&mut h, "Shapes");
     assert!(h.query_by_label("Draw circle").is_none(), "its tools are hidden");
     assert!(h.query_by_label("Smart dimension").is_some(), "the others stay");
-    click(&mut h, "Create Vectors");
+    click(&mut h, "Shapes");
     assert!(h.query_by_label("Draw circle").is_some());
 }
 
@@ -2993,7 +3034,7 @@ fn a_panel_section_folds_away_and_comes_back() {
 fn leaving_unsaved_work_asks_first() {
     use crate::app::Leave;
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     // A new job with nothing in it has nothing to lose.
     h.state_mut().leave_for(Leave::New);
@@ -3768,13 +3809,13 @@ fn the_language_changes_at_once_from_the_preferences() {
 fn the_interface_can_be_used_in_french() {
     let _french = InFrench::start();
     let mut h = harness();
-    click(&mut h, "Créer un nouveau fichier");
+    click(&mut h, "Commencer un projet");
     h.get_by_label("Une face");
     click(&mut h, "OK");
     let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 2.0, 2.0, 0.0))], crate::app::Prim::Free);
     h.state_mut().selected = vec![id];
     h.run();
-    h.get_by_label("Modifier les objets");
+    h.get_by_label("Modifier les formes");
     h.get_by_label("Créer une pièce");
     assert_eq!(h.state().doc.layers[0].name, "Couche 1");
     // A message with something filled in.
@@ -6010,7 +6051,7 @@ fn tool_groups_can_hold_groups() {
     assert_eq!(group_paths(&groups, &tools), ["Big", "Roughing", "Roughing/Finishing"]);
 
     let mut h = harness();
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().right_open = true;
     h.state_mut().open_tool_list(None);
@@ -6272,7 +6313,7 @@ fn both_sides_preview_from_the_active_side() {
 fn two_sided_buttons_fit_a_narrow_window() {
     let mut h = Harness::builder().with_size(vec2(943.0, 700.0)).with_accessibility_check(false).build_ui_state(|ui, app: &mut App| app.frame(ui), App::default());
     crate::ui::setup_style(&h.ctx);
-    click(&mut h, "Create a new file");
+    click(&mut h, "Start a new project");
     click(&mut h, "OK");
     h.state_mut().right_open = true;
     h.state_mut().doc.job.two_sided = true;
@@ -6823,4 +6864,37 @@ fn the_copies_box_shows_a_shared_count_or_nothing() {
     h.state_mut().doc.nest_copies.insert(b, 7);
     h.run();
     assert!(values(&h).iter().any(|v| v == "7"), "{:?}", values(&h));
+}
+
+/// Two workspaces, as Affinity's personas: Design shows the drawing panel alone, Machining the
+/// toolpath panel alone. The buttons switch, and opening something of the other side goes there.
+#[test]
+fn design_and_machining_workspaces_switch() {
+    let mut h = harness();
+    h.state_mut().persona = crate::app::Persona::Design;
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    let shown = |h: &Harness<'static, App>, label: &str| h.query_by_label(label).is_some();
+    assert!(shown(&h, "Draw circle") || shown(&h, "Shapes"), "the drawing panel");
+    assert!(!shown(&h, "Pocket toolpath"), "no toolpath panel in Design");
+    click(&mut h, "Machining");
+    assert_eq!(h.state().persona, crate::app::Persona::Machining);
+    assert!(shown(&h, "Pocket toolpath"), "the toolpath panel");
+    assert!(!shown(&h, "Shapes"), "no drawing panel in Machining");
+    // A toolpath form stays in Machining; back to Design with its button.
+    click(&mut h, "Pocket toolpath");
+    assert!(matches!(h.state().right, RightMode::Op { .. }));
+    assert_eq!(h.state().persona, crate::app::Persona::Machining);
+    click(&mut h, "Design");
+    assert_eq!(h.state().persona, crate::app::Persona::Design, "the button wins over the open form");
+    h.run();
+    assert_eq!(h.state().persona, crate::app::Persona::Design, "and stays");
+    // Opening the preview goes to Machining by itself.
+    h.state_mut().right = RightMode::Preview;
+    h.run();
+    assert_eq!(h.state().persona, crate::app::Persona::Machining);
+    // Opening the job's setup goes back to Design.
+    h.state_mut().open_job_setup();
+    h.run();
+    assert_eq!(h.state().persona, crate::app::Persona::Design);
 }

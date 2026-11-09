@@ -265,7 +265,7 @@ const ACTIONS: [(Action, &str, &str, Option<Shortcut>); COUNT] = [
 /// The actions as the list shows them.
 pub const SECTIONS: [(&str, &[Action]); 8] = [
     ("Files", &[Action::New, Action::Open, Action::Save, Action::SaveAs, Action::IncrementSave, Action::Import]),
-    ("Create Vectors", &[Action::DrawLines, Action::DrawCircle, Action::DrawEllipse, Action::DrawRect, Action::DrawPolygon, Action::DrawStar, Action::DrawArc, Action::DrawCurve, Action::DrawSpiral, Action::DrawText]),
+    ("Shapes", &[Action::DrawLines, Action::DrawCircle, Action::DrawEllipse, Action::DrawRect, Action::DrawPolygon, Action::DrawStar, Action::DrawArc, Action::DrawCurve, Action::DrawSpiral, Action::DrawText]),
     ("Editing", &[Action::Undo, Action::Redo, Action::RedoAgain, Action::Cut, Action::Copy, Action::Paste, Action::Delete, Action::DeleteAgain, Action::SelectAll, Action::SelectSimilar]),
     ("Groups", &[Action::Group, Action::Ungroup, Action::UngroupAll, Action::UngroupStay, Action::UngroupAllStay]),
     ("Pieces", &[Action::MakePiece, Action::SelectPiece, Action::AdjustPiece, Action::ReleasePiece]),

@@ -140,7 +140,6 @@ figurent jamais.
 
 Aucun fichier de travail réel n'est inclus : `.gitignore` écarte les projets et les fichiers machine.
 
-
 ## Licence
 
 Burin est un logiciel libre, sous [licence publique générale GNU, version 3 ou ultérieure](LICENSE)
