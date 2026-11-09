@@ -1962,6 +1962,11 @@ impl<'a> Edge<'a> {
 /// whatever lies between (`0x1407b5500`: the distance under the stepover times 1.001, `0x1421cf160`).
 pub const RING_LINK_STEPS: f64 = 1.001;
 
+/// An innermost pocket ring smaller than this share of the tool's diameter, across its widest, is
+/// left to the passes around it. Burin's choice: its grid makes such specks where a stroke's middle
+/// just touches a level, and the original's offsets don't.
+pub const TINY_RING_SHARE: f64 = 0.25;
+
 /// How much of the way on, in stepovers, is left out at each end when looking for crossings
 /// (`0x1407b5500`: the stepover times 0.01, `0x1420fbbb0`).
 pub const RING_LINK_TRIM: f64 = 0.01;
@@ -2142,7 +2147,14 @@ fn pocket_set(e: &mut Emit, op: &Op) {
                     // other inner rings).
                     let walls: Vec<&[P]> = std::iter::once(&rings[i][j]).chain(children[i][j].iter().map(|c| &rings[i + 1][*c])).map(|w| w.as_slice()).collect();
                     let link = if children[i][j].is_empty() { Link::Near } else { Link::Clear };
-                    cut_ring(e, rings[i][j].clone(), z, from, link, &walls);
+                    // An innermost ring that is hardly more than a point, where the grid meets a level
+                    // at the very middle of a stroke, isn't cut on its own: the passes around it
+                    // reach it, and whatever they leave is cleaned from them afterwards (`tuck_spots`).
+                    let tiny = children[i][j].is_empty()
+                        && crate::geom::bbox(std::iter::once(&Path::closed(rings[i][j].clone()))).is_some_and(|(lo, hi)| (hi[0] - lo[0]).max(hi[1] - lo[1]) < TINY_RING_SHARE * op.tool.dia);
+                    if !tiny {
+                        cut_ring(e, rings[i][j].clone(), z, from, link, &walls);
+                    }
                 } else {
                     let rest = &stack[at].2;
                     let pick = nearest_of(e, &rest.iter().map(|c| &rings[i + 1][*c]).collect::<Vec<_>>());
