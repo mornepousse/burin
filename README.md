@@ -28,6 +28,7 @@ Linux · Windows · Browser · English · Français
 
 | | |
 |---|---|
+| **Workspaces** | Two of them, switched from the top left: **Design** to draw and model, **Machining** for toolpaths, preview and machine files. Each shows only its own panels, and Burin goes to the right one when you open something of the other |
 | **Draw** | Lines, curves, arcs, circles, ellipses, rectangles, polygons, stars, spirals, text (the computer's fonts, bold, italic, alignment, and single-line fonts for engraving), dimensions, sketch constraints |
 | **Edit** | Move, rotate and resize with the mouse (or type an exact value), offset, weld, trim, align, array copies, smooth outlines |
 | **Organise** | Layers, groups, **pieces** (pick one hole without ungrouping, yet the piece moves as one), **several sheets** per job, nesting that adds sheets, turns parts, puts small parts in the holes of big ones, or fills an outline you choose |

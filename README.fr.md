@@ -29,6 +29,7 @@ Linux · Windows · Navigateur · Français · English
 
 | | |
 |---|---|
+| **Espaces de travail** | Deux, au choix en haut à gauche : **Dessin** pour dessiner et modeler, **Usinage** pour les parcours, l'aperçu et les fichiers machine. Chacun ne montre que ses panneaux, et Burin passe au bon quand vous ouvrez quelque chose de l'autre |
 | **Dessiner** | Lignes, courbes, arcs, cercles, ellipses, rectangles, polygones, étoiles, spirales, texte (polices de l'ordinateur, gras, italique, alignement, et polices à trait unique pour la gravure), cotes, contraintes d'esquisse |
 | **Modifier** | Déplacer, tourner et redimensionner à la souris (avec une valeur exacte tapée au clavier), décaler, souder, couper, aligner, copier en série, lisser les tracés |
 | **Organiser** | Calques, groupes, **pièces** (on sélectionne un seul trou sans rien dégrouper, mais la pièce se déplace d'un bloc), **plusieurs plaques** par travail, imbrication qui ajoute des plaques et peut tourner les pièces |
