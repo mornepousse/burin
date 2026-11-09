@@ -119,7 +119,7 @@ impl App {
             ui.checkbox(&mut c.by_part, tr("Keep each part's cuts together"));
             if none {
                 let says = if c.by_part { "With no order ticked, parts follow the order of the toolpaths." } else { "With no order ticked, the order with the least travel is used." };
-                ui.label(RichText::new(tr(says)).color(theme::MUTED));
+                ui.label(RichText::new(tr(says)).color(theme::MUTED()));
             }
             if !c.by_part {
                 ui.label(RichText::new(tr("Warning: cuts can change order, within a toolpath and between toolpaths.")).color(theme::WARNING));

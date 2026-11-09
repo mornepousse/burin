@@ -41,7 +41,8 @@ pub fn start(canvas_id: &str) -> Result<(), JsValue> {
                 canvas,
                 options,
                 Box::new(|cc| {
-                    ui::setup_style(&cc.egui_ctx);
+                    crate::theme::load_look();
+            ui::setup_style(&cc.egui_ctx);
                     platform::set_waker(&cc.egui_ctx);
                     let mut app = App::default();
                     // Nothing can run beside the page, and nothing is kept on disk.

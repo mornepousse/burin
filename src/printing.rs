@@ -230,7 +230,7 @@ impl App {
             } else {
                 tf!("{} pages, {} across and {} up. Each is marked with where it goes.", layout.across * layout.up, layout.across, layout.up)
             };
-            ui.label(egui::RichText::new(note).color(crate::theme::MUTED));
+            ui.label(egui::RichText::new(note).color(crate::theme::MUTED()));
             ui.add_space(4.0);
             if ui.button(tr("Print...")).clicked() {
                 self.print_setup_open = false;

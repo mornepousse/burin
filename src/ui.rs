@@ -24,7 +24,7 @@ pub fn label_widget(resp: &egui::Response, name: &str) {
 
 /// Dark, heavier text for headings. The built-in font has no bold, so it is drawn twice.
 pub fn bold(ui: &mut Ui, text: &str) -> egui::Response {
-    bold_sized(ui, text, 12.5, TEXT)
+    bold_sized(ui, text, 12.5, TEXT())
 }
 
 pub(crate) fn bold_sized(ui: &mut Ui, text: &str, size: f32, color: Color32) -> egui::Response {
@@ -43,7 +43,7 @@ pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
         add(ui)
     });
     let r = out.response.rect;
-    ui.painter().line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, LINE));
+    ui.painter().line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, LINE()));
     out.inner
 }
 
@@ -146,9 +146,9 @@ pub(crate) fn labelled_from(ui: &mut Ui, label: &str, label_w: f32, value: &mut 
 /// A labelled number box that keeps the sum it was typed as.
 pub(crate) fn labelled_formula(ui: &mut Ui, label: &str, label_w: f32, value: &mut f64, formula: &mut String, width: f32, unit: &str) -> bool {
     ui.horizontal(|ui| {
-        let needs = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.5), TEXT).size().x + 2.0;
+        let needs = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.5), TEXT()).size().x + 2.0;
         let (r, _) = ui.allocate_exact_size(vec2(label_w.max(needs), 18.0), Sense::hover());
-        ui.painter().text(r.right_center() - vec2(1.0, 0.0), Align2::RIGHT_CENTER, label, FontId::proportional(12.5), TEXT);
+        ui.painter().text(r.right_center() - vec2(1.0, 0.0), Align2::RIGHT_CENTER, label, FontId::proportional(12.5), TEXT());
         let changed = number_formula(ui, value, formula, width);
         if !unit.is_empty() {
             ui.add(egui::Label::new(unit).wrap_mode(egui::TextWrapMode::Extend));
@@ -161,9 +161,9 @@ pub(crate) fn labelled_formula(ui: &mut Ui, label: &str, label_w: f32, value: &m
 pub(crate) fn labelled(ui: &mut Ui, label: &str, label_w: f32, value: &mut f64, width: f32, unit: &str) -> bool {
     ui.horizontal(|ui| {
         // A wording longer than its place takes the room it needs, rather than running out of the panel.
-        let needs = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.5), TEXT).size().x + 2.0;
+        let needs = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.5), TEXT()).size().x + 2.0;
         let (r, _) = ui.allocate_exact_size(vec2(label_w.max(needs), 18.0), Sense::hover());
-        ui.painter().text(r.right_center() - vec2(1.0, 0.0), Align2::RIGHT_CENTER, label, FontId::proportional(12.5), TEXT);
+        ui.painter().text(r.right_center() - vec2(1.0, 0.0), Align2::RIGHT_CENTER, label, FontId::proportional(12.5), TEXT());
         let changed = number(ui, value, width);
         if !unit.is_empty() {
             ui.add(egui::Label::new(unit).wrap_mode(egui::TextWrapMode::Extend));
@@ -184,9 +184,9 @@ pub fn icon_button_saying(ui: &mut Ui, icon: Icon, name: &str, tip: &str, enable
         crate::crash::note(name);
     }
     if active {
-        ui.painter().rect_filled(rect, 7.0, theme::ACCENT_SOFT);
+        ui.painter().rect_filled(rect, 7.0, theme::ACCENT_SOFT());
     } else if enabled && resp.hovered() {
-        ui.painter().rect_filled(rect, 7.0, theme::BUTTON);
+        ui.painter().rect_filled(rect, 7.0, theme::BUTTON());
     }
     icons::paint(ui.painter(), rect.shrink(2.0), icon, enabled);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
@@ -199,12 +199,12 @@ impl App {
         let mut open = !self.folded.iter().any(|f| f == title);
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
         if resp.hovered() {
-            ui.painter().rect_filled(rect, 6.0, theme::CARD);
+            ui.painter().rect_filled(rect, 6.0, theme::CARD());
         }
         // Each family in its own colour, its icons too, until the next section.
         let hue = theme::section_hue(title);
         crate::icons::set_tint(hue);
-        let colour = if resp.hovered() { TEXT } else { hue.unwrap_or(theme::MUTED) };
+        let colour = if resp.hovered() { TEXT() } else { hue.unwrap_or(theme::MUTED()) };
         let c = rect.left_center() + vec2(9.0, 0.0);
         let arrow = if open { vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)] } else { vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)] };
         ui.painter().add(egui::Shape::convex_polygon(arrow, colour, Stroke::NONE));
@@ -225,9 +225,9 @@ impl App {
 /// One of the two big choices on the opening screen.
 fn start_tile(ui: &mut Ui, icon: Icon, label: &str, width: f32) -> bool {
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 92.0), Sense::click());
-    ui.painter().rect_filled(rect, 12.0, if resp.hovered() { theme::BUTTON } else { CARD });
+    ui.painter().rect_filled(rect, 12.0, if resp.hovered() { theme::BUTTON() } else { CARD() });
     icons::paint(ui.painter(), Rect::from_center_size(rect.center() - vec2(0.0, 16.0), vec2(30.0, 30.0)), icon, true);
-    ui.painter().text(rect.center() + vec2(0.0, 22.0), Align2::CENTER_CENTER, label, FontId::proportional(13.0), TEXT);
+    ui.painter().text(rect.center() + vec2(0.0, 22.0), Align2::CENTER_CENTER, label, FontId::proportional(13.0), TEXT());
     label_widget(&resp, label);
     resp.clicked()
 }
@@ -247,7 +247,7 @@ pub(crate) fn title_card(ui: &mut Ui, icon: Icon, title: &str) {
         icons::paint(ui.painter(), r, icon, true);
         ui.add_space(4.0);
         // A long title gives way rather than pushing the form wider than its panel.
-        ui.add(egui::Label::new(RichText::new(title).size(15.0).strong().color(TEXT)).truncate());
+        ui.add(egui::Label::new(RichText::new(title).size(15.0).strong().color(TEXT())).truncate());
     });
 }
 
@@ -256,12 +256,12 @@ pub(crate) fn title_card(ui: &mut Ui, icon: Icon, title: &str) {
 fn side_tab(ui: &Ui, rect: Rect, label: &str, active: bool) -> egui::Response {
     let resp = ui.interact(rect, ui.make_persistent_id(("tab", label)), Sense::click());
     if active {
-        ui.painter().rect_filled(rect, CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 }, CARD);
+        ui.painter().rect_filled(rect, CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 }, CARD());
         ui.painter().line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(2.0, ACCENT));
     } else if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 }, theme::BUTTON);
+        ui.painter().rect_filled(rect, CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 }, theme::BUTTON());
     }
-    let colour = if active || resp.hovered() { TEXT } else { MUTED };
+    let colour = if active || resp.hovered() { TEXT() } else { MUTED() };
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(12.5), colour);
     label_widget(&resp, label);
     resp
@@ -309,7 +309,7 @@ impl App {
         let (mut now, mut later) = (false, false);
         let shown = egui::Modal::new(egui::Id::NULL.with("material-changed")).show(ctx, |ui| {
             ui.set_width(350.0);
-            bold_sized(ui, crate::i18n::tr("Recalculate the toolpaths?"), 14.0, TEXT);
+            bold_sized(ui, crate::i18n::tr("Recalculate the toolpaths?"), 14.0, TEXT());
             ui.add_space(6.0);
             match &self.recalc_note {
                 Some(note) => ui.label(note.as_str()),
@@ -338,7 +338,7 @@ impl App {
         let (mut save, mut drop_it, mut cancel) = (false, false, false);
         let shown = egui::Modal::new(egui::Id::NULL.with("unsaved-work")).show(ctx, |ui| {
             ui.set_width(350.0);
-            bold_sized(ui, crate::i18n::tr("Save your changes first?"), 14.0, TEXT);
+            bold_sized(ui, crate::i18n::tr("Save your changes first?"), 14.0, TEXT());
             ui.add_space(6.0);
             ui.label(crate::i18n::tr("This project has changes that haven't been saved. They'll be lost if you go on without saving."));
             ui.add_space(10.0);
@@ -532,15 +532,15 @@ impl App {
             ui.ctx().request_repaint();
         }
 
-        egui::Panel::top("menu").exact_size(34.0).frame(Frame::new().fill(CHROME).inner_margin(Margin::symmetric(8, 3))).show(ui, |ui| self.menu_bar(ui));
+        egui::Panel::top("menu").exact_size(34.0).frame(Frame::new().fill(CHROME()).inner_margin(Margin::symmetric(8, 3))).show(ui, |ui| self.menu_bar(ui));
         if self.screen == Screen::Start {
             self.start_screen(ui);
         } else {
-            egui::Panel::bottom("status").exact_size(22.0).frame(Frame::new().fill(CHROME).inner_margin(Margin::symmetric(4, 2))).show(ui, |ui| self.status_bar(ui));
+            egui::Panel::bottom("status").exact_size(22.0).frame(Frame::new().fill(CHROME()).inner_margin(Margin::symmetric(4, 2))).show(ui, |ui| self.status_bar(ui));
             self.follow_persona();
             self.left_panel(ui);
             self.right_panel(ui);
-            egui::CentralPanel::default().frame(Frame::new().fill(WORKSPACE)).show(ui, |ui| self.centre(ui));
+            egui::CentralPanel::default().frame(Frame::new().fill(WORKSPACE())).show(ui, |ui| self.centre(ui));
             self.inspector(&ctx);
         }
         self.windows(ui);
@@ -911,9 +911,21 @@ impl App {
                     }
                 }
             });
+            // The dark look, or the light "workshop" one: warm paper, wood and ink.
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(crate::i18n::tr("Look")).strong());
+                let light = theme::light();
+                for (on, name) in [(false, crate::i18n::tr("Dark")), (true, crate::i18n::tr("Light (workshop)"))] {
+                    if ui.selectable_label(light == on, name).clicked() && light != on {
+                        theme::set_light(on);
+                        theme::save_look();
+                        setup_style(ui.ctx());
+                    }
+                }
+            });
             ui.separator();
             ui.label(RichText::new(crate::i18n::tr("Keyboard Shortcuts")).strong());
-            ui.label(RichText::new(crate::i18n::tr("Click a key to change it, then press the new one. Escape cancels.")).color(MUTED));
+            ui.label(RichText::new(crate::i18n::tr("Click a key to change it, then press the new one. Escape cancels.")).color(MUTED()));
             if !self.prefs_note.is_empty() {
                 ui.label(RichText::new(self.prefs_note.as_str()).color(theme::ERROR));
             }
@@ -945,7 +957,7 @@ impl App {
                 }
             });
             ui.separator();
-            ui.label(RichText::new(crate::i18n::tr("These keys can't be changed: the arrows move the selection, Escape cancels, Enter finishes a line, and Space starts a new one.")).size(11.5).color(MUTED));
+            ui.label(RichText::new(crate::i18n::tr("These keys can't be changed: the arrows move the selection, Escape cancels, Enter finishes a line, and Space starts a new one.")).size(11.5).color(MUTED()));
             if ui.button(crate::i18n::tr("Restore Default Keys")).clicked() {
                 self.keys = crate::keys::Keys::default();
                 self.prefs_waiting = None;
@@ -996,12 +1008,12 @@ impl App {
         let some = !self.selected.is_empty();
         let divider = |ui: &mut Ui| {
             let (r, _) = ui.allocate_exact_size(vec2(9.0, 22.0), Sense::hover());
-            ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0, LINE));
+            ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0, LINE()));
         };
         // The job's size stays on the far right, however little room is left.
         let job = self.doc.job.clone();
         let text = format!("{} \u{d7} {} \u{d7} {} {}", toolpath::trim(job.width), toolpath::trim(job.height), toolpath::trim(job.thickness), job.unit());
-        let galley = ui.painter().layout_no_wrap(text, FontId::proportional(12.5), TEXT);
+        let galley = ui.painter().layout_no_wrap(text, FontId::proportional(12.5), TEXT());
         let chip_width = galley.size().x + 44.0;
         ui.add_space(6.0);
         divider(ui);
@@ -1056,9 +1068,9 @@ impl App {
             ui.add_space(6.0);
             let (rect, resp) = ui.allocate_exact_size(vec2(chip_width, 24.0), Sense::click());
             let lit = resp.hovered();
-            ui.painter().rect(rect, 12.0, if lit { theme::BUTTON_HOVER } else { theme::CARD }, Stroke::NONE, StrokeKind::Inside);
+            ui.painter().rect(rect, 12.0, if lit { theme::BUTTON_HOVER() } else { theme::CARD() }, Stroke::NONE, StrokeKind::Inside);
             icons::paint(ui.painter(), Rect::from_center_size(rect.left_center() + vec2(15.0, 0.0), vec2(20.0, 20.0)), Icon::JobSetup, true);
-            ui.painter().galley(pos2(rect.left() + 29.0, rect.center().y - galley.size().y / 2.0), galley.clone(), TEXT);
+            ui.painter().galley(pos2(rect.left() + 29.0, rect.center().y - galley.size().y / 2.0), galley.clone(), TEXT());
             label_widget(&resp, crate::i18n::tr("Job Setup..."));
             let tip = tf!("Job setup: change the size, thickness, units and origin.\nOrigin: {}", job.datum.label());
             if resp.on_hover_text(tip).clicked() {
@@ -1071,7 +1083,7 @@ impl App {
         let rect = ui.max_rect();
         let p = ui.painter();
         let font = FontId::proportional(12.0);
-        let c = TEXT;
+        let c = TEXT();
         // The status message gives way to the sketch state when the window is narrow.
         let state_width = self.definition_text().map_or(0.0, |(text, colour)| p.layout_no_wrap(text, font.clone(), colour).size().x + 18.0);
         let status_end = (rect.right() - 546.0 - state_width).max(rect.left() + 40.0);
@@ -1081,12 +1093,12 @@ impl App {
         let y = rect.right() - 358.0;
         if self.grid && !self.view3d {
             let unit = self.doc.job.unit();
-            p.text(pos2(y + 186.0, rect.center().y), Align2::LEFT_CENTER, tf!("Grid {} {unit}", toolpath::trim(self.grid_steps().0)), font.clone(), MUTED);
+            p.text(pos2(y + 186.0, rect.center().y), Align2::LEFT_CENTER, tf!("Grid {} {unit}", toolpath::trim(self.grid_steps().0)), font.clone(), MUTED());
         }
         if let Some((text, colour)) = self.definition_text() {
             p.text(pos2(x - 12.0, rect.center().y), Align2::RIGHT_CENTER, text, font.clone(), colour);
         }
-        let line = Stroke::new(1.0, LINE);
+        let line = Stroke::new(1.0, LINE());
         p.line_segment([pos2(x - 6.0, rect.top()), pos2(x - 6.0, rect.bottom())], line);
         p.line_segment([pos2(y - 6.0, rect.top()), pos2(y - 6.0, rect.bottom())], line);
         if !self.view3d {
@@ -1124,7 +1136,7 @@ impl App {
                         let shade = (height(fx + 1.0, fy + 1.0) - height(fx - 1.0, fy - 1.0)) * 7.0;
                         let fade = (y as f32 / 90.0).min(1.0);
                         let v = (-shade * fade * 0.35).clamp(-16.0, 34.0) + 3.0 * fade;
-                        pixels.push(Color32::from_rgb((PANEL.r() as f32 + v) as u8, (PANEL.g() as f32 + v) as u8, (PANEL.b() as f32 + v) as u8));
+                        pixels.push(Color32::from_rgb((PANEL().r() as f32 + v) as u8, (PANEL().g() as f32 + v) as u8, (PANEL().b() as f32 + v) as u8));
                     }
                 }
                 ctx.load_texture("ornament", egui::ColorImage::new([w, h], pixels), egui::TextureOptions::LINEAR)
@@ -1142,7 +1154,7 @@ impl App {
 
     /// The opening screen: just what can be done first, in the middle of the window.
     fn start_screen(&mut self, ui: &mut Ui) {
-        egui::CentralPanel::default().frame(Frame::new().fill(theme::WORKSPACE)).show(ui, |ui| {
+        egui::CentralPanel::default().frame(Frame::new().fill(theme::WORKSPACE())).show(ui, |ui| {
             let whole = ui.max_rect();
             let width = 460.0_f32.min(whole.width() - 32.0);
             let recent = self.recent.clone();
@@ -1162,15 +1174,15 @@ impl App {
             });
             let picture = picture.id();
             let p = ui.painter();
-            let name = p.layout_no_wrap("Burin".to_string(), FontId::proportional(64.0), TEXT);
+            let name = p.layout_no_wrap("Burin".to_string(), FontId::proportional(64.0), TEXT());
             let left = logo.center().x - (92.0 + 18.0 + name.size().x) / 2.0;
             let square = Rect::from_min_size(pos2(left, logo.top()), vec2(92.0, 92.0));
             p.image(picture, square, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-            p.galley(pos2(square.right() + 18.0, logo.center().y - name.size().y / 2.0), name, TEXT);
+            p.galley(pos2(square.right() + 18.0, logo.center().y - name.size().y / 2.0), name, TEXT());
             let (line, _) = ui.allocate_exact_size(vec2(width, 22.0), Sense::hover());
-            ui.painter().text(line.center(), Align2::CENTER_CENTER, crate::i18n::tr("Design it, then carve it"), FontId::proportional(14.0), theme::MUTED);
+            ui.painter().text(line.center(), Align2::CENTER_CENTER, crate::i18n::tr("Design it, then carve it"), FontId::proportional(14.0), theme::MUTED());
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new(tf!("Version {}", env!("CARGO_PKG_VERSION"))).size(12.0).color(theme::MUTED));
+                ui.label(RichText::new(tf!("Version {}", env!("CARGO_PKG_VERSION"))).size(12.0).color(theme::MUTED()));
             });
             ui.add_space(22.0);
             ui.horizontal(|ui| {
@@ -1186,7 +1198,7 @@ impl App {
             ui.add_space(24.0);
             ui.spacing_mut().item_spacing.y = 8.0;
             if !recent.is_empty() {
-                bold_sized(ui, crate::i18n::tr("Recently opened files"), 12.5, theme::MUTED);
+                bold_sized(ui, crate::i18n::tr("Recently opened files"), 12.5, theme::MUTED());
                 // Each as a card with a small drawing of it, three to a row.
                 let card_w = (width - 2.0 * 10.0) / 3.0;
                 for row in recent.chunks(3) {
@@ -1214,7 +1226,7 @@ impl App {
         let thumb = self.thumbs.entry(path.clone()).or_insert_with(|| crate::thumbs::read(path)).clone();
         let name = path.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 112.0), Sense::click());
-        ui.painter().rect(rect, 8.0, if resp.hovered() { theme::BUTTON } else { CARD }, Stroke::new(1.0, if resp.hovered() { theme::HUE_TEAL } else { LINE }), StrokeKind::Inside);
+        ui.painter().rect(rect, 8.0, if resp.hovered() { theme::BUTTON() } else { CARD() }, Stroke::new(1.0, if resp.hovered() { theme::HUE_TEAL() } else { LINE() }), StrokeKind::Inside);
         let room = Rect::from_min_max(rect.min + vec2(8.0, 8.0), pos2(rect.right() - 8.0, rect.bottom() - 26.0));
         // Shapes off the sheet are drawn too, but never past the card.
         let p = ui.painter().with_clip_rect(room);
@@ -1233,7 +1245,7 @@ impl App {
             None => icons::paint(&p, Rect::from_center_size(room.center(), vec2(30.0, 30.0)), Icon::Doc, true),
         }
         // One line, cut short with an ellipsis when the name is long.
-        let fits = |t: &str| ui.painter().layout_no_wrap(t.to_string(), FontId::proportional(12.0), TEXT).size().x <= width - 16.0;
+        let fits = |t: &str| ui.painter().layout_no_wrap(t.to_string(), FontId::proportional(12.0), TEXT()).size().x <= width - 16.0;
         let mut shown = name.clone();
         if !fits(&shown) {
             let mut kept: Vec<char> = name.chars().collect();
@@ -1245,7 +1257,7 @@ impl App {
                 }
             }
         }
-        ui.painter().text(pos2(rect.left() + 8.0, rect.bottom() - 13.0), Align2::LEFT_CENTER, shown, FontId::proportional(12.0), TEXT);
+        ui.painter().text(pos2(rect.left() + 8.0, rect.bottom() - 13.0), Align2::LEFT_CENTER, shown, FontId::proportional(12.0), TEXT());
         label_widget(&resp, &name);
         resp.on_hover_text(path.display().to_string()).clicked()
     }
@@ -1253,10 +1265,10 @@ impl App {
     pub(crate) fn start_link(&mut self, ui: &mut Ui, icon: Icon, label: &str) -> bool {
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
         if resp.hovered() {
-            ui.painter().rect_filled(rect, 6.0, CARD);
+            ui.painter().rect_filled(rect, 6.0, CARD());
         }
         icons::paint(ui.painter(), Rect::from_center_size(rect.left_center() + vec2(14.0, 0.0), vec2(20.0, 20.0)), icon, true);
-        ui.painter().text(rect.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(13.0), TEXT);
+        ui.painter().text(rect.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(13.0), TEXT());
         label_widget(&resp, label);
         resp.clicked()
     }
@@ -1310,28 +1322,28 @@ impl App {
         let mut x = outer.left();
         let mut rects = Vec::new();
         for (_, _, label, _) in both {
-            let w = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.5), TEXT).size().x + 34.0;
+            let w = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.5), TEXT()).size().x + 34.0;
             rects.push(Rect::from_min_size(pos2(x, outer.top()), vec2(w, 26.0)));
             x += w;
         }
         let whole = Rect::from_min_max(rects[0].min, rects[rects.len() - 1].max);
         ui.allocate_rect(whole, Sense::hover());
-        ui.painter().rect(whole, 7.0, CARD, Stroke::new(1.0, LINE), StrokeKind::Inside);
+        ui.painter().rect(whole, 7.0, CARD(), Stroke::new(1.0, LINE()), StrokeKind::Inside);
         for ((persona, icon, label, tip), r) in both.into_iter().zip(rects) {
             let resp = ui.interact(r, ui.scope_id().with(("persona", label)), Sense::click()).on_hover_text(tip);
             let on = self.persona == persona;
             // Each workspace in its own colour: drawing in the logo's teal, machining in amber.
-            let hue = if persona == Persona::Machining { theme::HUE_AMBER } else { theme::HUE_TEAL };
+            let hue = if persona == Persona::Machining { theme::HUE_AMBER() } else { theme::HUE_TEAL() };
             if on {
                 ui.painter().rect_filled(r.shrink(2.0), 5.0, theme::hue_soft(hue));
                 ui.painter().rect_stroke(r.shrink(2.0), 5.0, Stroke::new(1.0, hue.gamma_multiply(0.6)), StrokeKind::Inside);
             } else if resp.hovered() {
-                ui.painter().rect_filled(r.shrink(2.0), 5.0, LINE);
+                ui.painter().rect_filled(r.shrink(2.0), 5.0, LINE());
             }
             icons::set_tint(Some(hue));
             icons::paint(ui.painter(), Rect::from_center_size(pos2(r.left() + 15.0, r.center().y), vec2(18.0, 18.0)), icon, true);
             icons::set_tint(None);
-            ui.painter().text(pos2(r.left() + 27.0, r.center().y), Align2::LEFT_CENTER, label, FontId::proportional(12.5), if on { Color32::WHITE } else { TEXT });
+            ui.painter().text(pos2(r.left() + 27.0, r.center().y), Align2::LEFT_CENTER, label, FontId::proportional(12.5), if on && !theme::light() { Color32::WHITE } else { TEXT() });
             label_widget(&resp, label);
             if resp.clicked() {
                 self.set_persona(persona);
@@ -1347,13 +1359,13 @@ impl App {
             self.machining_rail(ui);
             return;
         }
-        egui::Panel::left("rail").exact_size(RAIL_W).resizable(false).frame(Frame::new().fill(CHROME)).show(ui, |ui| {
+        egui::Panel::left("rail").exact_size(RAIL_W).resizable(false).frame(Frame::new().fill(CHROME())).show(ui, |ui| {
             let whole = ui.max_rect();
             let specs = [
-                (LeftTab::Drawing, Icon::Curve, crate::i18n::tr("Draw"), theme::HUE_TEAL),
-                (LeftTab::Modeling, Icon::Dome, crate::i18n::tr("3D Model"), theme::HUE_AMBER),
-                (LeftTab::Clipart, Icon::ImportModel, crate::i18n::tr("Library"), theme::HUE_VIOLET),
-                (LeftTab::Layers, Icon::Layer, crate::i18n::tr("Layers"), theme::HUE_BLUE),
+                (LeftTab::Drawing, Icon::Curve, crate::i18n::tr("Draw"), theme::HUE_TEAL()),
+                (LeftTab::Modeling, Icon::Dome, crate::i18n::tr("3D Model"), theme::HUE_AMBER()),
+                (LeftTab::Clipart, Icon::ImportModel, crate::i18n::tr("Library"), theme::HUE_VIOLET()),
+                (LeftTab::Layers, Icon::Layer, crate::i18n::tr("Layers"), theme::HUE_BLUE()),
             ];
             let mut y = whole.top() + 8.0;
             for (tab, icon, label, hue) in specs {
@@ -1364,7 +1376,7 @@ impl App {
                     ui.painter().rect_filled(r, 8.0, theme::hue_soft(hue));
                     ui.painter().line_segment([pos2(whole.left() + 1.0, r.top() + 6.0), pos2(whole.left() + 1.0, r.bottom() - 6.0)], Stroke::new(3.0, hue));
                 } else if resp.hovered() {
-                    ui.painter().rect_filled(r, 8.0, theme::BUTTON);
+                    ui.painter().rect_filled(r, 8.0, theme::BUTTON());
                 }
                 crate::icons::set_tint(Some(hue));
                 crate::icons::paint(ui.painter(), r.shrink(7.0), icon, true);
@@ -1388,12 +1400,12 @@ impl App {
     /// The same strip in Machining, for the toolpath panel that sits on the left there: the list,
     /// the preview and saving machine files.
     fn machining_rail(&mut self, ui: &mut Ui) {
-        egui::Panel::left("rail").exact_size(RAIL_W).resizable(false).frame(Frame::new().fill(CHROME)).show(ui, |ui| {
+        egui::Panel::left("rail").exact_size(RAIL_W).resizable(false).frame(Frame::new().fill(CHROME())).show(ui, |ui| {
             let whole = ui.max_rect();
             let specs = [
-                (0, Icon::TpPocket, crate::i18n::tr("Toolpath list"), theme::HUE_AMBER),
-                (1, Icon::Preview, crate::i18n::tr("Toolpath preview"), theme::HUE_BLUE),
-                (2, Icon::SaveTp, crate::i18n::tr("Machine files"), theme::HUE_GREEN),
+                (0, Icon::TpPocket, crate::i18n::tr("Toolpath list"), theme::HUE_AMBER()),
+                (1, Icon::Preview, crate::i18n::tr("Toolpath preview"), theme::HUE_BLUE()),
+                (2, Icon::SaveTp, crate::i18n::tr("Machine files"), theme::HUE_GREEN()),
             ];
             let showing = match self.right {
                 RightMode::Preview => 1,
@@ -1409,7 +1421,7 @@ impl App {
                     ui.painter().rect_filled(r, 8.0, theme::hue_soft(hue));
                     ui.painter().line_segment([pos2(whole.left() + 1.0, r.top() + 6.0), pos2(whole.left() + 1.0, r.bottom() - 6.0)], Stroke::new(3.0, hue));
                 } else if resp.hovered() {
-                    ui.painter().rect_filled(r, 8.0, theme::BUTTON);
+                    ui.painter().rect_filled(r, 8.0, theme::BUTTON());
                 }
                 crate::icons::set_tint(Some(hue));
                 crate::icons::paint(ui.painter(), r.shrink(7.0), icon, true);
@@ -1447,7 +1459,7 @@ impl App {
             return;
         }
         let job_open = matches!(self.left, LeftForm::Job { .. });
-        egui::Panel::left("left").exact_size(SIDE_W).resizable(false).frame(Frame::new().fill(PANEL)).show(ui, |ui| {
+        egui::Panel::left("left").exact_size(SIDE_W).resizable(false).frame(Frame::new().fill(PANEL())).show(ui, |ui| {
             let whole = ui.max_rect();
             if job_open {
                 self.paint_ornament(ui, whole, whole.top() + 660.0);
@@ -1487,14 +1499,14 @@ impl App {
     fn collapsed_strip(&mut self, ui: &mut Ui, left: bool) {
         let panel = if left { egui::Panel::left("left_strip") } else { egui::Panel::right("right_strip") };
         let label = if left { crate::i18n::tr("Draw") } else { crate::i18n::tr("Toolpaths") };
-        panel.exact_size(22.0).resizable(false).frame(Frame::new().fill(CHROME)).show(ui, |ui| {
+        panel.exact_size(22.0).resizable(false).frame(Frame::new().fill(CHROME())).show(ui, |ui| {
             let r = ui.max_rect();
             let tab = Rect::from_min_size(r.min + vec2(1.0, 6.0), vec2(20.0, 70.0));
             let resp = ui.interact(tab, ui.scope_id().with("open"), Sense::click());
-            ui.painter().rect(tab, 4.0, CARD, Stroke::NONE, StrokeKind::Inside);
-            let galley = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.0), TEXT);
+            ui.painter().rect(tab, 4.0, CARD(), Stroke::NONE, StrokeKind::Inside);
+            let galley = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.0), TEXT());
             let at = tab.left_top() + vec2(16.0, 6.0);
-            ui.painter().add(egui::epaint::TextShape::new(at, galley, TEXT).with_angle(std::f32::consts::FRAC_PI_2));
+            ui.painter().add(egui::epaint::TextShape::new(at, galley, TEXT()).with_angle(std::f32::consts::FRAC_PI_2));
             label_widget(&resp, label);
             if resp.clicked() {
                 if left {
@@ -1508,7 +1520,7 @@ impl App {
     }
 
     fn panel_header(&mut self, ui: &mut Ui, rect: Rect, title: &str, left: bool) {
-        ui.painter().text(rect.left_center() + vec2(12.0, 0.0), Align2::LEFT_CENTER, title, FontId::proportional(12.5), TEXT);
+        ui.painter().text(rect.left_center() + vec2(12.0, 0.0), Align2::LEFT_CENTER, title, FontId::proportional(12.5), TEXT());
         let b = Rect::from_center_size(pos2(rect.right() - 26.0, rect.center().y), vec2(16.0, 16.0));
         let name = if left {
             crate::i18n::tr("Hide left panel")
@@ -1546,7 +1558,7 @@ impl App {
     }
 
     fn job_setup_body(&mut self, ui: &mut Ui) {
-        Frame::new().fill(PANEL).corner_radius(6).inner_margin(Margin::same(4)).show(ui, |ui| {
+        Frame::new().fill(PANEL()).corner_radius(6).inner_margin(Margin::same(4)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 8.0;
             ui.horizontal(|ui| {
@@ -1595,7 +1607,7 @@ impl App {
                 if labelled(ui, crate::i18n::tr("Sacrificial board"), 96.0, &mut self.doc.job.spoil_board, 40.0, unit) {
                     self.doc.job.spoil_board = self.doc.job.spoil_board.max(0.0);
                 }
-                ui.label(RichText::new(crate::i18n::tr("Cutting into it brings no warning; going past it does.")).size(11.5).color(MUTED));
+                ui.label(RichText::new(crate::i18n::tr("Cutting into it brings no warning; going past it does.")).size(11.5).color(MUTED()));
                 ui.horizontal(|ui| {
                     bold(ui, crate::i18n::tr("Units"));
                     ui.add_space(14.0);
@@ -1640,7 +1652,7 @@ impl App {
                     zero_marker(ui.painter(), wood_top_point(slab, u, v));
                     let (square, _) = ui.allocate_exact_size(vec2(58.0, 58.0), Sense::hover());
                     let inner = square.shrink(7.0);
-                    ui.painter().rect_stroke(inner, 0.0, Stroke::new(1.0, LINE), StrokeKind::Inside);
+                    ui.painter().rect_stroke(inner, 0.0, Stroke::new(1.0, LINE()), StrokeKind::Inside);
                     for (spot, datum) in [
                         (inner.left_top(), Datum::TopLeft),
                         (inner.right_top(), Datum::TopRight),
@@ -1650,7 +1662,7 @@ impl App {
                     ] {
                         let hit = Rect::from_center_size(spot, vec2(14.0, 14.0));
                         let resp = ui.interact(hit, ui.scope_id().with(("datum", format!("{datum:?}"))), Sense::click());
-                        ui.painter().circle(spot, 5.5, INPUT, Stroke::new(1.0, MUTED));
+                        ui.painter().circle(spot, 5.5, INPUT(), Stroke::new(1.0, MUTED()));
                         if self.doc.job.datum == datum {
                             ui.painter().circle_filled(spot, 3.0, ACCENT);
                         }
@@ -1703,7 +1715,7 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(32.0);
-                    ui.label(RichText::new(tr(RESOLUTIONS[self.doc.job.resolution.min(3)].1)).size(11.5).color(MUTED));
+                    ui.label(RichText::new(tr(RESOLUTIONS[self.doc.job.resolution.min(3)].1)).size(11.5).color(MUTED()));
                 });
                 bold(ui, crate::i18n::tr("Appearance"));
                 ui.horizontal(|ui| {
@@ -2046,7 +2058,7 @@ impl App {
             return;
         }
         let panel = if on_left { egui::Panel::left("toolpaths-left") } else { egui::Panel::right("right") };
-        panel.exact_size(RIGHT_W).resizable(false).frame(Frame::new().fill(PANEL)).show(ui, |ui| {
+        panel.exact_size(RIGHT_W).resizable(false).frame(Frame::new().fill(PANEL())).show(ui, |ui| {
             let whole = ui.max_rect();
             let header = Rect::from_min_size(whole.min, vec2(whole.width(), 22.0));
             self.panel_header(ui, header, crate::i18n::tr("Toolpaths"), false);
@@ -2075,7 +2087,7 @@ impl App {
 
     fn toolpath_list(&mut self, ui: &mut Ui) {
         let rect = ui.available_rect_before_wrap();
-        ui.painter().line_segment([rect.left_top(), rect.right_top()], Stroke::new(3.0, LINE));
+        ui.painter().line_segment([rect.left_top(), rect.right_top()], Stroke::new(3.0, LINE()));
         let width = rect.width();
         ui.add_space(6.0);
         Frame::new().inner_margin(Margin { left: 12, right: 2, top: 2, bottom: 2 }).show(ui, |ui| {
@@ -2097,7 +2109,7 @@ impl App {
                     (true, 0) => crate::i18n::tr("Toolpaths (Top)").to_string(),
                     (true, _) => crate::i18n::tr("Toolpaths (Bottom)").to_string(),
                 };
-                let r = bold_sized(ui, &title, 13.5, TEXT);
+                let r = bold_sized(ui, &title, 13.5, TEXT());
                 label_widget(&r, &title);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let some = self.selected_tp.is_some_and(|i| i > 0);
@@ -2111,11 +2123,11 @@ impl App {
                 });
             });
             let r = ui.available_rect_before_wrap();
-            ui.painter().line_segment([r.left_top(), r.right_top() - vec2(0.0, 0.0)], Stroke::new(1.0, LINE));
+            ui.painter().line_segment([r.left_top(), r.right_top() - vec2(0.0, 0.0)], Stroke::new(1.0, LINE()));
             ui.add_space(4.0);
             if !self.doc.toolpaths.iter().any(|t| self.doc.toolpath_on_side(t)) {
                 let rest = ui.available_rect_before_wrap();
-                ui.painter().text(rest.center(), Align2::CENTER_CENTER, crate::i18n::tr("No Toolpaths Created Yet"), FontId::proportional(13.5), MUTED);
+                ui.painter().text(rest.center(), Align2::CENTER_CENTER, crate::i18n::tr("No Toolpaths Created Yet"), FontId::proportional(13.5), MUTED());
                 return;
             }
             let mut clicked_edit = None;
@@ -2135,13 +2147,13 @@ impl App {
                         let name = self.doc.toolpaths[i].op.name.clone();
                         let selected = self.selected_tp == Some(i);
                         let behind = self.behind.contains(&i);
-                        let colour = if behind { theme::ERROR } else if selected { ACCENT } else { TEXT };
+                        let colour = if behind { theme::ERROR } else if selected { ACCENT } else { TEXT() };
                         let galley = ui.painter().layout_no_wrap(name.clone(), FontId::proportional(13.5), colour);
                         let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(6.0, 2.0), Sense::click());
                         if selected {
-                            ui.painter().rect_filled(rect, 3.0, theme::ACCENT_SOFT);
+                            ui.painter().rect_filled(rect, 3.0, theme::ACCENT_SOFT());
                         }
-                        ui.painter().galley(rect.min + vec2(3.0, 1.0), galley, TEXT);
+                        ui.painter().galley(rect.min + vec2(3.0, 1.0), galley, TEXT());
                         label_widget(&resp, &name);
                         let resp = if behind { resp.on_hover_text(crate::i18n::tr("Its shapes have changed since it was calculated. Use Recalculate when you're ready.")) } else { resp };
                         if resp.clicked() {
@@ -2175,14 +2187,14 @@ impl App {
                 });
                 let (r, _) = ui.allocate_exact_size(vec2(54.0, 62.0), Sense::hover());
                 let square = Rect::from_center_size(r.center() + vec2(2.0, 4.0), vec2(42.0, 42.0));
-                ui.painter().rect_stroke(square, 0.0, Stroke::new(1.0, MUTED), StrokeKind::Inside);
+                ui.painter().rect_stroke(square, 0.0, Stroke::new(1.0, MUTED()), StrokeKind::Inside);
                 let offset = match op.side {
                     Side::Outside => -9.0,
                     Side::Inside => 9.0,
                     Side::On => 0.0,
                 };
                 ui.painter().line_segment([square.left_bottom() + vec2(offset, 0.0), square.left_top() + vec2(offset, 0.0)], Stroke::new(1.5, Color32::from_rgb(210, 30, 30)));
-                ui.painter().circle(square.left_top() + vec2(offset, -6.0), 5.0, Color32::from_rgb(240, 220, 110), Stroke::new(1.0, MUTED));
+                ui.painter().circle(square.left_top() + vec2(offset, -6.0), 5.0, Color32::from_rgb(240, 220, 110), Stroke::new(1.0, MUTED()));
             });
             ui.horizontal(|ui| {
                 bold(ui, crate::i18n::tr("Direction"));
@@ -2214,7 +2226,7 @@ impl App {
                 labelled(ui, crate::i18n::tr("Thickness"), 96.0, &mut op.tab_thickness, 50.0, unit);
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(96.0, 18.0), Sense::hover());
-                    ui.painter().text(r.right_center() - vec2(1.0, 0.0), Align2::RIGHT_CENTER, crate::i18n::tr("Tabs per shape"), FontId::proportional(12.5), TEXT);
+                    ui.painter().text(r.right_center() - vec2(1.0, 0.0), Align2::RIGHT_CENTER, crate::i18n::tr("Tabs per shape"), FontId::proportional(12.5), TEXT());
                     count_box(ui, &mut op.tab_count, 50.0);
                 });
             });
@@ -2223,10 +2235,10 @@ impl App {
             ui.spacing_mut().item_spacing.x = 1.0;
             for (i, name) in [crate::i18n::tr("Ramp"), crate::i18n::tr("Leads"), crate::i18n::tr("Order"), crate::i18n::tr("Start At"), crate::i18n::tr("Corners")].iter().enumerate() {
                 let active = *tab == i;
-                let fill = if active { CARD } else { PANEL };
+                let fill = if active { CARD() } else { PANEL() };
                 let (rect, resp) = ui.allocate_exact_size(vec2(44.0, 19.0), Sense::click());
-                ui.painter().rect(rect, CornerRadius { nw: 2, ne: 2, sw: 0, se: 0 }, fill, Stroke::new(1.0, if active { ACCENT } else { LINE }), StrokeKind::Inside);
-                ui.painter().text(rect.center(), Align2::CENTER_CENTER, *name, FontId::proportional(11.5), TEXT);
+                ui.painter().rect(rect, CornerRadius { nw: 2, ne: 2, sw: 0, se: 0 }, fill, Stroke::new(1.0, if active { ACCENT } else { LINE() }), StrokeKind::Inside);
+                ui.painter().text(rect.center(), Align2::CENTER_CENTER, *name, FontId::proportional(11.5), TEXT());
                 label_widget(&resp, name);
                 if resp.clicked() {
                     *tab = i;
@@ -2246,7 +2258,7 @@ impl App {
                         ui.radio_value(&mut op.ramp_kind, RampKind::Spiral, crate::i18n::tr("Spiral"));
                     });
                     if op.ramp_kind == RampKind::Spiral {
-                        ui.label(RichText::new(crate::i18n::tr("Slopes all the way around each closed shape.")).size(11.5).color(MUTED));
+                        ui.label(RichText::new(crate::i18n::tr("Slopes all the way around each closed shape.")).size(11.5).color(MUTED()));
                     } else {
                         ui.add_enabled_ui(op.lead, |ui| {
                             ui.checkbox(&mut op.ramp_on_lead, crate::i18n::tr("Ramp on Lead In"));
@@ -2286,7 +2298,7 @@ impl App {
             }
             2 => {
                 ui.spacing_mut().item_spacing.y = 2.0;
-                ui.label(RichText::new(crate::i18n::tr("Select one or more ways to try. With several, the one with the shortest travel between shapes is used.")).size(11.5).color(MUTED));
+                ui.label(RichText::new(crate::i18n::tr("Select one or more ways to try. With several, the one with the shortest travel between shapes is used.")).size(11.5).color(MUTED()));
                 let mut c = op.order_choices.unwrap_or_default();
                 ui.checkbox(&mut c.selection, crate::i18n::tr("Vector Selection Order"));
                 ui.checkbox(&mut c.left_to_right, crate::i18n::tr("Left to Right"));
@@ -2314,13 +2326,13 @@ impl App {
                 ui.add_enabled_ui(placed, |ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(96.0, 70.0), Sense::hover());
                     let inner = rect.shrink(9.0);
-                    ui.painter().rect_stroke(inner, 0.0, Stroke::new(1.0, LINE), StrokeKind::Inside);
+                    ui.painter().rect_stroke(inner, 0.0, Stroke::new(1.0, LINE()), StrokeKind::Inside);
                     let (l, r, t, b, cx, cy) = (inner.left(), inner.right(), inner.top(), inner.bottom(), inner.center().x, inner.center().y);
                     let spots = [pos2(l, t), pos2(cx, t), pos2(r, t), pos2(r, cy), pos2(r, b), pos2(cx, b), pos2(l, b), pos2(l, cy)];
                     for (i, spot) in spots.iter().enumerate() {
                         let hit = Rect::from_center_size(*spot, vec2(14.0, 14.0));
                         let resp = ui.interact(hit, ui.scope_id().with(("start_spot", i)), if placed { Sense::click() } else { Sense::hover() });
-                        ui.painter().circle(*spot, 5.0, INPUT, Stroke::new(1.0, MUTED));
+                        ui.painter().circle(*spot, 5.0, INPUT(), Stroke::new(1.0, MUTED()));
                         if op.start_at == StartAt::Near(i as u8) {
                             ui.painter().circle_filled(*spot, 3.0, ACCENT);
                         }
@@ -2337,9 +2349,9 @@ impl App {
                     ui.checkbox(&mut op.sharp_corners, crate::i18n::tr("Sharp external corners"));
                 });
                 if op.side != Side::Outside {
-                    ui.label(RichText::new(crate::i18n::tr("Only for cuts on the outside of a shape.")).size(11.5).color(MUTED));
+                    ui.label(RichText::new(crate::i18n::tr("Only for cuts on the outside of a shape.")).size(11.5).color(MUTED()));
                 } else {
-                    ui.label(RichText::new(crate::i18n::tr("The tool goes all the way into each outside corner, instead of rounding it. Shapes inside each other stay rounded.")).size(11.5).color(MUTED));
+                    ui.label(RichText::new(crate::i18n::tr("The tool goes all the way into each outside corner, instead of rounding it. Shapes inside each other stay rounded.")).size(11.5).color(MUTED()));
                 }
             }
         });
@@ -2424,7 +2436,7 @@ impl App {
                     let whole = self.preview_seconds.map_or(String::new(), |s| tf!(", whole preview {s:.1} s"));
                     ui.horizontal(|ui| {
                         ui.add_space(38.0);
-                        ui.label(RichText::new(tf!("Last picture {picture:.1} s{whole}")).size(11.5).color(MUTED));
+                        ui.label(RichText::new(tf!("Last picture {picture:.1} s{whole}")).size(11.5).color(MUTED()));
                     });
                 }
             });
@@ -2454,7 +2466,7 @@ impl App {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     for (icon, tip) in [(Icon::Play, crate::i18n::tr("Play")), (Icon::Pause, crate::i18n::tr("Pause")), (Icon::Step, crate::i18n::tr("Step")), (Icon::End, crate::i18n::tr("Go to end")), (Icon::Rewind, crate::i18n::tr("Back to start"))] {
                         let (rect, resp) = ui.allocate_exact_size(vec2(35.0, 20.0), if running { Sense::click() } else { Sense::hover() });
-                        ui.painter().rect_filled(rect, 4.0, theme::BUTTON);
+                        ui.painter().rect_filled(rect, 4.0, theme::BUTTON());
                         icons::paint(ui.painter(), Rect::from_center_size(rect.center(), vec2(16.0, 16.0)), icon, running);
                         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, running, tip));
                         if resp.on_hover_text(tip).clicked() {
@@ -2484,9 +2496,9 @@ impl App {
                     ui.spacing_mut().slider_width = 138.0;
                     ui.spacing_mut().slider_rail_height = 3.0;
                     let w = &mut ui.visuals_mut().widgets;
-                    w.inactive.bg_fill = LINE;
-                    w.hovered.bg_fill = LINE;
-                    w.active.bg_fill = LINE;
+                    w.inactive.bg_fill = LINE();
+                    w.hovered.bg_fill = LINE();
+                    w.active.bg_fill = LINE();
                     ui.add(egui::Slider::new(&mut self.speed, 0.0..=1.0).show_value(false).handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }));
                 });
                 ui.horizontal(|ui| {
@@ -2592,7 +2604,7 @@ impl App {
         }
         // The view in use has its edge lit.
         let (on, off) = if self.view3d { (r3, r2) } else { (r2, r3) };
-        ui.painter().rect_stroke(off, 0.0, Stroke::new(1.0, LINE), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(off, 0.0, Stroke::new(1.0, LINE()), egui::StrokeKind::Inside);
         ui.painter().rect_stroke(on, 0.0, Stroke::new(1.5, theme::ACCENT), egui::StrokeKind::Inside);
     }
 
@@ -2636,7 +2648,7 @@ impl App {
     }
 
     fn top_row(&mut self, ui: &mut Ui, top: Rect, view: Rect, two_rows: bool) {
-        ui.painter().rect_filled(top, 0.0, CHROME);
+        ui.painter().rect_filled(top, 0.0, CHROME());
         let tab_y = top.top() + 8.0;
         let two = Rect::from_min_size(pos2(top.left() + 12.0, tab_y), vec2(76.0, 22.0));
         let three = Rect::from_min_size(pos2(two.right() - 4.0, tab_y), vec2(66.0, 22.0));
@@ -2647,7 +2659,7 @@ impl App {
             self.view3d = true;
         }
         let layer_at = pos2(three.right() + 42.0, top.top() + 6.0);
-        ui.painter().line_segment([layer_at - vec2(5.0, -2.0), layer_at + vec2(-5.0, 22.0)], Stroke::new(1.0, LINE));
+        ui.painter().line_segment([layer_at - vec2(5.0, -2.0), layer_at + vec2(-5.0, 22.0)], Stroke::new(1.0, LINE()));
         icons::paint(ui.painter(), Rect::from_min_size(layer_at, vec2(22.0, 22.0)), Icon::Layer, true);
         let mut layer_ui = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(layer_at + vec2(22.0, 1.0), vec2(120.0, 24.0))));
         let name = self.doc.layers.get(self.doc.active_layer).map_or(String::new(), |l| l.name.clone());
@@ -2689,15 +2701,15 @@ impl App {
         let room = top.right() - 8.0 - start;
         let squeeze = if two_rows && wanted > room { room / wanted } else { 1.0 };
         // The view's own tools in blue, apart from the drawing and machining ones.
-        icons::set_tint(Some(theme::HUE_BLUE));
+        icons::set_tint(Some(theme::HUE_BLUE()));
         for (i, (icon, tip, enabled, active, step)) in items.into_iter().enumerate() {
             let step = (step * squeeze).max(24.5);
             let rect = Rect::from_min_size(pos2(x, tools_y), vec2(24.0, 24.0));
             let resp = ui.interact(rect, ui.scope_id().with(("toolbar", i)), if enabled { Sense::click() } else { Sense::hover() }).on_hover_text(tip);
             if active {
-                ui.painter().rect_filled(rect, 6.0, theme::ACCENT_SOFT);
+                ui.painter().rect_filled(rect, 6.0, theme::ACCENT_SOFT());
             } else if enabled && resp.hovered() {
-                ui.painter().rect_filled(rect, 6.0, theme::BUTTON);
+                ui.painter().rect_filled(rect, 6.0, theme::BUTTON());
             }
             icons::paint(ui.painter(), rect.shrink(1.0), icon, enabled);
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tip));
@@ -2745,7 +2757,7 @@ impl App {
                 let rect = Rect::from_min_size(pos2(x + 7.0, tools_y), vec2(24.0, 24.0));
                 let resp = ui.interact(rect, ui.scope_id().with(("sides", i)), Sense::click()).on_hover_text(tip);
                 if resp.hovered() {
-                    ui.painter().rect_filled(rect, 6.0, theme::BUTTON);
+                    ui.painter().rect_filled(rect, 6.0, theme::BUTTON());
                 }
                 icons::paint(ui.painter(), rect.shrink(1.0), icon, true);
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
@@ -2794,7 +2806,7 @@ impl App {
                 let drawing = crate::startup::drawing_name(&crate::startup::graphics_line(), crate::platform::WEB);
                 ui.label(RichText::new(tf!("Burin {} ({})", env!("CARGO_PKG_VERSION"), drawing)).strong().size(16.0));
                 ui.label(crate::i18n::tr("Design, model and cut for CNC carving."));
-                ui.label(RichText::new(crate::i18n::tr("Free software under the GNU GPL, version 3 or later.")).color(theme::MUTED));
+                ui.label(RichText::new(crate::i18n::tr("Free software under the GNU GPL, version 3 or later.")).color(theme::MUTED()));
                 ui.hyperlink_to("burin.cc", "https://burin.cc");
                 ui.add_space(4.0);
                 ui.label(crate::i18n::tr("Check every machine file in a simulator or above the material before cutting."));

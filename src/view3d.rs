@@ -1243,7 +1243,7 @@ impl App {
 
     fn gradient_background(painter: &egui::Painter, rect: Rect) {
         let mut mesh = Mesh::default();
-        let (top, bottom) = (crate::theme::BACKDROP_TOP, crate::theme::BACKDROP_BOTTOM);
+        let (top, bottom) = (crate::theme::BACKDROP_TOP(), crate::theme::BACKDROP_BOTTOM());
         for (p, c) in [
             (rect.left_top(), top),
             (rect.right_top(), top),
@@ -1286,7 +1286,7 @@ impl App {
             Self::gradient_background(&painter, rect);
         } else {
             // Plain, the original paints both ends with the top colour (`0x1408ad390`).
-            painter.rect_filled(rect, 0.0, crate::theme::BACKDROP_TOP);
+            painter.rect_filled(rect, 0.0, crate::theme::BACKDROP_TOP());
         }
 
         // While sculpting, the left button sculpts, unless the tool is Twiddle or Alt is held.
@@ -1383,7 +1383,7 @@ impl App {
         // Saying so once it's been a moment, so a slow computer doesn't look stuck.
         if let Some(job) = self.surface_job.as_ref().filter(|j| j.key.fine && !self.anim.playing && j.started.elapsed().as_secs_f32() > 0.5) {
             let seconds = job.started.elapsed().as_secs_f32() as u32;
-            painter.text(rect.left_bottom() + vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, tf!("Sharpening the picture... {seconds} s"), egui::FontId::proportional(12.0), crate::theme::MUTED);
+            painter.text(rect.left_bottom() + vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, tf!("Sharpening the picture... {seconds} s"), egui::FontId::proportional(12.0), crate::theme::MUTED());
         }
 
         // The grid lies on the top of the material.

@@ -294,7 +294,7 @@ impl App {
             for (n, tool) in SculptTool::ALL.into_iter().enumerate() {
                 ui.radio_value(&mut s.tool, tool, format!("{} {}", n + 1, tool.name()));
             }
-            ui.label(egui::RichText::new(tr("Hold Shift with the Undo Brush to erase.")).size(11.0).color(crate::theme::MUTED));
+            ui.label(egui::RichText::new(tr("Hold Shift with the Undo Brush to erase.")).size(11.0).color(crate::theme::MUTED()));
             ui.horizontal(|ui| {
                 ui.label(tr("Diameter"));
                 ui.add(egui::Slider::new(&mut s.diameter, side * 0.005..=side * 0.5).suffix(format!(" {unit}")));

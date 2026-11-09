@@ -2170,7 +2170,7 @@ impl App {
             } else if on {
                 theme::PICK
             } else {
-                theme::PANEL
+                theme::PANEL()
             };
             painter.rect_filled(r, 4.0, fill);
             crate::icons::paint(painter, r.shrink(2.0), relation_icon(rule.kind), true);
@@ -2180,7 +2180,7 @@ impl App {
             if let Some((_, r)) = self.rule_chips().into_iter().find(|(n, _)| *n == i) {
                 let galley = painter.layout_no_wrap(name.to_string(), FontId::proportional(12.0), Color32::WHITE);
                 let tip = Rect::from_min_size(r.right_top() + vec2(4.0, -2.0), galley.size() + vec2(8.0, 4.0));
-                painter.rect_filled(tip, 3.0, theme::PANEL);
+                painter.rect_filled(tip, 3.0, theme::PANEL());
                 painter.galley(tip.min + vec2(4.0, 2.0), galley, Color32::WHITE);
             }
         }
@@ -2224,7 +2224,7 @@ impl App {
             _ => tf!("{} picked. Choose a rule, or click empty sheet to start over.", self.picks.len()),
         };
         let note = self.sketch_note.clone();
-        egui::Frame::new().fill(if note.is_some() { Color32::from_rgb(92, 44, 40) } else { theme::ACCENT_SOFT }).corner_radius(4).inner_margin(egui::Margin::symmetric(7, 5)).show(ui, |ui| {
+        egui::Frame::new().fill(if note.is_some() { Color32::from_rgb(92, 44, 40) } else { theme::ACCENT_SOFT() }).corner_radius(4).inner_margin(egui::Margin::symmetric(7, 5)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(egui::RichText::new(note.as_deref().unwrap_or(&prompt)).size(12.0));
         });
@@ -2294,7 +2294,7 @@ impl App {
                 ui.colored_label(theme::ERROR, crate::i18n::tr("These rules can't all be met."));
             }
             if self.doc.constraints.is_empty() {
-                ui.label(egui::RichText::new(crate::i18n::tr("None yet. Pick a rule above, then click on the drawing.")).size(11.5).color(theme::MUTED));
+                ui.label(egui::RichText::new(crate::i18n::tr("None yet. Pick a rule above, then click on the drawing.")).size(11.5).color(theme::MUTED()));
             }
             // Dimensions first: those are the numbers worth reaching for.
             let mut order: Vec<usize> = (0..self.doc.constraints.len()).filter(|i| self.doc.constraints[*i].kind != Kind::Keep).collect();
@@ -2302,7 +2302,7 @@ impl App {
             egui::ScrollArea::vertical().max_height(230.0).id_salt("rule_list").show(ui, |ui| {
                 for i in order {
                     let on = self.selected_rule == Some(i) || self.hover_rule == Some(i);
-                    let row = egui::Frame::new().fill(if on { theme::ACCENT_SOFT } else { Color32::TRANSPARENT }).corner_radius(3).show(ui, |ui| {
+                    let row = egui::Frame::new().fill(if on { theme::ACCENT_SOFT() } else { Color32::TRANSPARENT }).corner_radius(3).show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
                             let kind = self.doc.constraints[i].kind;

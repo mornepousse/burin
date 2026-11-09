@@ -1530,6 +1530,7 @@ fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Opti
                 // On purpose: nothing below this line can be reached.
                 unsafe { std::ptr::null_mut::<u8>().write_volatile(1) };
             }
+            crate::theme::load_look();
             ui::setup_style(&cc.egui_ctx);
             let adapter = cc.wgpu_render_state.as_ref().map(|s| s.adapter.get_info()).map(|i| format!("{} ({:?}, {:?}, driver {})", i.name, i.backend, i.device_type, i.driver));
             let gl = cc.gl.as_ref().map(|gl| {

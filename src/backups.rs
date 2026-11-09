@@ -235,7 +235,7 @@ impl App {
                 self.backup_settings = s;
                 save_settings(s);
             }
-            ui.label(RichText::new(tr("They go in a folder beside the project. Every version from the last hour is kept, then one an hour for a day, one a day for a month, and one a week after that.")).size(12.0).color(crate::theme::MUTED));
+            ui.label(RichText::new(tr("They go in a folder beside the project. Every version from the last hour is kept, then one an hour for a day, one a day for a month, and one a week after that.")).size(12.0).color(crate::theme::MUTED()));
             ui.separator();
             match &self.path {
                 None => {
@@ -249,7 +249,7 @@ impl App {
                         egui::Grid::new("backup-list").num_columns(4).spacing([14.0, 6.0]).show(ui, |ui| {
                             for v in &versions {
                                 ui.label(how_long_ago(now.saturating_sub(v.time)));
-                                ui.label(RichText::new(format!("{} UTC", &crate::crash::stamp(v.time)[..16])).color(crate::theme::MUTED));
+                                ui.label(RichText::new(format!("{} UTC", &crate::crash::stamp(v.time)[..16])).color(crate::theme::MUTED()));
                                 ui.label(tf!("{:.1} MB", v.size as f64 / 1_048_576.0));
                                 if ui.button(tr("Open This Version")).clicked() {
                                     chosen = Some(v.clone());

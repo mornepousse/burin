@@ -141,18 +141,18 @@ impl App {
                 }
                 ui.add_space(4.0);
                 if found.is_empty() {
-                    ui.label(RichText::new(tr("Nothing has that name.")).color(theme::MUTED));
+                    ui.label(RichText::new(tr("Nothing has that name.")).color(theme::MUTED()));
                 }
                 for (i, (command, name)) in found.iter().take(SHOWN).enumerate() {
                     let picked = i == self.palette_pick;
                     let line = ui.horizontal(|ui| {
                         ui.set_width(ui.available_width());
-                        let text = if picked { RichText::new(name).color(theme::TEXT).strong() } else { RichText::new(name).color(theme::MUTED) };
+                        let text = if picked { RichText::new(name).color(theme::TEXT()).strong() } else { RichText::new(name).color(theme::MUTED()) };
                         let r = ui.selectable_label(picked, text);
                         if let Command::Act(a) = command {
                             let key = keys.text(*a);
                             if !key.is_empty() {
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(RichText::new(key).size(11.5).color(theme::FAINT)));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(RichText::new(key).size(11.5).color(theme::FAINT())));
                             }
                         }
                         r
@@ -162,7 +162,7 @@ impl App {
                     }
                 }
                 ui.add_space(2.0);
-                ui.label(RichText::new(tr("Enter to do it, Escape to close.")).size(11.0).color(theme::FAINT));
+                ui.label(RichText::new(tr("Enter to do it, Escape to close.")).size(11.0).color(theme::FAINT()));
             });
         if escape {
             self.palette_open = false;

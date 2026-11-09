@@ -213,7 +213,7 @@ impl App {
                     });
                 });
                 ui.vertical(|ui| {
-                    ui.label(RichText::new(crate::i18n::tr("Double click the bar to add or remove a pass. Click it, or the list, to choose one.")).size(11.5).color(theme::MUTED));
+                    ui.label(RichText::new(crate::i18n::tr("Double click the bar to add or remove a pass. Click it, or the list, to choose one.")).size(11.5).color(theme::MUTED()));
                     ui.horizontal(|ui| {
                         ui.label(tf!("Pass {}", d.selected + 1));
                         ui.label(crate::i18n::tr("Depth:"));
@@ -273,7 +273,7 @@ impl App {
             ui.horizontal(|ui| {
                 ui.label(crate::i18n::tr("Number of passes"));
                 crate::ui::count_box(ui, &mut d.count, 44.0);
-                ui.label(RichText::new(tf!("{} {unit} each", toolpath::trim((total - start) / d.count.max(1) as f64))).size(12.0).color(theme::MUTED));
+                ui.label(RichText::new(tf!("{} {unit} each", toolpath::trim((total - start) / d.count.max(1) as f64))).size(12.0).color(theme::MUTED()));
                 ui.add_space((ui.available_width() - 76.0).max(0.0));
                 if ui.button(crate::i18n::tr("Use Number")).clicked() {
                     d.list = passes_by_count(start, total, d.count);
@@ -332,7 +332,7 @@ impl App {
         let mut close = false;
         egui::Window::new(crate::i18n::tr("Vector Selector")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
             ui.set_width(470.0);
-            ui.label(RichText::new(crate::i18n::tr("Selects shapes by filter. With Associate, the filter is applied again each time the toolpath is calculated.")).size(11.5).color(theme::MUTED));
+            ui.label(RichText::new(crate::i18n::tr("Selects shapes by filter. With Associate, the filter is applied again each time the toolpath is calculated.")).size(11.5).color(theme::MUTED()));
             ui.horizontal(|ui| {
                 bold(ui, crate::i18n::tr("Selection:"));
                 ui.label(match self.selected.len() {

@@ -269,7 +269,7 @@ pub fn style_picker(ui: &mut egui::Ui, style: &mut TextStyle) -> bool {
     .response
     .on_hover_text(crate::i18n::tr("How far apart the letters are, as a share of their widths, and the lines, in capital heights."));
     if is_single_line(&style.font) {
-        ui.label(egui::RichText::new(crate::i18n::tr("Each letter is lines, not outlines: engrave along them, with the tool on the line.")).size(12.0).color(crate::theme::MUTED));
+        ui.label(egui::RichText::new(crate::i18n::tr("Each letter is lines, not outlines: engrave along them, with the tool on the line.")).size(12.0).color(crate::theme::MUTED()));
     } else if !style.font.is_empty() && !families().iter().any(|f| f.name == style.font) {
         ui.label(egui::RichText::new(crate::i18n::tr("This computer doesn't have this font: Burin's own is used.")).size(12.0).color(crate::theme::WARNING));
     }

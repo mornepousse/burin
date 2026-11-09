@@ -225,7 +225,7 @@ impl App {
             index = visible.first().copied().unwrap_or(0);
         }
         egui::Window::new(tr("Start Again From a Cut")).id(egui::Id::unique("resume")).open(&mut open).collapsible(false).resizable(false).default_width(420.0).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
-            ui.label(RichText::new(tr("After a stop, write a file that starts from one of a toolpath's cuts, then goes on with the toolpaths after it.")).color(crate::theme::MUTED));
+            ui.label(RichText::new(tr("After a stop, write a file that starts from one of a toolpath's cuts, then goes on with the toolpaths after it.")).color(crate::theme::MUTED()));
             let Some(tp) = self.doc.toolpaths.get(index) else {
                 ui.label(tr("No Toolpaths"));
                 return;
@@ -288,7 +288,7 @@ impl App {
                 }
             });
             ui.add_space(4.0);
-            ui.label(RichText::new(tr("Burin can't see clamps, the holder's shape or how the material is held: check those yourself.")).size(12.0).color(crate::theme::MUTED));
+            ui.label(RichText::new(tr("Burin can't see clamps, the holder's shape or how the material is held: check those yourself.")).size(12.0).color(crate::theme::MUTED()));
             if self.checks_for_save.is_some() {
                 ui.add_space(6.0);
                 if ui.button(tr("Save Anyway")).clicked() {

@@ -145,7 +145,7 @@ impl App {
         let mut open = true;
         let (mut apply, mut cancel) = (false, false);
         egui::Window::new(tr("Document Variables")).id(egui::Id::unique("document-variables")).open(&mut open).collapsible(false).resizable(false).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
-            ui.label(egui::RichText::new(tr("Type {name} in any number box to use a value. Sums can also use W, H and T for the job's width, height and thickness.")).color(crate::theme::MUTED));
+            ui.label(egui::RichText::new(tr("Type {name} in any number box to use a value. Sums can also use W, H and T for the job's width, height and thickness.")).color(crate::theme::MUTED()));
             ui.add_space(6.0);
             let mut remove = None;
             egui::Grid::new("variables-grid").num_columns(3).spacing([8.0, 4.0]).show(ui, |ui| {
