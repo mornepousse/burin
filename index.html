@@ -37,7 +37,7 @@
   <div class="actions">
     <a id="main-download" class="button primary" href="https://github.com/mornepousse/burin/releases/latest">
       <span data-en="Download Burin" data-fr="Télécharger Burin">Download Burin</span>
-      <small id="main-detail">0.9.5</small>
+      <small id="main-detail">0.9.6</small>
     </a>
     <a class="button" href="app/">
       <span data-en="Try it in your browser" data-fr="Essayer dans le navigateur">Try it in your browser</span>
@@ -105,14 +105,14 @@
 
 <section id="download" class="download">
   <h2 data-en="Download" data-fr="Télécharger">Download</h2>
-  <p data-en="Version 0.9.5. One file, nothing to install." data-fr="Version 0.9.5. Un seul fichier, rien à installer.">Version 0.9.5. One file, nothing to install.</p>
+  <p data-en="Version 0.9.6. One file, nothing to install." data-fr="Version 0.9.6. Un seul fichier, rien à installer.">Version 0.9.6. One file, nothing to install.</p>
   <div class="cards">
-    <a class="card" id="win" href="https://github.com/mornepousse/burin/releases/download/v0.9.5/Burin-0.9.5-windows-x86_64.exe">
+    <a class="card" id="win" href="https://github.com/mornepousse/burin/releases/download/v0.9.6/Burin-0.9.6-windows-x86_64.exe">
       <h3>Windows</h3>
       <p data-en="Download, then double-click. Windows may warn that the program isn't signed: click &quot;More info&quot;, then &quot;Run anyway&quot;." data-fr="Téléchargez, puis double-cliquez. Windows peut prévenir que le programme n'est pas signé : cliquez sur « Informations complémentaires », puis « Exécuter quand même ».">Download, then double-click. Windows may warn that the program isn't signed: click "More info", then "Run anyway".</p>
       <span class="get" data-en="Download for Windows" data-fr="Télécharger pour Windows">Download for Windows</span>
     </a>
-    <a class="card" id="linux" href="https://github.com/mornepousse/burin/releases/download/v0.9.5/Burin-0.9.5-x86_64.AppImage">
+    <a class="card" id="linux" href="https://github.com/mornepousse/burin/releases/download/v0.9.6/Burin-0.9.6-x86_64.AppImage">
       <h3>Linux</h3>
       <p data-en="Download, allow it to run (right click, Properties, &quot;Allow executing&quot;), then double-click. Help &gt; Add to Applications Menu puts it in your menu." data-fr="Téléchargez, autorisez son exécution (clic droit, Propriétés, « Autoriser l'exécution »), puis double-cliquez. Aide &gt; Ajouter au menu des applications le met dans votre menu.">Download, allow it to run (right click, Properties, "Allow executing"), then double-click. Help &gt; Add to Applications Menu puts it in your menu.</p>
       <span class="get" data-en="Download for Linux" data-fr="Télécharger pour Linux">Download for Linux</span>
@@ -124,7 +124,7 @@
     </a>
   </div>
   <p class="links">
-    <a href="https://github.com/mornepousse/burin/releases/tag/v0.9.5" data-en="What's new in 0.9.5" data-fr="Les nouveautés de la 0.9.5">What's new in 0.9.5</a>
+    <a href="https://github.com/mornepousse/burin/releases/tag/v0.9.6" data-en="What's new in 0.9.6" data-fr="Les nouveautés de la 0.9.6">What's new in 0.9.6</a>
     <span aria-hidden="true">·</span>
     <a href="https://github.com/mornepousse/burin/releases" data-en="All versions and checksums" data-fr="Toutes les versions et les sommes de contrôle">All versions and checksums</a>
   </p>
@@ -177,7 +177,7 @@
   const pick = /Windows/.test(ua) ? "win" : /Linux/.test(ua) && !/Android/.test(ua) ? "linux" : null;
   if (pick) {
     main.href = document.getElementById(pick).href;
-    detail.textContent = (pick === "win" ? "Windows" : "Linux") + " · 0.9.5";
+    detail.textContent = (pick === "win" ? "Windows" : "Linux") + " · 0.9.6";
   }
   // English or French, as asked or as the browser prefers.
   const button = document.getElementById("lang");
@@ -189,7 +189,7 @@
       el.innerHTML = el.getAttribute("data-" + lang);
     }
     button.textContent = lang === "fr" ? "EN" : "FR";
-    if (pick) detail.textContent = (pick === "win" ? "Windows" : "Linux") + " · 0.9.5";
+    if (pick) detail.textContent = (pick === "win" ? "Windows" : "Linux") + " · 0.9.6";
   }
   button.addEventListener("click", () => { show(lang === "fr" ? "en" : "fr"); localStorage.setItem("burin-lang", lang); });
   show(lang);
