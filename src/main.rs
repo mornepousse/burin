@@ -47,6 +47,7 @@ mod support;
 mod templates;
 mod opdialogs;
 mod panels;
+mod thumbs;
 mod inspector;
 mod palette;
 mod pieces;
