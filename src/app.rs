@@ -1120,6 +1120,12 @@ pub struct App {
     pub persona: Persona,
     /// What the two panels held last frame, to switch workspace when that changes.
     pub persona_seen: (u8, u8),
+    /// The command search (Ctrl+K): open, what's typed, which line is chosen.
+    pub palette_open: bool,
+    pub palette_query: String,
+    pub palette_pick: usize,
+    /// An action asked for by the command search, done as its key would do it.
+    pub forced_action: Option<crate::keys::Action>,
     pub view3d: bool,
     /// Both views shown at once, and how.
     pub tiled: Option<Tiling>,
@@ -1552,6 +1558,10 @@ impl Default for App {
             // The tests see both sides at once, as most were written that way.
             persona: if cfg!(test) { Persona::Both } else { Persona::Design },
             persona_seen: (0, 0),
+            palette_open: false,
+            palette_query: String::new(),
+            palette_pick: 0,
+            forced_action: None,
             view3d: false,
             tiled: None,
             last_draw: None,
