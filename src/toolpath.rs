@@ -4261,6 +4261,43 @@ mod tests {
         assert!((estimate_seconds(&m, &t, 200.0, 3.0) - expected).abs() < 1e-6, "{feed}");
     }
 
+    /// A long curved strip, like a groove for an LED ribbon: Burin goes on from ring to ring along
+    /// the walls where the original sometimes lifts and comes back down, so it may lift less, but
+    /// every move at depth keeps the tool's radius from the walls.
+    #[test]
+    fn a_curved_strip_pocket_keeps_off_the_walls_and_lifts_once_per_depth() {
+        let (c, outer, inner) = ([5.0, 1.0], 4.0, 3.0);
+        let mut pts: Vec<P> = (0..=72).map(|i| {
+            let a = std::f64::consts::PI * i as f64 / 72.0;
+            [c[0] + outer * a.cos(), c[1] + outer * a.sin()]
+        }).collect();
+        pts.extend((0..=72).rev().map(|i| {
+            let a = std::f64::consts::PI * i as f64 / 72.0;
+            [c[0] + inner * a.cos(), c[1] + inner * a.sin()]
+        }));
+        let strip = Path::closed(pts);
+        let o = op(OpKind::Pocket, vec![strip.clone()]);
+        let m = generate(&o, M, &J, None).unwrap();
+        let r = o.tool.dia / 2.0;
+        let walls: Vec<(P, P)> = (0..strip.pts.len()).map(|i| (strip.pts[i], strip.pts[(i + 1) % strip.pts.len()])).collect();
+        let mut closest = f64::MAX;
+        for w in m.windows(2).filter(|w| !w[1].rapid && w[1].p[2] < 0.0) {
+            let n = ((w[0].p[0] - w[1].p[0]).hypot(w[0].p[1] - w[1].p[1]) / 0.01).ceil().max(1.0) as usize;
+            for k in 0..=n {
+                let f = k as f64 / n as f64;
+                let q = [w[0].p[0] + (w[1].p[0] - w[0].p[0]) * f, w[0].p[1] + (w[1].p[1] - w[0].p[1]) * f];
+                assert!(crate::geom::inside_even_odd([&strip], q), "{q:?} left the strip");
+                closest = walls.iter().map(|(a, b)| crate::geom::dist2_seg(q, *a, *b)).fold(closest, f64::min);
+            }
+        }
+        assert!(closest.sqrt() > r - 0.001, "came within {:.4} of a wall, radius {r}", closest.sqrt());
+        let mut depths: Vec<f64> = m.iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| m.p[2]).collect();
+        depths.sort_by(f64::total_cmp);
+        depths.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        let lifts = m.windows(2).filter(|w| w[1].rapid && !w[0].rapid).count();
+        assert!(lifts <= depths.len(), "{lifts} lifts over {} depths", depths.len());
+    }
+
     #[test]
     fn pocket_raster_at_an_angle_stays_in_the_shape() {
         let mut o = op(OpKind::Pocket, vec![Path::closed(rect([5.0, 5.0], 3.0, 3.0, 0.0))]);
