@@ -1159,7 +1159,10 @@ impl App {
             p.galley(pos2(square.right() + 18.0, logo.center().y - name.size().y / 2.0), name, TEXT);
             let (line, _) = ui.allocate_exact_size(vec2(width, 22.0), Sense::hover());
             ui.painter().text(line.center(), Align2::CENTER_CENTER, crate::i18n::tr("Design it, then carve it"), FontId::proportional(14.0), theme::MUTED);
-            ui.add_space(26.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new(tf!("Version {}", env!("CARGO_PKG_VERSION"))).size(12.0).color(theme::MUTED));
+            });
+            ui.add_space(22.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
                 let tile = (width - 12.0) / 2.0;
@@ -2622,7 +2625,11 @@ impl App {
         if self.about_open {
             let mut open = true;
             egui::Window::new(crate::i18n::tr("About Burin")).open(&mut open).collapsible(false).resizable(false).show(&ctx, |ui| {
-                ui.label(crate::i18n::tr("Burin 0.1: design, model and cut for CNC carving."));
+                ui.label(RichText::new(tf!("Burin {}", env!("CARGO_PKG_VERSION"))).strong().size(16.0));
+                ui.label(crate::i18n::tr("Design, model and cut for CNC carving."));
+                ui.label(RichText::new(crate::i18n::tr("Free software under the GNU GPL, version 3 or later.")).color(theme::MUTED));
+                ui.hyperlink_to("burin.cc", "https://burin.cc");
+                ui.add_space(4.0);
                 ui.label(crate::i18n::tr("Check every machine file in a simulator or above the material before cutting."));
             });
             self.about_open = open;

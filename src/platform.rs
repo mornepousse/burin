@@ -302,7 +302,54 @@ mod web {
         });
         input.set_onchange(Some(on_change.as_ref().unchecked_ref()));
         on_change.forget();
-        input.click();
+        // Firefox and Safari only open a picker straight from a click, and Burin asks for it a frame
+        // after the click. Chromium allows it a moment later; elsewhere a real button on the page
+        // takes the click and opens the picker from it.
+        let chromium = web_sys::window().and_then(|w| w.navigator().user_agent().ok()).is_some_and(|ua| ua.contains("Chrome/") || ua.contains("Chromium/"));
+        if chromium || ask_with_button(&document, input.clone(), several).is_err() {
+            input.click();
+        }
+    }
+
+    /// A small box over the page with a real button that opens the picker from its own click.
+    fn ask_with_button(document: &web_sys::Document, input: web_sys::HtmlInputElement, several: bool) -> Result<(), wasm_bindgen::JsValue> {
+        let body = document.body().ok_or("no body")?;
+        let shade: web_sys::HtmlElement = document.create_element("div")?.dyn_into()?;
+        shade.set_attribute("style", "position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;font-family:sans-serif")?;
+        let card: web_sys::HtmlElement = document.create_element("div")?.dyn_into()?;
+        card.set_attribute("style", "background:#1b1f26;color:#e6e8eb;border:1px solid #2e343d;border-radius:10px;padding:18px 20px;min-width:280px;box-shadow:0 8px 30px rgba(0,0,0,0.5)")?;
+        let text: web_sys::HtmlElement = document.create_element("div")?.dyn_into()?;
+        text.set_text_content(Some(crate::i18n::tr(if several { "Choose the files to open." } else { "Choose the file to open." })));
+        text.set_attribute("style", "margin-bottom:14px;font-size:14px")?;
+        let row: web_sys::HtmlElement = document.create_element("div")?.dyn_into()?;
+        row.set_attribute("style", "display:flex;gap:10px;justify-content:flex-end")?;
+        let button = |label: &str, main: bool| -> Result<web_sys::HtmlElement, wasm_bindgen::JsValue> {
+            let b: web_sys::HtmlElement = document.create_element("button")?.dyn_into()?;
+            b.set_text_content(Some(label));
+            b.set_attribute("style", if main { "background:#14a37f;color:#fff;border:0;border-radius:6px;padding:7px 14px;font-size:14px;cursor:pointer" } else { "background:#2a3039;color:#e6e8eb;border:0;border-radius:6px;padding:7px 14px;font-size:14px;cursor:pointer" })?;
+            Ok(b)
+        };
+        let cancel = button(crate::i18n::tr("Cancel"), false)?;
+        let choose = button(crate::i18n::tr("Choose ..."), true)?;
+        row.append_child(&cancel)?;
+        row.append_child(&choose)?;
+        card.append_child(&text)?;
+        card.append_child(&row)?;
+        shade.append_child(&card)?;
+        body.append_child(&shade)?;
+        let gone = shade.clone();
+        let on_choose = Closure::<dyn FnMut()>::new(move || {
+            gone.remove();
+            input.click();
+        });
+        choose.set_onclick(Some(on_choose.as_ref().unchecked_ref()));
+        on_choose.forget();
+        let gone = shade.clone();
+        let on_cancel = Closure::<dyn FnMut()>::new(move || gone.remove());
+        cancel.set_onclick(Some(on_cancel.as_ref().unchecked_ref()));
+        on_cancel.forget();
+        choose.focus()?;
+        Ok(())
     }
 }
 
