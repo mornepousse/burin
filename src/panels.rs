@@ -1542,6 +1542,8 @@ impl App {
                         }
                     }
                 });
+                // The 3D and textured cuts in amber, the edge cuts in violet: a colour per family.
+                crate::icons::set_tint(Some(theme::HUE_AMBER));
                 icon_row(ui, |ui| {
                     for (icon, tip, kind) in [
                         (Icon::TpPrism, crate::i18n::tr("Prism carve toolpath"), OpKind::Prism),
@@ -1555,6 +1557,7 @@ impl App {
                         }
                     }
                 });
+                crate::icons::set_tint(Some(theme::HUE_VIOLET));
                 icon_row(ui, |ui| {
                     for (icon, tip, kind) in [(Icon::TpFlute, crate::i18n::tr("Fluting toolpath"), OpKind::Flute), (Icon::TpChamfer, crate::i18n::tr("Chamfer toolpath"), OpKind::Chamfer)] {
                         if icon_button(ui, icon, tip, true, false).clicked() {
@@ -1563,6 +1566,8 @@ impl App {
                     }
                 });
             }
+            // The tools for toolpaths already made, in blue.
+            crate::icons::set_tint(Some(theme::HUE_BLUE));
             let some = self.selected_tp.is_some();
             let any = !self.doc.toolpaths.is_empty();
             icon_row(ui, |ui| {

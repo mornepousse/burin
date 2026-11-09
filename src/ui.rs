@@ -201,7 +201,10 @@ impl App {
         if resp.hovered() {
             ui.painter().rect_filled(rect, 6.0, theme::CARD);
         }
-        let colour = if resp.hovered() { TEXT } else { theme::MUTED };
+        // Each family in its own colour, its icons too, until the next section.
+        let hue = theme::section_hue(title);
+        crate::icons::set_tint(hue);
+        let colour = if resp.hovered() { TEXT } else { hue.unwrap_or(theme::MUTED) };
         let c = rect.left_center() + vec2(9.0, 0.0);
         let arrow = if open { vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)] } else { vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)] };
         ui.painter().add(egui::Shape::convex_polygon(arrow, colour, Stroke::NONE));
@@ -464,6 +467,7 @@ impl App {
 
     pub fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        crate::icons::set_tint(None);
         crate::formula::set_context(self.formula_context());
         if let Some(filter) = self.open_font_list.take() {
             ctx.data_mut(|d| d.insert_temp(egui::Id::unique(crate::fonts::OPEN_FONT_LIST), filter));
@@ -1283,26 +1287,32 @@ impl App {
     /// programs such as Affinity keep theirs, rather than tabs under the panel. Clicking the open
     /// one folds the panel away; any other opens it there. Burin's own.
     fn section_rail(&mut self, ui: &mut Ui) {
+        if self.persona == Persona::Machining {
+            self.machining_rail(ui);
+            return;
+        }
         egui::Panel::left("rail").exact_size(RAIL_W).resizable(false).frame(Frame::new().fill(CHROME)).show(ui, |ui| {
             let whole = ui.max_rect();
             let specs = [
-                (LeftTab::Drawing, Icon::Curve, crate::i18n::tr("Draw")),
-                (LeftTab::Modeling, Icon::Dome, crate::i18n::tr("3D Model")),
-                (LeftTab::Clipart, Icon::ImportModel, crate::i18n::tr("Library")),
-                (LeftTab::Layers, Icon::Layer, crate::i18n::tr("Layers")),
+                (LeftTab::Drawing, Icon::Curve, crate::i18n::tr("Draw"), theme::HUE_TEAL),
+                (LeftTab::Modeling, Icon::Dome, crate::i18n::tr("3D Model"), theme::HUE_AMBER),
+                (LeftTab::Clipart, Icon::ImportModel, crate::i18n::tr("Library"), theme::HUE_VIOLET),
+                (LeftTab::Layers, Icon::Layer, crate::i18n::tr("Layers"), theme::HUE_BLUE),
             ];
             let mut y = whole.top() + 8.0;
-            for (tab, icon, label) in specs {
+            for (tab, icon, label, hue) in specs {
                 let r = Rect::from_min_size(pos2(whole.left() + 4.0, y), vec2(RAIL_W - 8.0, RAIL_W - 8.0));
                 let resp = ui.interact(r, ui.make_persistent_id(("rail", label)), Sense::click());
                 let active = self.left_open && self.left_tab == tab;
                 if active {
-                    ui.painter().rect_filled(r, 8.0, theme::ACCENT_SOFT);
-                    ui.painter().line_segment([pos2(whole.left() + 1.0, r.top() + 6.0), pos2(whole.left() + 1.0, r.bottom() - 6.0)], Stroke::new(3.0, ACCENT));
+                    ui.painter().rect_filled(r, 8.0, theme::hue_soft(hue));
+                    ui.painter().line_segment([pos2(whole.left() + 1.0, r.top() + 6.0), pos2(whole.left() + 1.0, r.bottom() - 6.0)], Stroke::new(3.0, hue));
                 } else if resp.hovered() {
                     ui.painter().rect_filled(r, 8.0, theme::BUTTON);
                 }
+                crate::icons::set_tint(Some(hue));
                 crate::icons::paint(ui.painter(), r.shrink(7.0), icon, true);
+                crate::icons::set_tint(None);
                 label_widget(&resp, label);
                 let resp = resp.on_hover_text(label);
                 if resp.clicked() {
@@ -1319,11 +1329,64 @@ impl App {
         });
     }
 
+    /// The same strip in Machining, for the toolpath panel that sits on the left there: the list,
+    /// the preview and saving machine files.
+    fn machining_rail(&mut self, ui: &mut Ui) {
+        egui::Panel::left("rail").exact_size(RAIL_W).resizable(false).frame(Frame::new().fill(CHROME)).show(ui, |ui| {
+            let whole = ui.max_rect();
+            let specs = [
+                (0, Icon::TpPocket, crate::i18n::tr("Toolpath list"), theme::HUE_TEAL),
+                (1, Icon::Preview, crate::i18n::tr("Toolpath preview"), theme::HUE_BLUE),
+                (2, Icon::SaveTp, crate::i18n::tr("Machine files"), theme::HUE_GREEN),
+            ];
+            let showing = match self.right {
+                RightMode::Preview => 1,
+                RightMode::Save => 2,
+                _ => 0,
+            };
+            let mut y = whole.top() + 8.0;
+            for (which, icon, label, hue) in specs {
+                let r = Rect::from_min_size(pos2(whole.left() + 4.0, y), vec2(RAIL_W - 8.0, RAIL_W - 8.0));
+                let resp = ui.interact(r, ui.make_persistent_id(("rail-machining", label)), Sense::click());
+                let active = self.right_open && showing == which;
+                if active {
+                    ui.painter().rect_filled(r, 8.0, theme::hue_soft(hue));
+                    ui.painter().line_segment([pos2(whole.left() + 1.0, r.top() + 6.0), pos2(whole.left() + 1.0, r.bottom() - 6.0)], Stroke::new(3.0, hue));
+                } else if resp.hovered() {
+                    ui.painter().rect_filled(r, 8.0, theme::BUTTON);
+                }
+                crate::icons::set_tint(Some(hue));
+                crate::icons::paint(ui.painter(), r.shrink(7.0), icon, true);
+                crate::icons::set_tint(None);
+                label_widget(&resp, label);
+                let resp = resp.on_hover_text(label);
+                if resp.clicked() {
+                    if active {
+                        self.right_open = false;
+                    } else {
+                        self.right_open = true;
+                        match which {
+                            1 => {
+                                self.right = RightMode::Preview;
+                                self.view3d = true;
+                            }
+                            2 => self.right = RightMode::Save,
+                            // Back to the list, unless a form is half filled in.
+                            _ if !matches!(self.right, RightMode::Op { .. } | RightMode::Material(_)) => self.right = RightMode::List,
+                            _ => {}
+                        }
+                    }
+                }
+                y += RAIL_W - 4.0;
+            }
+        });
+    }
+
     fn left_panel(&mut self, ui: &mut Ui) {
+        self.section_rail(ui);
         if self.persona == Persona::Machining {
             return;
         }
-        self.section_rail(ui);
         if !self.left_open {
             return;
         }
@@ -1361,6 +1424,7 @@ impl App {
                     }
                 }
             });
+            crate::icons::set_tint(None);
         });
     }
 
@@ -1390,7 +1454,13 @@ impl App {
     fn panel_header(&mut self, ui: &mut Ui, rect: Rect, title: &str, left: bool) {
         ui.painter().text(rect.left_center() + vec2(12.0, 0.0), Align2::LEFT_CENTER, title, FontId::proportional(12.5), TEXT);
         let b = Rect::from_center_size(pos2(rect.right() - 26.0, rect.center().y), vec2(16.0, 16.0));
-        let name = if left { crate::i18n::tr("Hide left panel") } else { crate::i18n::tr("Hide right panel") };
+        let name = if left {
+            crate::i18n::tr("Hide left panel")
+        } else if self.persona == Persona::Machining {
+            crate::i18n::tr("Hide the toolpath panel")
+        } else {
+            crate::i18n::tr("Hide right panel")
+        };
         let resp = ui.interact(b, ui.scope_id().with(name), Sense::click()).on_hover_text(name);
         icons::paint(ui.painter(), b, Icon::Collapse, true);
         icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.right() - 9.0, rect.center().y), vec2(12.0, 12.0)), Icon::Pin, true);
@@ -1911,11 +1981,16 @@ impl App {
         if self.persona == Persona::Design {
             return;
         }
+        // In Machining the toolpath panel sits on the left, by the strip that opens it again.
+        let on_left = self.persona == Persona::Machining;
         if !self.right_open {
-            self.collapsed_strip(ui, false);
+            if !on_left {
+                self.collapsed_strip(ui, false);
+            }
             return;
         }
-        egui::Panel::right("right").exact_size(RIGHT_W).resizable(false).frame(Frame::new().fill(PANEL)).show(ui, |ui| {
+        let panel = if on_left { egui::Panel::left("toolpaths-left") } else { egui::Panel::right("right") };
+        panel.exact_size(RIGHT_W).resizable(false).frame(Frame::new().fill(PANEL)).show(ui, |ui| {
             let whole = ui.max_rect();
             let header = Rect::from_min_size(whole.min, vec2(whole.width(), 22.0));
             self.panel_header(ui, header, crate::i18n::tr("Toolpaths"), false);
@@ -1937,6 +2012,7 @@ impl App {
                 }
                 RightMode::Material(backup) => self.material_form(&mut child, backup),
             }
+            crate::icons::set_tint(None);
         });
     }
 

@@ -57,6 +57,40 @@ pub const GRID_FINE_DARK: Color32 = Color32::from_rgb(24, 27, 32);
 pub const GRID_BOLD_DARK: Color32 = Color32::from_rgb(38, 42, 49);
 pub const ERROR: Color32 = Color32::from_rgb(255, 136, 120);
 
+/// A colour for each family of tools, so the panels aren't all one green on grey: the shapes keep
+/// the logo's teal, moving and layers are blue, editing coral, repeating violet, sketching and 3D
+/// amber, machine files green. Burin's own.
+pub const HUE_TEAL: Color32 = Color32::from_rgb(70, 205, 190);
+pub const HUE_BLUE: Color32 = Color32::from_rgb(112, 168, 250);
+pub const HUE_CORAL: Color32 = Color32::from_rgb(250, 136, 108);
+pub const HUE_VIOLET: Color32 = Color32::from_rgb(180, 142, 250);
+pub const HUE_AMBER: Color32 = Color32::from_rgb(242, 186, 78);
+pub const HUE_GREEN: Color32 = Color32::from_rgb(126, 212, 112);
+
+/// The colour of a panel section, by its title in the language shown.
+pub fn section_hue(title: &str) -> Option<Color32> {
+    use crate::i18n::tr;
+    [
+        (tr("Shapes"), HUE_TEAL),
+        (tr("Move and Size"), HUE_BLUE),
+        (tr("Edit Shapes"), HUE_CORAL),
+        (tr("Offset and Repeat"), HUE_VIOLET),
+        (tr("Repeat"), HUE_VIOLET),
+        (tr("Sketch"), HUE_AMBER),
+        (tr("3D Shapes"), HUE_AMBER),
+        (tr("New Toolpath"), HUE_TEAL),
+    ]
+    .into_iter()
+    .find(|(t, _)| *t == title)
+    .map(|(_, c)| c)
+}
+
+/// A colour seen through the dark panels: for the soft ground under what's chosen.
+pub fn hue_soft(c: Color32) -> Color32 {
+    let mix = |v: u8, ground: f32| (v as f32 * 0.22 + ground * 0.78) as u8;
+    Color32::from_rgb(mix(c.r(), 24.0), mix(c.g(), 27.0), mix(c.b(), 32.0))
+}
+
 pub fn setup_style(ctx: &egui::Context) {
     // A press counts as a click however long the button stays down, as long as it doesn't move.
     ctx.options_mut(|o| o.input_options.max_click_duration = 3600.0);
