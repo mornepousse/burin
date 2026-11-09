@@ -47,6 +47,7 @@ mod support;
 mod templates;
 mod opdialogs;
 mod panels;
+mod steps;
 mod thumbs;
 mod inspector;
 mod palette;
@@ -645,6 +646,12 @@ fn open_state(app: &mut App, state: &str) {
             app.right_open = true;
             app.start_op(toolpath::OpKind::Profile);
             app.open_tool_list(Some(0));
+        }
+        // The sample's toolpaths as steps along the bottom, in Machining.
+        "steps" => {
+            app.load_sample();
+            app.set_persona(app::Persona::Machining);
+            app.selected_tp = Some(0);
         }
         // The command search open, a word typed.
         "palette" => {
