@@ -3205,6 +3205,30 @@ impl App {
         toolpath::estimate_seconds(moves, &t.op.tool, rapid, t.op.dwell)
     }
 
+    /// How the machine file places a point of the job: less the origin, raised by `z_shift`, times
+    /// the scale, as every writer does.
+    pub(crate) fn output_space(&self) -> (P, f64, f64) {
+        let j = &self.doc.job;
+        let job_metric = j.units == Units::Mm;
+        let scale = if let Some(def) = self.post_index.checked_sub(toolpath::POSTS.len()).and_then(|i| self.loaded_posts.get(i)) {
+            match (job_metric, def.metric.unwrap_or(job_metric)) {
+                (true, false) => 1.0 / 25.4,
+                (false, true) => 25.4,
+                _ => 1.0,
+            }
+        } else if self.is_planetcnc() {
+            if job_metric { 1.0 } else { 25.4 }
+        } else {
+            let (_, _, metric) = toolpath::POSTS[self.post_index.min(toolpath::POSTS.len() - 1)];
+            match (job_metric, metric) {
+                (true, false) => 1.0 / 25.4,
+                (false, true) => 25.4,
+                _ => 1.0,
+            }
+        };
+        (j.origin(), if j.z_on_bed { j.thickness } else { 0.0 }, scale)
+    }
+
     /// The machine file's text for these toolpaths.
     pub(crate) fn gcode_from(&self, chosen: &[&Toolpath], file_name: &str) -> Option<String> {
         if chosen.is_empty() {

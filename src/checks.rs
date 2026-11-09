@@ -104,6 +104,94 @@ pub fn check_toolpath(tp: &Toolpath, job: &Job, machine: &toolpath::Machine) -> 
     out
 }
 
+/// How far the machine file may stray from the toolpath it was written from, in millimetres: its
+/// arcs follow the curves the toolpath draws as small sides, so a little more than the arc tolerance.
+/// Not from the original: other programs simulate the file itself before it's cut (CAMotics), and
+/// LinuxCNC refuses arcs whose ends don't agree.
+const FILE_STRAY_MM: f64 = 0.2;
+
+/// Reads the toolpath's machine file back as the machine would, and checks that it goes where the
+/// toolpath does and cuts all of it. Says nothing for a file Burin can't read back.
+fn file_follows(app: &App, tp: &Toolpath) -> Option<Finding> {
+    if app.resume.is_some() {
+        return None;
+    }
+    let text = app.gcode_from(&[tp], &tp.op.name)?;
+    let read = crate::gcodein::read(&text);
+    if !read.moves.iter().any(|m| !m.rapid) {
+        return None;
+    }
+    let (origin, z_shift, k) = app.output_space();
+    let expected: Vec<toolpath::Move> = tp.moves.iter().map(|m| toolpath::Move { p: [(m.p[0] - origin[0]) * k, (m.p[1] - origin[1]) * k, (m.p[2] + z_shift) * k], ..*m }).collect();
+    let mm = if app.doc.job.units == Units::Mm { 1.0 } else { 1.0 / 25.4 };
+    let limit = FILE_STRAY_MM * mm * k;
+    let cuts = |moves: &[toolpath::Move]| moves.iter().filter(|m| !m.rapid).map(|m| m.p).collect::<Vec<_>>();
+    // Where the file cuts that the toolpath doesn't go, then what the toolpath cuts that the file misses.
+    let (wrong, first) = strays(&cuts(&read.moves), &expected, limit);
+    let (missed, missed_at) = strays(&cuts(&expected), &read.moves, limit);
+    if wrong + missed == 0 {
+        return None;
+    }
+    let at = first.or(missed_at).unwrap_or_default();
+    let unit = if k * mm > 0.5 { "mm" } else { "in" };
+    Some(Finding {
+        level: Level::Danger,
+        toolpath: tp.op.name.clone(),
+        text: tf!(
+            "Read back, its machine file strays more than {} {unit} from the toolpath at {} points, the first near X{} Y{} Z{}: the machine wouldn't cut what the toolpath shows. Don't run it; save it with another machine, or without arcs.",
+            toolpath::trim(limit),
+            wrong + missed,
+            toolpath::trim(at[0]),
+            toolpath::trim(at[1]),
+            toolpath::trim(at[2])
+        ),
+    })
+}
+
+/// How many of the points are further than `limit` from every move of `path`, and the first of them.
+fn strays(points: &[[f64; 3]], path: &[toolpath::Move], limit: f64) -> (usize, Option<[f64; 3]>) {
+    use std::collections::HashMap;
+    let cell = (limit * 4.0).max(1e-9);
+    let key = |x: f64, y: f64| ((x / cell).floor() as i64, (y / cell).floor() as i64);
+    // Each move, under every cell it passes over.
+    let mut grid: HashMap<(i64, i64), Vec<u32>> = HashMap::new();
+    for i in 1..path.len() {
+        let (a, b) = (path[i - 1].p, path[i].p);
+        let steps = (((b[0] - a[0]).hypot(b[1] - a[1]) / (cell / 2.0)).ceil() as usize).max(1);
+        let mut last = None;
+        for s in 0..=steps {
+            let t = s as f64 / steps as f64;
+            let c = key(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
+            if last != Some(c) {
+                let list = grid.entry(c).or_default();
+                if list.last() != Some(&(i as u32)) {
+                    list.push(i as u32);
+                }
+                last = Some(c);
+            }
+        }
+    }
+    let near = |p: [f64; 3], i: usize| {
+        let (a, b) = (path[i - 1].p, path[i].p);
+        let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        let t = if len2 < 1e-24 { 0.0 } else { (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / len2).clamp(0.0, 1.0) };
+        let q = [a[0] + d[0] * t - p[0], a[1] + d[1] * t - p[1], a[2] + d[2] * t - p[2]];
+        q[0] * q[0] + q[1] * q[1] + q[2] * q[2] <= limit * limit
+    };
+    let mut count = 0;
+    let mut first = None;
+    for p in points {
+        let (cx, cy) = key(p[0], p[1]);
+        let fine = (-1..=1).any(|dx| (-1..=1).any(|dy| grid.get(&(cx + dx, cy + dy)).is_some_and(|l| l.iter().any(|i| near(*p, *i as usize)))));
+        if !fine {
+            count += 1;
+            first.get_or_insert(*p);
+        }
+    }
+    (count, first)
+}
+
 /// The visible toolpaths, or the one chosen, the most serious first.
 pub fn check_all(app: &App, only: Option<usize>) -> Vec<Finding> {
     let machine = app.doc.machine_on_job();
@@ -113,7 +201,11 @@ pub fn check_all(app: &App, only: Option<usize>) -> Vec<Finding> {
         .iter()
         .enumerate()
         .filter(|(i, t)| only.map_or(t.visible, |o| o == *i) && !t.moves.is_empty())
-        .flat_map(|(_, t)| check_toolpath(t, &app.doc.job, &machine))
+        .flat_map(|(_, t)| {
+            let mut found = check_toolpath(t, &app.doc.job, &machine);
+            found.extend(file_follows(app, t));
+            found
+        })
         .collect();
     out.sort_by_key(|f| f.level);
     out
@@ -247,6 +339,58 @@ mod tests {
 
     fn texts(tp: &Toolpath) -> Vec<(Level, String)> {
         check_toolpath(tp, &job(), &machine()).into_iter().map(|f| (f.level, f.text)).collect()
+    }
+
+    /// A pocket with long straight walls and round corners, and a round hole: the kinds of path
+    /// whose arcs once strayed (a wall written as an arc of hundreds of millimetres).
+    fn cut(units: Units) -> Toolpath {
+        let mut tool = toolpath::default_tools().into_iter().find(|t| t.metric).unwrap();
+        tool.dia = 3.125;
+        tool.stepover = 0.9;
+        tool.pass_depth = 2.0;
+        let shapes = vec![crate::geom::Path::closed(crate::geom::rect([40.0, 50.0], 30.0, 80.0, 4.0)), crate::geom::Path::closed(crate::geom::circle([80.0, 50.0], 6.0))];
+        let op = toolpath::blank_op(OpKind::Pocket, "Pocket".into(), tool, 2.0, shapes);
+        let size = toolpath::JobSize { width: 100.0, height: 100.0, thickness: 18.0 };
+        let moves = toolpath::generate(&op, machine(), &size, None).unwrap();
+        let _ = units;
+        Toolpath { op, visible: true, color: [0, 0, 0], moves: std::sync::Arc::new(moves), kept_moves: None, kept_steps: None, face: 0, sheet: 0 }
+    }
+
+    #[test]
+    fn every_machine_file_reads_back_as_its_toolpath() {
+        for units in [Units::Mm, Units::Inches] {
+            for (datum, on_bed) in [(Datum::BottomLeft, false), (Datum::Centre, true)] {
+                let mut a = App::default();
+                a.doc.job = Job { width: 100.0, height: 100.0, thickness: 18.0, units, datum, z_on_bed: on_bed, ..Default::default() };
+                let tp = cut(units);
+                for post in 0..toolpath::POSTS.len() {
+                    for arcs in [false, true] {
+                        a.post_index = post;
+                        a.output_arcs = arcs;
+                        assert!(file_follows(&a, &tp).is_none(), "{} {units:?} {datum:?} arcs {arcs}: {:?}", toolpath::POSTS[post].0, file_follows(&a, &tp));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_file_that_strays_from_its_toolpath_is_caught() {
+        let square: Vec<Move> = [[0.0, 0.0], [50.0, 0.0], [50.0, 50.0], [0.0, 50.0], [0.0, 0.0]].iter().map(|q| Move { p: [q[0], q[1], -2.0], rapid: false, join: false }).collect();
+        // A wall written as a wide arc: right at its ends, a millimetre off in its middle.
+        let text = "G21 G90 G91.1\nG0 X0 Y0 Z5\nG1 Z-2 F100\nG1 X50\nG3 X50 Y50 I-312 J25\nG1 X0\nG1 Y0\n";
+        let read = crate::gcodein::read(text);
+        let points: Vec<[f64; 3]> = read.moves.iter().filter(|m| !m.rapid).map(|m| m.p).collect();
+        let (off, first) = strays(&points, &square, 0.2);
+        assert!(off > 0, "the bulge is found");
+        assert!((first.unwrap()[0] - 50.0).abs() > 0.2, "{first:?}");
+        // The same file with the wall straight says nothing.
+        let read = crate::gcodein::read(&text.replace("G3 X50 Y50 I-312 J25", "G1 Y50"));
+        let points: Vec<[f64; 3]> = read.moves.iter().filter(|m| !m.rapid).map(|m| m.p).collect();
+        assert_eq!(strays(&points, &square, 0.2).0, 0);
+        // Arc centres given from zero (G90.1) are read as such.
+        let abs = crate::gcodein::read("G21 G90 G90.1\nG0 X10 Y0\nG3 X0 Y10 I0 J0\n");
+        assert!(abs.moves.iter().all(|m| (m.p[0].hypot(m.p[1]) - 10.0).abs() < 0.02), "{:?}", abs.moves.last());
     }
 
     #[test]

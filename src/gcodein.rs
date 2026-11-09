@@ -55,6 +55,8 @@ pub fn read(text: &str) -> Read {
     let mut at = [0.0f64; 3];
     let mut motion = 0u8;
     let mut absolute = true;
+    // Arc centres from where the arc starts (G91.1, the usual), or from zero (G90.1).
+    let mut centres_absolute = false;
     let mut metric = None;
     let mut moves = Vec::new();
     let mut skipped = Vec::new();
@@ -73,7 +75,9 @@ pub fn read(text: &str) -> Read {
                 ('G', g) if g == 21.0 => metric = Some(true),
                 ('G', g) if g == 90.0 => absolute = true,
                 ('G', g) if g == 91.0 => absolute = false,
-                ('G', g) if [17.0, 40.0, 43.0, 49.0, 54.0, 64.0, 80.0, 94.0, 90.1, 91.1, 61.0].contains(&g) => {}
+                ('G', g) if (g - 90.1).abs() < 1e-9 => centres_absolute = true,
+                ('G', g) if (g - 91.1).abs() < 1e-9 => centres_absolute = false,
+                ('G', g) if [17.0, 40.0, 43.0, 49.0, 54.0, 64.0, 80.0, 94.0, 61.0].contains(&g) => {}
                 ('G', _) => skipped.push(raw.trim().to_string()),
                 ('X' | 'Y' | 'Z', v) => {
                     let k = match letter {
@@ -100,6 +104,7 @@ pub fn read(text: &str) -> Read {
                 let clockwise = motion == 2;
                 let centre = match (i, j, r) {
                     (_, _, Some(r)) => centre_from_radius(at, target, r, clockwise),
+                    (i, j, _) if centres_absolute => Some([i.unwrap_or(at[0]), j.unwrap_or(at[1])]),
                     (i, j, _) => Some([at[0] + i.unwrap_or(0.0), at[1] + j.unwrap_or(0.0)]),
                 };
                 let tolerance = if metric == Some(false) { ARC_TOLERANCE_MM / 25.4 } else { ARC_TOLERANCE_MM };
