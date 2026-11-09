@@ -660,6 +660,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Raster", "Balayage"),
     ("Cut Direction", "Sens de coupe"),
     ("Raster Allowance", "Surcote de balayage"),
+    ("Second raster at 90°", "Second balayage à 90°"),
     ("Pocket Allowance", "Surcote de poche"),
     ("Ramp Plunge Moves", "Plongées en rampe"),
     ("Use Flat Area Clearance Tool", "Utiliser un outil pour les zones plates"),

@@ -2147,6 +2147,7 @@ impl App {
             });
             ui.add_enabled_ui(op.raster, |ui| {
                 labelled(ui, crate::i18n::tr("Raster"), 40.0, &mut op.raster_angle, 50.0, crate::i18n::tr("degrees"));
+                ui.checkbox(&mut op.raster_second, crate::i18n::tr("Second raster at 90°"));
                 ui.horizontal(|ui| {
                     ui.label(crate::i18n::tr("Profile"));
                     profile_combo(ui, &mut op.profile_pass, "pocket_profile");

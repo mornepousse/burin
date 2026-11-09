@@ -402,6 +402,9 @@ pub struct Op {
     /// How much further from the walls raster rows stop, when an outline pass cleans up after them.
     #[serde(default)]
     pub raster_allowance: f64,
+    /// A second set of raster rows, at the angle + 90 degrees, after the first (`_pkpdDo2ndRaster`).
+    #[serde(default)]
+    pub raster_second: bool,
     /// Absolute stepover; 0 uses the tool's own.
     #[serde(default)]
     pub stepover: f64,
@@ -2215,7 +2218,14 @@ fn pocket_set(e: &mut Emit, op: &Op) {
             // Rows may come short of the full distance by a hair, as the original offsets by the distance
             // less its tolerance (`0x140820030`): a row that just touches the edge is still cut, as in saved jobs.
             let reach = clear - field.cell * RASTER_TOLERANCE_CELLS;
-            cut_rows(e, rows, field.cell, *z, &offset.iter().map(|p| p.pts.clone()).collect::<Vec<_>>(), &|x, y| field.sample(x, y) >= reach);
+            let edges: Vec<Vec<P>> = offset.iter().map(|p| p.pts.clone()).collect();
+            cut_rows(e, rows, field.cell, *z, &edges, &|x, y| field.sample(x, y) >= reach);
+            // A second set of rows across the first, in the same box, added after them (`0x140820030`
+            // joins the rows at the angle + 90 degrees, `0x1420fbc08`, to the first set).
+            if op.raster_second {
+                let across = pocket_rows(box_lo, box_hi, op.raster_angle + 90.0, step);
+                cut_rows(e, across, field.cell, *z, &edges, &|x, y| field.sample(x, y) >= reach);
+            }
             if op.profile_pass == ProfilePass::Last {
                 ring(e, radius, *z, *z);
             }
@@ -3944,6 +3954,7 @@ pub fn blank_op(kind: OpKind, name: String, tool: Tool, depth: f64, paths: Vec<P
         raster_angle: 0.0,
         profile_pass: ProfilePass::Last,
         raster_allowance: 0.0,
+        raster_second: false,
         last_thickness: 0.0,
         keep_exact: false,
         zigzag_open: false,
@@ -4296,6 +4307,36 @@ mod tests {
         depths.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
         let lifts = m.windows(2).filter(|w| w[1].rapid && !w[0].rapid).count();
         assert!(lifts <= depths.len(), "{lifts} lifts over {} depths", depths.len());
+    }
+
+    /// The second raster (`_pkpdDo2ndRaster`) cuts the rows again across the first, at the angle
+    /// + 90 degrees, after them, at every depth.
+    #[test]
+    fn a_second_raster_crosses_the_first() {
+        let shape = Path::closed(rect([5.0, 5.0], 3.0, 2.0, 0.0));
+        let mut o = op(OpKind::Pocket, vec![shape.clone()]);
+        o.raster = true;
+        o.raster_angle = 0.0;
+        o.profile_pass = ProfilePass::None;
+        let once = generate(&o, M, &J, None).unwrap();
+        o.raster_second = true;
+        let twice = generate(&o, M, &J, None).unwrap();
+        let long = |m: &[Move], along_x: bool| m.windows(2).filter(|w| !w[1].rapid && w[1].p[2] < 0.0 && {
+            let (dx, dy) = ((w[1].p[0] - w[0].p[0]).abs(), (w[1].p[1] - w[0].p[1]).abs());
+            if along_x { dx > 1.0 && dy < 1e-9 } else { dy > 1.0 && dx < 1e-9 }
+        }).count();
+        assert_eq!(long(&once, false), 0, "one raster: rows along X only");
+        assert!(long(&twice, false) >= 4, "the second raster runs along Y");
+        assert_eq!(long(&twice, true), long(&once, true), "the first rows are unchanged");
+        // Each depth: rows along X, then along Y.
+        let z = twice.iter().filter(|m| !m.rapid).map(|m| m.p[2]).fold(0.0, f64::min);
+        let at: Vec<&Move> = twice.iter().filter(|m| !m.rapid && (m.p[2] - z).abs() < 1e-9).collect();
+        let last_x = at.windows(2).rposition(|w| (w[1].p[0] - w[0].p[0]).abs() > 1.0 && (w[1].p[1] - w[0].p[1]).abs() < 1e-9).unwrap();
+        let first_y = at.windows(2).position(|w| (w[1].p[1] - w[0].p[1]).abs() > 1.0 && (w[1].p[0] - w[0].p[0]).abs() < 1e-9).unwrap();
+        assert!(last_x < first_y, "the rows across come after the first rows");
+        let r = o.tool.dia / 2.0;
+        let over = |m: &[Move]| m.iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| ((m.p[0] - 5.0).abs() - (1.5 - r)).max((m.p[1] - 5.0).abs() - (1.0 - r))).fold(f64::MIN, f64::max);
+        assert!(over(&twice) <= over(&once).max(0.0) + 1e-6, "no closer to the wall than the first rows go");
     }
 
     #[test]
