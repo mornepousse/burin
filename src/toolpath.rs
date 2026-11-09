@@ -3107,10 +3107,32 @@ fn moulding(e: &mut Emit, op: &Op) {
     }
 }
 
+/// Below this angle a tool has no V to carve with.
+pub const FLAT_TOOL_ANGLE: f64 = 1.0;
+
 fn vcarve(e: &mut Emit, op: &Op) {
     let half = (op.tool.angle.to_radians() / 2.0).tan().max(1e-3);
     let Some(field) = Field::build(&op.paths, op.tool.dia, 900) else { return };
     let reach = op.tool.dia / 2.0;
+    if op.tool.angle < FLAT_TOOL_ANGLE && op.kind == OpKind::VCarve {
+        // An end mill can't carve a slope: it follows each shape once, its radius inside, at the
+        // flat depth, as the saved jobs show (a 2 mm end mill: every cut 1.0 mm inside the letters,
+        // at the flat depth, one trace per outline). Passes by the tool's pass depth are Burin's.
+        let depth = if op.flat_depth > 0.0 { op.flat_depth } else { op.cut_depth };
+        if depth <= 0.0 {
+            return;
+        }
+        let rings: Vec<Vec<P>> = field.contours(reach).into_iter().map(|pts| oriented(pts, op.climb)).collect();
+        for d in passes_for(depth, op.tool.pass_depth, false) {
+            let z = -(op.start_depth + d);
+            for pts in &rings {
+                e.go_to(pts[0][0], pts[0][1], z);
+                walk(e, pts, true, z, op, None, None);
+                e.retract();
+            }
+        }
+        return;
+    }
     // Fine enough to trace the middle of thin strokes, which set how deep the V goes.
     let step = (op.tool.dia * op.tool.stepover).min(op.tool.dia * 0.02).max(field.cell * 0.5);
     let limit = if op.kind == OpKind::Prism {
@@ -4182,6 +4204,27 @@ mod tests {
         assert_eq!(cut.len(), 2);
         assert!((cut[0][0] - 2.0).abs() < 1e-6 && (cut[0][2] + 0.5).abs() < 1e-9);
         assert!((cut[1][1] - 8.0).abs() < 1e-6);
+    }
+
+    /// An end mill in a V-Carve toolpath follows each shape once, its radius inside, at the flat
+    /// depth, as in the saved jobs; it doesn't sweep the whole shape with rings.
+    #[test]
+    fn vcarve_with_an_end_mill_follows_the_outline_once_at_the_flat_depth() {
+        let mut o = op(OpKind::VCarve, vec![Path::closed(rect([5.0, 5.0], 2.0, 1.0, 0.0))]);
+        assert!(o.tool.angle < FLAT_TOOL_ANGLE);
+        o.flat_depth = 0.1;
+        let m = generate(&o, M, &J, None).unwrap();
+        let cut: Vec<[f64; 3]> = m.iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| m.p).collect();
+        assert!(!cut.is_empty());
+        assert!(cut.iter().all(|p| (p[2] + 0.1).abs() < 1e-9), "all at the flat depth");
+        let r = o.tool.dia / 2.0;
+        // On the ring one radius inside the rectangle.
+        assert!(cut.iter().all(|p| {
+            let (dx, dy) = ((p[0] - 5.0).abs(), (p[1] - 5.0).abs());
+            let on_side = ((dx - (1.0 - r)).abs() < 0.01 && dy <= 0.5 - r + 0.01) || ((dy - (0.5 - r)).abs() < 0.01 && dx <= 1.0 - r + 0.01);
+            on_side
+        }), "on the ring a radius inside");
+        assert_eq!(m.windows(2).filter(|w| w[1].rapid && !w[0].rapid).count(), 1, "one trace, one lift");
     }
 
     #[test]
