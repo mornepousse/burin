@@ -1598,10 +1598,10 @@ impl App {
         j.width = j.width.max(0.01);
         j.height = j.height.max(0.01);
         j.thickness = j.thickness.max(0.001);
-        // A new job's 3D detail is kept for the next new job, but not the highest, as the
-        // original does (`0x140332cc0` saves "Resolution" only for a new file and below 3).
-        if matches!(self.left, LeftForm::Job { first: true, .. }) && j.resolution < NEW_JOB_REMEMBERED_RESOLUTIONS {
-            remember_new_job_resolution(j.resolution);
+        // A new job's material is kept for the next new job (its 3D detail only below the
+        // highest), as the original does (`0x140332cc0`).
+        if matches!(self.left, LeftForm::Job { first: true, .. }) {
+            remember_new_job(&self.doc.job);
         }
         // Editing an existing job is one step of undo, and what it affects gets pointed out.
         if let LeftForm::Job { backup: Some(before), .. } = &self.left {

@@ -1435,31 +1435,75 @@ impl Quality3d {
 /// highest isn't kept (`0x140332cc0`: saved when the index is below 3).
 pub const NEW_JOB_REMEMBERED_RESOLUTIONS: usize = 3;
 
-fn new_job_resolution_file() -> Option<PathBuf> {
-    recent_file().map(|f| f.with_file_name("new-job-resolution.txt"))
+fn new_job_file() -> Option<PathBuf> {
+    recent_file().map(|f| f.with_file_name("new-job.json"))
 }
 
-/// The 3D detail a new job starts with: the one last chosen for a new job, or the first.
-fn new_job_resolution() -> usize {
-    if cfg!(test) {
-        return 0;
+/// What a new job starts from: the material of the last new job confirmed, as the original keeps
+/// it (`0x140332cc0` saves "NewFileMaterialBlock"; `0x14084b7f0` reads back the units, the Z and
+/// X/Y zeros, the size, the job type and its flip). The 3D detail comes along only when it isn't
+/// the highest (`0x140332cc0` saves "Resolution" below 3).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NewJob {
+    pub units: Units,
+    pub width: f64,
+    pub height: f64,
+    pub thickness: f64,
+    pub z_on_bed: bool,
+    pub datum: Datum,
+    pub two_sided: bool,
+    pub flip_around_y: bool,
+    pub resolution: Option<usize>,
+}
+
+impl NewJob {
+    pub fn of(job: &Job) -> NewJob {
+        NewJob {
+            units: job.units,
+            width: job.width,
+            height: job.height,
+            thickness: job.thickness,
+            z_on_bed: job.z_on_bed,
+            datum: job.datum,
+            two_sided: job.two_sided,
+            flip_around_y: job.flip_around_y,
+            resolution: (job.resolution < NEW_JOB_REMEMBERED_RESOLUTIONS).then_some(job.resolution),
+        }
     }
-    new_job_resolution_file()
-        .and_then(|f| crate::platform::read_to_string(f).ok())
-        .and_then(|t| t.trim().parse::<usize>().ok())
-        .filter(|r| *r < NEW_JOB_REMEMBERED_RESOLUTIONS)
-        .unwrap_or(0)
+
+    /// Puts these on a job, keeping what isn't saved (its zero offset, colours and the rest).
+    pub fn apply(&self, job: &mut Job) {
+        job.units = self.units;
+        if self.width > 0.0 && self.height > 0.0 && self.thickness > 0.0 {
+            (job.width, job.height, job.thickness) = (self.width, self.height, self.thickness);
+        }
+        job.z_on_bed = self.z_on_bed;
+        job.datum = self.datum;
+        job.two_sided = self.two_sided;
+        job.flip_around_y = self.flip_around_y;
+        if let Some(r) = self.resolution.filter(|r| *r < NEW_JOB_REMEMBERED_RESOLUTIONS) {
+            job.resolution = r;
+        }
+    }
 }
 
-pub fn remember_new_job_resolution(resolution: usize) {
+fn saved_new_job() -> Option<NewJob> {
+    if cfg!(test) {
+        return None;
+    }
+    let text = crate::platform::read_to_string(new_job_file()?).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+pub fn remember_new_job(job: &Job) {
     if cfg!(test) {
         return;
     }
-    if let Some(file) = new_job_resolution_file() {
+    if let (Some(file), Ok(text)) = (new_job_file(), serde_json::to_string_pretty(&NewJob::of(job))) {
         if let Some(dir) = file.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let _ = crate::platform::write(file, resolution.to_string());
+        let _ = crate::platform::write(file, text);
     }
 }
 
@@ -1942,10 +1986,16 @@ impl App {
 
     pub fn new_file(&mut self) {
         self.doc = Doc::default();
-        self.doc.job.resolution = new_job_resolution();
         if self.metric_by_default {
             self.doc.set_units(Units::Mm);
             (self.doc.job.width, self.doc.job.height, self.doc.job.thickness) = (600.0, 400.0, 18.0);
+        }
+        // The material of the last new job, as the original keeps it.
+        if let Some(saved) = saved_new_job() {
+            if saved.units != self.doc.job.units {
+                self.doc.set_units(saved.units);
+            }
+            saved.apply(&mut self.doc.job);
         }
         self.reset_state();
         self.screen = Screen::Work;
@@ -3807,6 +3857,31 @@ mod tests {
         assert!((d.job.width - 254.0).abs() < 1e-9);
         d.set_units(Units::Inches);
         assert!((d.job.width - 10.0).abs() < 1e-9);
+    }
+
+    /// A new job starts from the last new job's material, as the original keeps it, but not
+    /// from its highest 3D detail, and never from another job's zero offset.
+    #[test]
+    fn a_new_job_takes_the_last_new_jobs_material() {
+        let mut last = Job::default();
+        (last.units, last.width, last.height, last.thickness) = (Units::Mm, 300.0, 200.0, 12.0);
+        last.z_on_bed = true;
+        last.datum = Datum::Centre;
+        last.resolution = 3;
+        let saved = NewJob::of(&last);
+        assert_eq!(saved.resolution, None, "the highest detail isn't kept");
+        let mut next = Job::default();
+        next.offset = [1.0, 2.0];
+        saved.apply(&mut next);
+        assert_eq!((next.units, next.width, next.height, next.thickness, next.z_on_bed, next.datum), (Units::Mm, 300.0, 200.0, 12.0, true, Datum::Centre));
+        assert_eq!(next.resolution, 0);
+        assert_eq!(next.offset, [1.0, 2.0], "its own offset stays");
+        last.resolution = 2;
+        NewJob::of(&last).apply(&mut next);
+        assert_eq!(next.resolution, 2);
+        // It goes through its file and back unchanged.
+        let text = serde_json::to_string(&NewJob::of(&last)).unwrap();
+        assert_eq!(serde_json::from_str::<NewJob>(&text).unwrap(), NewJob::of(&last));
     }
 
     #[test]
