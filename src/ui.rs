@@ -541,6 +541,7 @@ impl App {
             self.left_panel(ui);
             self.right_panel(ui);
             egui::CentralPanel::default().frame(Frame::new().fill(WORKSPACE)).show(ui, |ui| self.centre(ui));
+            self.inspector(&ctx);
         }
         self.windows(ui);
         // Last, so that a shape let go this frame counts at once, whatever is on the screen.

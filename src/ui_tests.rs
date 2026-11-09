@@ -6946,3 +6946,20 @@ fn the_command_search_finds_and_does_a_command() {
     assert!(!h.state().palette_open, "closed once done");
     assert!(matches!(h.state().left, LeftForm::Draw(_)), "the circle form is open: {:?}", std::mem::discriminant(&h.state().left));
 }
+
+#[test]
+fn the_selection_card_shows_what_is_selected() {
+    let mut h = harness();
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    h.state_mut().persona = crate::app::Persona::Design;
+    h.run();
+    assert!(h.query_by_label_contains("Selected shape").is_none(), "nothing selected, no card");
+    let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle([5.0, 5.0], 1.0))], Prim::Circle { c: [5.0, 5.0], r: 1.0 });
+    h.state_mut().selected = vec![id];
+    h.run();
+    h.get_by_label_contains("Selected shape");
+    h.state_mut().set_persona(crate::app::Persona::Machining);
+    h.run();
+    assert!(h.query_by_label_contains("Selected shape").is_none(), "not in Machining");
+}

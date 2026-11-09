@@ -1126,6 +1126,9 @@ pub struct App {
     pub palette_pick: usize,
     /// An action asked for by the command search, done as its key would do it.
     pub forced_action: Option<crate::keys::Action>,
+    /// The selection's card: an edit under way (one step to undo), and whether width and height go together.
+    pub inspector_editing: bool,
+    pub inspector_keep_ratio: bool,
     pub view3d: bool,
     /// Both views shown at once, and how.
     pub tiled: Option<Tiling>,
@@ -1562,6 +1565,8 @@ impl Default for App {
             palette_query: String::new(),
             palette_pick: 0,
             forced_action: None,
+            inspector_editing: false,
+            inspector_keep_ratio: true,
             view3d: false,
             tiled: None,
             last_draw: None,
