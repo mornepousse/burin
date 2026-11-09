@@ -231,6 +231,8 @@ pub struct SavedOptions {
     /// 0 no outline pass, 1 first, 2 last.
     pub profile_pass: Option<u32>,
     pub raster_allowance: Option<f64>,
+    /// A second set of raster rows at the angle + 90 degrees.
+    pub raster_second: bool,
     /// What's left for the last pass, if it was asked for.
     pub last_thickness: Option<f64>,
     pub keep_exact: bool,
@@ -315,6 +317,7 @@ fn read_options(settings: &[(String, Setting)], kind: &str) -> SavedOptions {
         // Newer files use the longer name; where there's both, it counts.
         profile_pass: whole("_pkpdProfilePassType").or(whole("_pkpdProfileType")),
         raster_allowance: num("_pkpdRasterAllowance"),
+        raster_second: flag("_pkpdDo2ndRaster"),
         last_thickness: if flag("_mctddUseLastPassThickness") { num("_mctddLastPassThickness") } else { None },
         keep_exact: flag("_mctddKeepToolStepdown"),
         zigzag_open: flag("_ppdZigZagOpen"),

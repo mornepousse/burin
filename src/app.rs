@@ -3818,6 +3818,7 @@ fn saved_options(op: &mut Op, o: &crate::crv3d::SavedOptions) {
     op.raster = o.raster;
     op.raster_angle = o.raster_angle.unwrap_or(op.raster_angle);
     op.raster_allowance = o.raster_allowance.unwrap_or(op.raster_allowance);
+    op.raster_second = o.raster_second;
     op.last_thickness = o.last_thickness.unwrap_or(0.0);
     op.keep_exact = o.keep_exact;
     op.profile_pass = match o.profile_pass {
