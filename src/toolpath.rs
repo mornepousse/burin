@@ -537,7 +537,10 @@ pub fn passes_with_last(total: f64, step: f64, last: f64) -> Vec<f64> {
         return passes_for(total, step, false);
     }
     let rest = total - last;
-    if rest < 0.0 {
+    // A last pass as thick as the whole cut leaves nothing before it: one pass. The original's
+    // list would start with a pass at no depth at all (`0x1408779b0` adds the 0 it's given), but
+    // its saved jobs never cut there, and a pass at the start depth removes nothing.
+    if rest < SAME_PASS {
         return vec![total];
     }
     let mut out = passes_for(rest, step, false);
@@ -4599,6 +4602,8 @@ mod tests {
     fn a_last_pass_thickness_is_left_for_the_end() {
         assert_eq!(passes_with_last(21.0, 10.0, 1.0), [10.0, 20.0, 21.0]);
         assert_eq!(passes_with_last(5.0, 10.0, 8.0), [5.0], "more than the whole depth");
+        // As thick as the whole depth: no pass at the top that would cut nothing.
+        assert_eq!(passes_with_last(1.0, 2.0, 1.0), [1.0], "the whole depth");
         assert_eq!(passes_with_last(21.5, 10.0, 0.0).len(), 3);
     }
 
