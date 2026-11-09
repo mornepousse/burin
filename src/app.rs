@@ -2031,7 +2031,9 @@ impl App {
         self.left_tab = LeftTab::Drawing;
         self.left = LeftForm::None;
         self.tool = Tool2::Select;
+        // Fitted again even when the window hasn't changed size: another job opened in it.
         self.auto_fit = true;
+        self.last_rect = egui::Rect::NOTHING;
         self.path = None;
         self.dirty = false;
         self.measure = None;

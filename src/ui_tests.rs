@@ -3845,7 +3845,7 @@ fn out_of_place(state: &str) -> Vec<String> {
     for _ in 0..4 {
         h.step();
     }
-    let (w, left, right) = (1910.0, crate::ui::SIDE_W as f64, 1910.0 - crate::ui::RIGHT_W as f64);
+    let (w, left, right) = (1910.0, (crate::ui::RAIL_W + crate::ui::SIDE_W) as f64, 1910.0 - crate::ui::RIGHT_W as f64);
     let mut found = Vec::new();
     for node in h.root().children_recursive() {
         let node = node.accesskit_node();
@@ -6909,4 +6909,23 @@ fn the_version_shows_on_the_start_screen_and_in_about() {
     h.run();
     h.get_by_label_contains(&format!("Burin {version} (OpenGL)"));
     h.get_by_label_contains("GNU GPL");
+}
+
+#[test]
+fn another_job_opened_in_the_same_window_is_fitted_to_it() {
+    let mut h = harness();
+    h.state_mut().new_file();
+    h.state_mut().left = LeftForm::None;
+    h.run();
+    let small = h.state().scale;
+    // A job ten times as wide, as another project opened over this one.
+    let mut doc = h.state().doc.clone();
+    doc.job.width *= 10.0;
+    doc.job.height *= 10.0;
+    h.state_mut().doc = doc;
+    h.state_mut().reset_state();
+    h.state_mut().screen = Screen::Work;
+    h.run();
+    let big = h.state().scale;
+    assert!(big < small * 0.2, "zoomed out to the new job: {small} then {big}");
 }
