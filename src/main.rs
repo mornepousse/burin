@@ -47,6 +47,7 @@ mod support;
 mod templates;
 mod opdialogs;
 mod panels;
+mod palette;
 mod pieces;
 mod recalc;
 mod planetcnc;
@@ -642,6 +643,14 @@ fn open_state(app: &mut App, state: &str) {
             app.right_open = true;
             app.start_op(toolpath::OpKind::Profile);
             app.open_tool_list(Some(0));
+        }
+        // The command search open, a word typed.
+        "palette" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            circle(app);
+            app.palette_open = true;
+            app.palette_query = "po".into();
         }
         "toolgroups" => {
             app.new_file();

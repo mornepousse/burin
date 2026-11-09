@@ -274,6 +274,11 @@ pub const SECTIONS: [(&str, &[Action]); 8] = [
     ("Views and panels", &[Action::View2d, Action::View3d, Action::TileSideBySide, Action::TileStacked, Action::TopSide, Action::BottomSide, Action::MultiSided, Action::Refresh, Action::ZoomFit, Action::ZoomFitAgain, Action::ZoomBox, Action::DrawingOrModeling, Action::DrawingTab, Action::LayersTab, Action::LeftPanel, Action::RightPanel]),
 ];
 
+/// Every action, in the order of the list of keys.
+pub fn all_actions() -> impl Iterator<Item = Action> {
+    ACTIONS.iter().map(|a| a.0)
+}
+
 pub fn action_name(action: Action) -> &'static str {
     tr(ACTIONS[action as usize].2)
 }

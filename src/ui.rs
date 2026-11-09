@@ -503,6 +503,7 @@ impl App {
         self.feedback_window(&ctx);
         self.crash_window(&ctx);
         self.after_crash_window(&ctx);
+        self.palette_window(&ctx);
         self.keep_recovery();
         self.files_dropped(&ctx);
         crate::crash::set_job(self.doc.vectors.len(), self.doc.toolpaths.len(), self.doc.toolpaths.iter().map(|t| t.moves.len() as u64).sum());
@@ -638,7 +639,9 @@ impl App {
             return;
         }
         let keys = self.keys;
-        let fired = |action: Action| ctx.input(|i| keys.fired(action, i));
+        // An action chosen in the command search counts as its key pressed.
+        let forced = self.forced_action.take();
+        let fired = |action: Action| forced == Some(action) || ctx.input(|i| keys.fired(action, i));
         if !self.view3d {
             if fired(Action::Group) {
                 self.group_selected();

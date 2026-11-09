@@ -6929,3 +6929,20 @@ fn another_job_opened_in_the_same_window_is_fitted_to_it() {
     let big = h.state().scale;
     assert!(big < small * 0.2, "zoomed out to the new job: {small} then {big}");
 }
+
+#[test]
+fn the_command_search_finds_and_does_a_command() {
+    let mut h = harness();
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+    h.run();
+    assert!(h.state().palette_open, "Ctrl+K opens it");
+    h.state_mut().palette_query = "circle".into();
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.run();
+    assert!(!h.state().palette_open, "closed once done");
+    assert!(matches!(h.state().left, LeftForm::Draw(_)), "the circle form is open: {:?}", std::mem::discriminant(&h.state().left));
+}
