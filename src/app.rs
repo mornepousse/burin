@@ -1428,11 +1428,13 @@ impl Quality3d {
 
     /// The most points the carve is worked out on, from the original's own steps.
     pub fn most_points(self) -> usize {
-        match self {
+        let points = match self {
             Quality3d::Light => 4_000_000,
             Quality3d::Balanced => 8_000_000,
             Quality3d::Sharp => 16_000_000,
-        }
+        };
+        // Half as many in a browser, which has one core and less memory for it.
+        if crate::platform::WEB { points / 2 } else { points }
     }
 
     /// The most spots looked at per side of a pixel: everywhere, and on the edges.
@@ -1527,7 +1529,9 @@ fn quality_file() -> Option<PathBuf> {
 
 fn load_quality() -> Quality3d {
     let saved = if cfg!(test) { None } else { quality_file().and_then(|f| crate::platform::read_to_string(f).ok()) };
-    Quality3d::ALL.into_iter().find(|q| saved.as_deref().is_some_and(|s| s.trim() == q.name())).unwrap_or(Quality3d::Balanced)
+    // A browser works the picture out on one core: it starts on the lightest.
+    let first = if crate::platform::WEB { Quality3d::Light } else { Quality3d::Balanced };
+    Quality3d::ALL.into_iter().find(|q| saved.as_deref().is_some_and(|s| s.trim() == q.name())).unwrap_or(first)
 }
 
 /// What would drop the project on screen.

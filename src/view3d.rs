@@ -318,8 +318,9 @@ impl Order {
 }
 
 /// How long a slice of a picture made between frames may take, so a page with no threads keeps
-/// answering while it sharpens. Burin's choice.
-pub const PICTURE_SLICE_MS: f32 = 20.0;
+/// answering while it sharpens: 12 ms leaves room in a 60-frame second for drawing the rest.
+/// Burin's choice.
+pub const PICTURE_SLICE_MS: f32 = 12.0;
 
 /// A picture made a few rows at a time, for a browser: there, nothing runs beside the page, so a
 /// whole sharp picture at once would freeze it for seconds after every move.
@@ -1028,10 +1029,20 @@ impl Scene<'_> {
 #[cfg(test)]
 const EDGE_SAMPLES: usize = 6;
 
+/// The finished picture in a browser: at most this many pixels and samples. Burin's choice.
+const WEB_FINE_PIXELS: f32 = 1_500_000.0;
+const WEB_FINE_SAMPLES: usize = 2_000_000;
+
 /// Picture size and samples per pixel: quick while things move, sharp once they stop.
 fn picture_size(rect: Rect, pixels_per_point: f32, scale: f32, cell: f32, fine: bool, quick_pixels: f32) -> (usize, usize, usize) {
-    const FINE_SAMPLES: usize = 8_000_000;
+    // A browser works it out on one core: fewer samples, and no more pixels than this.
+    let fine_samples: usize = if crate::platform::WEB { WEB_FINE_SAMPLES } else { 8_000_000 };
     let (mut w, mut h) = ((rect.width() * pixels_per_point).max(1.0), (rect.height() * pixels_per_point).max(1.0));
+    if fine && crate::platform::WEB && w * h > WEB_FINE_PIXELS {
+        let shrink = (WEB_FINE_PIXELS / (w * h)).sqrt();
+        w *= shrink;
+        h *= shrink;
+    }
     if !fine {
         let shrink = (quick_pixels / (w * h)).sqrt().min(1.0);
         w *= shrink;
@@ -1042,7 +1053,7 @@ fn picture_size(rect: Rect, pixels_per_point: f32, scale: f32, cell: f32, fine: 
     // Fine enough to land on every cell of the simulation, so thin grooves don't vanish.
     let cells_per_pixel = 1.0 / (pixels_per_point * scale * cell).max(1e-6);
     let mut samples = (cells_per_pixel.ceil() as usize).clamp(1, 3);
-    while samples > 1 && w * h * samples * samples > FINE_SAMPLES {
+    while samples > 1 && w * h * samples * samples > fine_samples {
         samples -= 1;
     }
     (w, h, samples)
