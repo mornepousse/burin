@@ -6898,3 +6898,15 @@ fn design_and_machining_workspaces_switch() {
     h.run();
     assert_eq!(h.state().persona, crate::app::Persona::Design);
 }
+
+#[test]
+fn the_version_shows_on_the_start_screen_and_in_about() {
+    let version = env!("CARGO_PKG_VERSION");
+    let mut h = harness();
+    h.run();
+    h.get_by_label_contains(&format!("Version {version}"));
+    h.state_mut().about_open = true;
+    h.run();
+    h.get_by_label_contains(&format!("Burin {version}"));
+    h.get_by_label_contains("GNU GPL");
+}
