@@ -102,6 +102,30 @@ pub fn graphics_line() -> String {
     GRAPHICS.try_lock().map_or(String::new(), |g| g.clone())
 }
 
+/// How the 3D view is drawn, said in About as the original says it (`0x140726810`: through the
+/// system's OpenGL, or in software). `card` is what was recorded at start: wgpu's
+/// "name (backend, device type, driver ...)", or OpenGL's renderer name.
+pub fn drawing_name(card: &str, web: bool) -> String {
+    if web {
+        return "WebGL".into();
+    }
+    let lower = card.to_ascii_lowercase();
+    if lower.contains(", cpu,") || ["llvmpipe", "softpipe", "swiftshader", "software"].iter().any(|s| lower.contains(s)) {
+        return crate::i18n::tr("software drawing").into();
+    }
+    // wgpu names its backend first inside the brackets.
+    if let Some(inside) = card.split_once(" (").map(|(_, rest)| rest) {
+        let backend = inside.split(',').next().unwrap_or("").trim();
+        match backend {
+            "Vulkan" | "Metal" => return backend.into(),
+            "Dx12" => return "DirectX 12".into(),
+            "Gl" => return "OpenGL".into(),
+            _ => {}
+        }
+    }
+    "OpenGL".into()
+}
+
 /// The ways of drawing that stopped the program dead when it last started, read from the log it left.
 /// A driver can crash the whole program, leaving nothing to fall back from: the next start avoids it.
 /// A new version tries them all again.
@@ -286,6 +310,18 @@ mod tests {
         assert_eq!(attempts(None), [Engine::Graphics, Engine::OpenGl, Engine::Software]);
         assert_eq!(attempts(Some("opengl")), [Engine::OpenGl]);
         assert!(attempts(Some("none")).is_empty());
+    }
+
+    #[test]
+    fn about_names_how_the_view_is_drawn() {
+        assert_eq!(drawing_name("NVIDIA GeForce RTX 3060 (Vulkan, DiscreteGpu, driver 550.1)", false), "Vulkan");
+        assert_eq!(drawing_name("Apple M2 (Metal, IntegratedGpu, driver )", false), "Metal");
+        assert_eq!(drawing_name("Intel(R) UHD Graphics (Dx12, IntegratedGpu, driver 31.0)", false), "DirectX 12");
+        assert_eq!(drawing_name("Mesa Intel(R) Xe Graphics (TGL GT2)", false), "OpenGL");
+        assert_eq!(drawing_name("llvmpipe (LLVM 19.1.7, 256 bits)", false), "software drawing");
+        assert_eq!(drawing_name("llvmpipe (Vulkan, Cpu, driver Mesa)", false), "software drawing");
+        assert_eq!(drawing_name("", false), "OpenGL");
+        assert_eq!(drawing_name("", true), "WebGL");
     }
 
     #[test]

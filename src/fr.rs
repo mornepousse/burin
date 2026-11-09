@@ -279,6 +279,7 @@ pub const FR: &[(&str, &str)] = &[
     ("An estimate: cutting and lifting count double, and fast moves go at 100 mm/s. The real time depends on your machine.", "Estimation : la coupe et les remontées comptent double, les déplacements rapides vont à 100 mm/s. Le temps réel dépend de votre machine."),
     ("About Burin", "À propos de Burin"),
     ("Burin {} ({})", "Burin {} ({})"),
+    ("software drawing", "affichage logiciel"),
     ("Design, model and cut for CNC carving.", "Dessin, modélisation et usinage pour la gravure CNC."),
     ("Free software under the GNU GPL, version 3 or later.", "Logiciel libre sous licence GNU GPL, version 3 ou ultérieure."),
     ("Version {}", "Version {}"),
