@@ -1533,6 +1533,7 @@ pub enum Leave {
 
 impl Default for App {
     fn default() -> Self {
+        let kept_output = crate::pieces::OutputChoices::load();
         App {
             doc: Doc::default(),
             undo: Vec::new(),
@@ -1572,10 +1573,10 @@ impl Default for App {
             loaded_posts: Vec::new(),
             one_file: crate::pieces::load_one_file(),
             output_arcs: false,
-            corner_slow: false,
-            corner_share: toolpath::CORNER_RATE_SHARE,
-            blend: false,
-            blend_mm: toolpath::BLEND_TOLERANCE_MM,
+            corner_slow: kept_output.corner_slow,
+            corner_share: kept_output.corner_share,
+            blend: kept_output.blend,
+            blend_mm: kept_output.blend_mm,
             snap_shapes: true,
             show_guides: true,
             snap_held_off: false,
