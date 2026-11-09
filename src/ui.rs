@@ -1162,7 +1162,7 @@ impl App {
             let whole = ui.max_rect();
             let width = 460.0_f32.min(whole.width() - 32.0);
             let recent = self.recent.clone();
-            let height = 300.0 + if recent.is_empty() { 0.0 } else { 34.0 + recent.len().div_ceil(3) as f32 * 120.0 };
+            let height = 340.0 + if recent.is_empty() { 0.0 } else { 34.0 + recent.len().div_ceil(3) as f32 * 120.0 };
             let top = (whole.center().y - height / 2.0).max(whole.top() + 16.0);
             let column = Rect::from_min_max(pos2(whole.center().x - width / 2.0, top), pos2(whole.center().x + width / 2.0, whole.bottom()));
             let mut body = ui.new_child(egui::UiBuilder::new().max_rect(column));
@@ -1219,8 +1219,29 @@ impl App {
                 }
                 ui.add_space(10.0);
             }
-            if self.start_link(ui, Icon::Sample, crate::i18n::tr("Open the sample project")) {
-                self.load_sample();
+            // The sample, or one of the models to start from, drawn and with their toolpaths, two to a line.
+            bold_sized(ui, crate::i18n::tr("Start from a model"), 12.5, theme::MUTED());
+            let half = (width - 8.0) / 2.0;
+            let mut choice: Option<Option<crate::starters::Starter>> = None;
+            let models: Vec<(Option<crate::starters::Starter>, Icon, &str)> = std::iter::once((None, Icon::Sample, crate::i18n::tr("Open the sample project")))
+                .chain(crate::starters::Starter::ALL.into_iter().zip([Icon::Text, Icon::Circle, Icon::Nest]).map(|(s, i)| (Some(s), i, s.name())))
+                .collect();
+            for pair in models.chunks(2) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    for (which, icon, name) in pair {
+                        ui.allocate_ui(vec2(half, 22.0), |ui| {
+                            if self.start_link(ui, *icon, name) {
+                                choice = Some(*which);
+                            }
+                        });
+                    }
+                });
+            }
+            match choice {
+                Some(None) => self.load_sample(),
+                Some(Some(which)) => self.load_starter(which),
+                None => {}
             }
         });
     }
