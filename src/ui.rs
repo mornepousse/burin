@@ -1269,12 +1269,17 @@ impl App {
         for ((persona, icon, label, tip), r) in both.into_iter().zip(rects) {
             let resp = ui.interact(r, ui.scope_id().with(("persona", label)), Sense::click()).on_hover_text(tip);
             let on = self.persona == persona;
+            // Each workspace in its own colour: drawing in the logo's teal, machining in amber.
+            let hue = if persona == Persona::Machining { theme::HUE_AMBER } else { theme::HUE_TEAL };
             if on {
-                ui.painter().rect_filled(r.shrink(2.0), 5.0, ACCENT.gamma_multiply(0.35));
+                ui.painter().rect_filled(r.shrink(2.0), 5.0, theme::hue_soft(hue));
+                ui.painter().rect_stroke(r.shrink(2.0), 5.0, Stroke::new(1.0, hue.gamma_multiply(0.6)), StrokeKind::Inside);
             } else if resp.hovered() {
                 ui.painter().rect_filled(r.shrink(2.0), 5.0, LINE);
             }
+            icons::set_tint(Some(hue));
             icons::paint(ui.painter(), Rect::from_center_size(pos2(r.left() + 15.0, r.center().y), vec2(18.0, 18.0)), icon, true);
+            icons::set_tint(None);
             ui.painter().text(pos2(r.left() + 27.0, r.center().y), Align2::LEFT_CENTER, label, FontId::proportional(12.5), if on { Color32::WHITE } else { TEXT });
             label_widget(&resp, label);
             if resp.clicked() {
@@ -1335,7 +1340,7 @@ impl App {
         egui::Panel::left("rail").exact_size(RAIL_W).resizable(false).frame(Frame::new().fill(CHROME)).show(ui, |ui| {
             let whole = ui.max_rect();
             let specs = [
-                (0, Icon::TpPocket, crate::i18n::tr("Toolpath list"), theme::HUE_TEAL),
+                (0, Icon::TpPocket, crate::i18n::tr("Toolpath list"), theme::HUE_AMBER),
                 (1, Icon::Preview, crate::i18n::tr("Toolpath preview"), theme::HUE_BLUE),
                 (2, Icon::SaveTp, crate::i18n::tr("Machine files"), theme::HUE_GREEN),
             ];
@@ -2632,6 +2637,8 @@ impl App {
         let wanted: f32 = items.iter().map(|i| i.4).sum();
         let room = top.right() - 8.0 - start;
         let squeeze = if two_rows && wanted > room { room / wanted } else { 1.0 };
+        // The view's own tools in blue, apart from the drawing and machining ones.
+        icons::set_tint(Some(theme::HUE_BLUE));
         for (i, (icon, tip, enabled, active, step)) in items.into_iter().enumerate() {
             let step = (step * squeeze).max(24.5);
             let rect = Rect::from_min_size(pos2(x, tools_y), vec2(24.0, 24.0));
@@ -2671,6 +2678,7 @@ impl App {
             }
             x += step;
         }
+        icons::set_tint(None);
         // A two-sided job adds two buttons: which way the block turns over, and which side is in use
         // (the original's "Change flip direction" `0x8459` and "Toggle Top / Bottom Side" `0x84bd`).
         if self.doc.job.two_sided {
