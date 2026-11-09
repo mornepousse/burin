@@ -1151,6 +1151,9 @@ pub struct App {
     /// Cut more slowly near tight corners (`toolpath::slow_corners`), at this share of the rate.
     pub corner_slow: bool,
     pub corner_share: f64,
+    /// Write `G64 P` with this tolerance, in millimetres, for LinuxCNC. Not from the original.
+    pub blend: bool,
+    pub blend_mm: f64,
     /// The pointer catches on what is drawn.
     pub snap_shapes: bool,
     pub show_guides: bool,
@@ -1571,6 +1574,8 @@ impl Default for App {
             output_arcs: false,
             corner_slow: false,
             corner_share: toolpath::CORNER_RATE_SHARE,
+            blend: false,
+            blend_mm: toolpath::BLEND_TOLERANCE_MM,
             snap_shapes: true,
             show_guides: true,
             snap_held_off: false,
@@ -3322,7 +3327,7 @@ impl App {
         };
         Some(toolpath::gcode(
             &items,
-            &toolpath::PostSettings { inches: !metric, origin: j.origin(), z_shift: if j.z_on_bed { j.thickness } else { 0.0 }, scale, arcs: self.output_arcs.then_some(if j.units == Units::Mm { 0.012 } else { 0.0005 }) },
+            &toolpath::PostSettings { inches: !metric, origin: j.origin(), z_shift: if j.z_on_bed { j.thickness } else { 0.0 }, scale, arcs: self.output_arcs.then_some(if j.units == Units::Mm { 0.012 } else { 0.0005 }), blend: (self.blend && toolpath::post_takes_blend(self.post_index)).then_some(if metric { self.blend_mm } else { self.blend_mm / 25.4 }) },
         ))
     }
 

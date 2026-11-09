@@ -3646,6 +3646,9 @@ pub struct PostSettings {
     pub scale: f64,
     /// When set, curves are written as true arcs, following them within this distance.
     pub arcs: Option<f64>,
+    /// When set, written as `G64 P` at the top: how far LinuxCNC may round a corner to keep its
+    /// speed. Without it, LinuxCNC rounds as far as it likes (its G-code reference, G64).
+    pub blend: Option<f64>,
 }
 
 /// One cutting path ready for output.
@@ -3669,6 +3672,16 @@ pub struct PostPath<'a> {
 pub const CORNER_TURN_DEGREES: f64 = 45.0;
 /// The share of the cutting rate near a tight corner, at first.
 pub const CORNER_RATE_SHARE: f64 = 0.5;
+
+/// The corner tolerance offered for LinuxCNC's `G64 P`, in millimetres: what the person's own
+/// LinuxCNC files use (`G64 P0.03`). Not from the original.
+pub const BLEND_TOLERANCE_MM: f64 = 0.03;
+
+/// Whether the built-in output with this index is plain G-code that LinuxCNC reads: GRBL and
+/// Mach3 don't take `G64 P`.
+pub fn post_takes_blend(index: usize) -> bool {
+    POSTS.get(index).is_some_and(|p| p.0.starts_with("Generic"))
+}
 /// How far before and after the corner the rate stays down, in tool diameters.
 pub const CORNER_REACH: f64 = 1.0;
 
@@ -3792,6 +3805,9 @@ pub fn gcode(paths: &[PostPath], post: &PostSettings) -> String {
     let k = post.scale;
     let _ = writeln!(s, "(Written by Burin)");
     let _ = writeln!(s, "{} G90 G17", if post.inches { "G20" } else { "G21" });
+    if let Some(p) = post.blend {
+        let _ = writeln!(s, "G64 P{p:.4}");
+    }
     let mut current: Option<&Tool> = None;
     for path in paths {
         let (tool, moves) = (path.tool, path.moves);
@@ -4200,12 +4216,12 @@ mod tests {
         let t = o.tool.clone();
         let text = gcode(
             &[PostPath { name: "Drill 1", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "", slow: None }],
-            &PostSettings { inches: true, origin: [1.0, 1.0], z_shift: 0.5, scale: 1.0, arcs: None },
+            &PostSettings { inches: true, origin: [1.0, 1.0], z_shift: 0.5, scale: 1.0, arcs: None, blend: None },
         );
         assert!(text.starts_with("(Written by Burin)\nG20"));
         assert!(text.contains("X1.0000 Y2.0000 Z0.0000"), "{text}");
         assert!(text.trim_end().ends_with("M30"));
-        let mm = gcode(&[], &PostSettings { inches: false, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None });
+        let mm = gcode(&[], &PostSettings { inches: false, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None, blend: None });
         assert!(mm.contains("G21"));
     }
 
@@ -4380,7 +4396,7 @@ mod tests {
         let moves = generate(&o, M, &J, None).unwrap();
         let zs: Vec<f64> = cuts(&moves).iter().map(|p| p[2]).collect();
         assert_eq!(zs, vec![-0.125, -0.25, -0.375, -0.5]);
-        let text = gcode(&[PostPath { name: "d", tool: &o.tool, moves: &moves, dwell: o.dwell, steps: None, notes: "", slow: None }], &PostSettings { inches: true, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None });
+        let text = gcode(&[PostPath { name: "d", tool: &o.tool, moves: &moves, dwell: o.dwell, steps: None, notes: "", slow: None }], &PostSettings { inches: true, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None, blend: None });
         assert_eq!(text.matches("G4 P0.50").count(), 4, "{text}");
     }
 
@@ -4521,7 +4537,7 @@ mod tests {
     fn profile_output(arcs: Option<f64>, origin: [f64; 2]) -> (String, Vec<Move>, Op) {
         let o = op(OpKind::Profile, vec![Path::closed(circle([5.0, 5.0], 1.2)), Path::closed(rect([2.0, 2.0], 1.0, 1.0, 0.0))]);
         let moves = generate(&o, M, &J, None).unwrap();
-        let text = gcode(&[PostPath { name: "p", tool: &o.tool, moves: &moves, dwell: 0.0, steps: None, notes: "", slow: None }], &PostSettings { inches: true, origin, z_shift: 0.0, scale: 1.0, arcs });
+        let text = gcode(&[PostPath { name: "p", tool: &o.tool, moves: &moves, dwell: 0.0, steps: None, notes: "", slow: None }], &PostSettings { inches: true, origin, z_shift: 0.0, scale: 1.0, arcs, blend: None });
         (text, moves, o)
     }
 
@@ -5742,7 +5758,7 @@ mod tests {
         o.name = "Outside (top)".into();
         let moves = generate(&o, M, &J, None).unwrap();
         let path = PostPath { name: &o.name, tool: &o.tool, moves: &moves, dwell: 0.0, steps: None, notes: "", slow: None };
-        let text = gcode(&[path], &PostSettings { inches: false, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None });
+        let text = gcode(&[path], &PostSettings { inches: false, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None, blend: None });
         for line in text.lines() {
             let mut open = 0;
             for c in line.chars() {
@@ -5960,7 +5976,7 @@ mod tests {
             moves.push(cut([p[0], p[1], -0.1]));
         }
         let (moves, slow) = slow_corners(&moves, t.dia, 0.5, 1.0);
-        let text = gcode(&[PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "", slow: Some(&slow) }], &PostSettings { inches: true, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None });
+        let text = gcode(&[PostPath { name: "p", tool: &t, moves: &moves, dwell: 0.0, steps: None, notes: "", slow: Some(&slow) }], &PostSettings { inches: true, origin: [0.0, 0.0], z_shift: 0.0, scale: 1.0, arcs: None, blend: None });
         assert!(text.contains(&format!("F{:.1}", t.feed * 0.5)), "{text}");
         assert!(text.contains(&format!("F{:.1}", t.feed)));
     }
