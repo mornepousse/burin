@@ -12,6 +12,8 @@ use egui::{pos2, vec2, Align2, Color32, CornerRadius, FontId, Frame, Margin, Rec
 use crate::theme::{self, ACCENT, CARD, CHROME, INPUT, LINE, MUTED, PANEL, TEXT, WORKSPACE};
 pub use crate::theme::setup_style;
 pub const SIDE_W: f32 = 248.0;
+/// The strip of section icons along the left edge.
+pub const RAIL_W: f32 = 44.0;
 pub const RIGHT_W: f32 = 282.0;
 
 
@@ -1277,12 +1279,52 @@ impl App {
         }
     }
 
+    /// The sections of the left panel as a strip of icons along the window's edge, as drawing
+    /// programs such as Affinity keep theirs, rather than tabs under the panel. Clicking the open
+    /// one folds the panel away; any other opens it there. Burin's own.
+    fn section_rail(&mut self, ui: &mut Ui) {
+        egui::Panel::left("rail").exact_size(RAIL_W).resizable(false).frame(Frame::new().fill(CHROME)).show(ui, |ui| {
+            let whole = ui.max_rect();
+            let specs = [
+                (LeftTab::Drawing, Icon::Curve, crate::i18n::tr("Draw")),
+                (LeftTab::Modeling, Icon::Dome, crate::i18n::tr("3D Model")),
+                (LeftTab::Clipart, Icon::ImportModel, crate::i18n::tr("Library")),
+                (LeftTab::Layers, Icon::Layer, crate::i18n::tr("Layers")),
+            ];
+            let mut y = whole.top() + 8.0;
+            for (tab, icon, label) in specs {
+                let r = Rect::from_min_size(pos2(whole.left() + 4.0, y), vec2(RAIL_W - 8.0, RAIL_W - 8.0));
+                let resp = ui.interact(r, ui.make_persistent_id(("rail", label)), Sense::click());
+                let active = self.left_open && self.left_tab == tab;
+                if active {
+                    ui.painter().rect_filled(r, 8.0, theme::ACCENT_SOFT);
+                    ui.painter().line_segment([pos2(whole.left() + 1.0, r.top() + 6.0), pos2(whole.left() + 1.0, r.bottom() - 6.0)], Stroke::new(3.0, ACCENT));
+                } else if resp.hovered() {
+                    ui.painter().rect_filled(r, 8.0, theme::BUTTON);
+                }
+                crate::icons::paint(ui.painter(), r.shrink(7.0), icon, true);
+                label_widget(&resp, label);
+                let resp = resp.on_hover_text(label);
+                if resp.clicked() {
+                    if active {
+                        self.left_open = false;
+                    } else {
+                        self.left_open = true;
+                        self.left_tab = tab;
+                        self.close_left_form();
+                    }
+                }
+                y += RAIL_W - 4.0;
+            }
+        });
+    }
+
     fn left_panel(&mut self, ui: &mut Ui) {
         if self.persona == Persona::Machining {
             return;
         }
+        self.section_rail(ui);
         if !self.left_open {
-            self.collapsed_strip(ui, true);
             return;
         }
         let job_open = matches!(self.left, LeftForm::Job { .. });
@@ -1296,9 +1338,7 @@ impl App {
                 return;
             }
             let header = Rect::from_min_size(whole.min, vec2(whole.width(), 22.0));
-            let tabs_h = 26.0;
-            let tabs = Rect::from_min_max(pos2(whole.left(), whole.bottom() - tabs_h), whole.max);
-            let body = Rect::from_min_max(pos2(whole.left(), header.bottom()), pos2(whole.right(), tabs.top()));
+            let body = Rect::from_min_max(pos2(whole.left(), header.bottom()), whole.max);
             let title = match self.left_tab {
                 LeftTab::Drawing => crate::i18n::tr("Draw"),
                 LeftTab::Modeling => crate::i18n::tr("3D Model"),
@@ -1321,22 +1361,6 @@ impl App {
                     }
                 }
             });
-            // Tabs along the bottom.
-            let strip = ui.painter();
-            strip.rect_filled(tabs, 0.0, CHROME);
-            let specs = [(LeftTab::Drawing, crate::i18n::tr("Draw")), (LeftTab::Modeling, crate::i18n::tr("3D Model")), (LeftTab::Clipart, crate::i18n::tr("Library")), (LeftTab::Layers, crate::i18n::tr("Layers"))];
-            let mut x = tabs.left() + 2.0;
-            for (tab, label) in specs {
-                // As wide as its word, which depends on the language.
-                let w = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.5), TEXT).size().x + 9.0;
-                let active = self.left_tab == tab;
-                let r = Rect::from_min_size(pos2(x, tabs.top() + 2.0), vec2(w, tabs_h - 4.0));
-                if side_tab(ui, r, label, active).clicked() {
-                    self.left_tab = tab;
-                    self.close_left_form();
-                }
-                x += w;
-            }
         });
     }
 
@@ -2527,7 +2551,13 @@ impl App {
             (Icon::TileSide, crate::i18n::tr("Tile Windows Vertical"), true, self.tiled == Some(crate::app::Tiling::SideBySide), 27.0),
             (Icon::TileStacked, crate::i18n::tr("Tile Windows Horizontal"), true, self.tiled == Some(crate::app::Tiling::Stacked), 27.0),
         ];
+        // In a narrow window the gaps between groups close up first, so every tool stays clear of
+        // the panel on the right; each keeps its own 24 points.
+        let wanted: f32 = items.iter().map(|i| i.4).sum();
+        let room = top.right() - 8.0 - start;
+        let squeeze = if two_rows && wanted > room { room / wanted } else { 1.0 };
         for (i, (icon, tip, enabled, active, step)) in items.into_iter().enumerate() {
+            let step = (step * squeeze).max(24.5);
             let rect = Rect::from_min_size(pos2(x, tools_y), vec2(24.0, 24.0));
             let resp = ui.interact(rect, ui.scope_id().with(("toolbar", i)), if enabled { Sense::click() } else { Sense::hover() }).on_hover_text(tip);
             if active {

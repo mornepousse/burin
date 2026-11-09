@@ -999,11 +999,18 @@ impl App {
             }
         }
 
-        // Datum marker.
+        // The machine's zero: Burin's own mark, a ring on two short axes, X along and Y up, in the
+        // teal of its other zero marks (the original puts a red square there).
         let origin = self.doc.job.origin();
         let datum = self.to_screen(origin);
-        painter.rect_filled(Rect::from_center_size(datum, vec2(9.0, 9.0)), 0.0, Color32::from_rgb(230, 0, 0));
-        painter.rect_stroke(Rect::from_center_size(datum, vec2(9.0, 9.0)), 0.0, Stroke::new(1.0, Color32::from_rgb(90, 0, 0)), StrokeKind::Inside);
+        let ink = Stroke::new(1.8, crate::theme::ACCENT);
+        let halo = Stroke::new(4.0, Color32::from_white_alpha(200));
+        for stroke in [halo, ink] {
+            painter.line_segment([datum, datum + vec2(14.0, 0.0)], stroke);
+            painter.line_segment([datum, datum - vec2(0.0, 14.0)], stroke);
+            painter.circle_stroke(datum, 4.5, stroke);
+        }
+        painter.circle_filled(datum, 1.6, crate::theme::ACCENT);
 
         if self.show_toolpaths {
             self.paint_toolpaths_2d(&painter);
