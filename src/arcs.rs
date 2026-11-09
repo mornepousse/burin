@@ -12,6 +12,10 @@ pub enum Step {
 /// How far around the circle one straight side may go and still be part of a curve: 8 degrees.
 const MOST_PER_SIDE: f64 = 8.0 * std::f64::consts::PI / 180.0;
 
+/// How far a curve's sides may bulge from the arc that stands in for them, in tolerances; sides
+/// any longer make a polygon. Burin's choice.
+const SIDE_BULGE_MOST: f64 = 16.0;
+
 /// The circle through three points.
 fn circle_through(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> Option<[f64; 2]> {
     let (bx, by, cx, cy) = (b[0] - a[0], b[1] - a[1], c[0] - a[0], c[1] - a[1]);
@@ -35,9 +39,18 @@ fn fit(moves: &[Move], from: usize, to: usize, tol: f64) -> Option<Step> {
     }
     let angle = |p: [f64; 3]| (p[1] - centre[1]).atan2(p[0] - centre[0]);
     // A curve drawn as small sides strays from its true circle by the bulge of one side,
-    // and offsetting it keeps those flats. That much is the drawing's own roughness.
-    let longest = moves[from..to].iter().zip(&moves[from + 1..=to]).map(|(p, q)| (p.p[0] - q.p[0]).hypot(p.p[1] - q.p[1])).fold(0.0, f64::max);
-    let allowed = tol + longest * longest / (8.0 * radius.max(1e-9));
+    // and offsetting it keeps those flats. That much is the drawing's own roughness: the bulge of
+    // a typical side of the run, as a curve's sides are all alike. Not of the longest: one long
+    // straight side among short ones (a pocket's straight wall between its corners) would let an
+    // arc of hundreds of millimetres stand in for it, a millimetre and more off the cut.
+    let mut sides: Vec<f64> = moves[from..to].iter().zip(&moves[from + 1..=to]).map(|(p, q)| (p.p[0] - q.p[0]).hypot(p.p[1] - q.p[1])).collect();
+    sides.sort_by(|x, y| x.total_cmp(y));
+    let typical = sides[(sides.len() - 1) / 2];
+    let bulge = typical * typical / (8.0 * radius.max(1e-9));
+    if bulge > SIDE_BULGE_MOST * tol {
+        return None;
+    }
+    let allowed = tol + bulge;
     let mut swept = 0.0;
     let mut way = 0.0f64;
     let mut before = moves[from].p;
@@ -124,6 +137,30 @@ mod tests {
 
     fn feed(x: f64, y: f64, z: f64) -> Move {
         Move { p: [x, y, z], rapid: false, join: false }
+    }
+
+    #[test]
+    fn a_long_straight_side_stays_straight() {
+        // Points on a wide circle, short sides either side of a long one: as a pocket's ring with a
+        // long straight wall. An arc through them all bulges far off the wall in its middle.
+        let (c, r) = ([0.0, 0.0], 700.0);
+        let mut angles = vec![0.0, 0.0015, 0.003, 0.0045];
+        angles.extend([0.0045 + 0.13, 0.0045 + 0.13 + 0.0015, 0.0045 + 0.13 + 0.003, 0.0045 + 0.13 + 0.0045]);
+        let moves: Vec<Move> = angles.iter().map(|a: &f64| feed(c[0] + r * a.cos(), c[1] + r * a.sin(), -2.0)).collect();
+        let tol = 0.012;
+        let off = |q: [f64; 3]| {
+            moves.windows(2).map(|w| {
+                let (a, b) = (w[0].p, w[1].p);
+                let d = [b[0] - a[0], b[1] - a[1]];
+                let t = (((q[0] - a[0]) * d[0] + (q[1] - a[1]) * d[1]) / (d[0] * d[0] + d[1] * d[1])).clamp(0.0, 1.0);
+                (a[0] + d[0] * t - q[0]).hypot(a[1] + d[1] * t - q[1])
+            }).fold(f64::MAX, f64::min)
+        };
+        let mut steps = vec![Step::Straight(moves[0])];
+        steps.extend(fit_arcs(&moves, tol).into_iter().skip(1));
+        for q in replay(&steps) {
+            assert!(off(q) <= 2.0 * tol, "{q:?} is {} off the moves", off(q));
+        }
     }
 
     fn circle(c: [f64; 2], r: f64, n: usize, z: f64) -> Vec<Move> {
