@@ -540,6 +540,10 @@ impl App {
             self.follow_persona();
             self.left_panel(ui);
             self.right_panel(ui);
+            // In Machining, the toolpaths in cutting order along the bottom of the view.
+            if self.persona == Persona::Machining {
+                self.steps_strip(ui);
+            }
             egui::CentralPanel::default().frame(Frame::new().fill(WORKSPACE())).show(ui, |ui| self.centre(ui));
             self.inspector(&ctx);
         }
@@ -2067,7 +2071,10 @@ impl App {
             match self.right.clone() {
                 RightMode::List => {
                     self.toolpath_ops(&mut child);
-                    self.toolpath_list(&mut child);
+                    // In Machining the strip along the bottom lists them.
+                    if !on_left {
+                        self.toolpath_list(&mut child);
+                    }
                 }
                 RightMode::Op { op, editing, tab, error } => self.op_form(&mut child, *op, editing, tab, error),
                 RightMode::Save => {
