@@ -23,6 +23,10 @@ pub struct Project {
     pub max: [f64; 3],
     /// Where the origin is: 0 bottom left, 1 bottom right, 2 top right, 3 top left, 4 centre.
     pub datum: u32,
+    /// How many sides the job is cut from: 0 one, 1 two, 2 rotary (`0x14084a480`, version 6 on).
+    pub job_type: u32,
+    /// How the part is turned over between sides: 0 around X, otherwise around Y.
+    pub side_flip: u32,
     pub layers: Vec<LayerInfo>,
     /// Each outline, and the layer it is on.
     pub shapes: Vec<(usize, Path)>,
@@ -1100,6 +1104,11 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
         return Err(crate::i18n::tr("The material size in this project can't be read.").into());
     };
     let datum = u32_at(&size, 54).unwrap_or(0);
+    // After the corner come the Z zero, then from version 6 the sides and the flip
+    // (`0x14084a480`: version, millimetres, zero on the surface, the box, X/Y zero, Z zero,
+    // job type, flip, then each side).
+    let version = u32_at(&size, 0).unwrap_or(0);
+    let (job_type, side_flip) = if version >= 6 { (u32_at(&size, 62).unwrap_or(0), u32_at(&size, 66).unwrap_or(0)) } else { (0, 0) };
     if !(e > a && f > b && g > c) {
         return Err(crate::i18n::tr("The material size in this project can't be read.").into());
     }
@@ -1207,7 +1216,7 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
     }
     let layer_of = |mark: &[u8; 16]| found.iter().position(|(_, m, _)| m == mark).map(|p| map[p]).filter(|l| *l != usize::MAX);
     let tree = group_tree(&objects, &layer_of);
-    Ok(Project { min: [a, b, c], max: [e, f, g], datum, layers, shapes, marks, groups: tree, toolpaths, guides, guides_shown, snap_grid, look, notes })
+    Ok(Project { min: [a, b, c], max: [e, f, g], datum, job_type, side_flip, layers, shapes, marks, groups: tree, toolpaths, guides, guides_shown, snap_grid, look, notes })
 }
 
 #[cfg(test)]
@@ -1331,6 +1340,24 @@ pub(crate) mod tests {
 
     pub(crate) fn sample_with_toolpath(material: &[u8]) -> Vec<u8> {
         compound_with(material, &sample(), &toolpath_stream(&SHAPE_MARK))
+    }
+
+    /// A version 8 material with its Z zero on top, its job type and its flip.
+    pub(crate) fn material_with_sides(min: [f64; 3], max: [f64; 3], datum: u32, job_type: u32, flip: u32) -> Vec<u8> {
+        let mut m = material(min, max, datum);
+        for v in [0u32, job_type, flip, 0] {
+            m.extend_from_slice(&v.to_le_bytes());
+        }
+        m
+    }
+
+    #[test]
+    fn the_sides_and_the_flip_are_read() {
+        let p = read(&compound(&material_with_sides([0.0, 0.0, -3.0], [10.0, 10.0, 0.0], 0, 1, 1), &sample())).unwrap();
+        assert_eq!((p.job_type, p.side_flip), (1, 1));
+        // Older layouts have neither: one side.
+        let p = read(&compound(&material([0.0, 0.0, -3.0], [10.0, 10.0, 0.0], 0), &sample())).unwrap();
+        assert_eq!((p.job_type, p.side_flip), (0, 0));
     }
 
     pub(crate) fn material(min: [f64; 3], max: [f64; 3], datum: u32) -> Vec<u8> {

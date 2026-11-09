@@ -2088,6 +2088,10 @@ impl App {
         j.thickness = p.max[2] - p.min[2];
         // Zero at the bottom of the material means the machine bed.
         j.z_on_bed = p.max[2] > 0.0 && p.min[2] >= 0.0;
+        // Cut from two sides, and turned over around which axis (`0x14084a480`). A rotary job
+        // opens as one side: Burin has no rotary jobs.
+        j.two_sided = p.job_type == 1;
+        j.flip_around_y = p.side_flip != 0;
         j.datum = match p.datum {
             1 => Datum::BottomRight,
             2 => Datum::TopRight,
