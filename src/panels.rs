@@ -1702,15 +1702,12 @@ impl App {
 
     pub fn save_form(&mut self, ui: &mut Ui) {
         let width = ui.available_width();
-        let before = self.output_choices();
         egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
             ui.set_width(width - 28.0);
             ui.spacing_mut().item_spacing.y = 6.0;
             title_card(ui, Icon::SaveTp, crate::i18n::tr("Save Toolpaths"));
             card(ui, |ui| {
-                if ui.checkbox(&mut self.one_file, crate::i18n::tr("Output all visible toolpaths to one file")).changed() {
-                    crate::pieces::save_one_file(self.one_file);
-                }
+                ui.checkbox(&mut self.one_file, crate::i18n::tr("Output all visible toolpaths to one file"));
                 self.piece_chooser(ui);
                 ui.checkbox(&mut self.output_arcs, crate::i18n::tr("Write curves as arcs (G2 / G3)")).on_hover_text(crate::i18n::tr("Smaller files and smoother curves. Try it in the air on your machine first."));
                 ui.horizontal(|ui| {
@@ -1732,9 +1729,6 @@ impl App {
                             ui.label("mm");
                         });
                     });
-                }
-                if self.output_choices() != before {
-                    self.output_choices().save();
                 }
                 ui.add_space(6.0);
                 bold(ui, crate::i18n::tr("Toolpaths to be saved ..."));
@@ -1846,6 +1840,10 @@ impl App {
     }
 
     pub fn save_gcode_dialog(&mut self) {
+        // The choices are kept when a save is asked for, not as they're ticked, as the original
+        // does with its own (`0x140600430` writes `Toolpaths\OutputVisibleToolpaths` then).
+        crate::pieces::save_one_file(self.one_file);
+        self.output_choices().save();
         let only = if self.one_file { None } else { self.selected_tp };
         if let Some(piece) = self.save_piece {
             self.save_piece_dialog(piece, only);
