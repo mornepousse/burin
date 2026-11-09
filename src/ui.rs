@@ -1146,7 +1146,7 @@ impl App {
             let whole = ui.max_rect();
             let width = 460.0_f32.min(whole.width() - 32.0);
             let recent = self.recent.clone();
-            let height = 300.0 + if recent.is_empty() { 0.0 } else { 34.0 + recent.len() as f32 * 26.0 };
+            let height = 300.0 + if recent.is_empty() { 0.0 } else { 34.0 + recent.len().div_ceil(3) as f32 * 120.0 };
             let top = (whole.center().y - height / 2.0).max(whole.top() + 16.0);
             let column = Rect::from_min_max(pos2(whole.center().x - width / 2.0, top), pos2(whole.center().x + width / 2.0, whole.bottom()));
             let mut body = ui.new_child(egui::UiBuilder::new().max_rect(column));
@@ -1187,13 +1187,19 @@ impl App {
             ui.spacing_mut().item_spacing.y = 8.0;
             if !recent.is_empty() {
                 bold_sized(ui, crate::i18n::tr("Recently opened files"), 12.5, theme::MUTED);
-                for path in recent {
-                    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    if self.start_link(ui, Icon::Doc, &name) {
-                        if let Err(e) = self.open_path(path) {
-                            self.message = Some(e);
+                // Each as a card with a small drawing of it, three to a row.
+                let card_w = (width - 2.0 * 10.0) / 3.0;
+                for row in recent.chunks(3) {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        for path in row {
+                            if self.recent_card(ui, path, card_w) {
+                                if let Err(e) = self.open_path(path.clone()) {
+                                    self.message = Some(e);
+                                }
+                            }
                         }
-                    }
+                    });
                 }
                 ui.add_space(10.0);
             }
@@ -1201,6 +1207,47 @@ impl App {
                 self.load_sample();
             }
         });
+    }
+
+    /// A recent project on the start screen: its drawing on a small sheet, and its name.
+    fn recent_card(&mut self, ui: &mut Ui, path: &std::path::PathBuf, width: f32) -> bool {
+        let thumb = self.thumbs.entry(path.clone()).or_insert_with(|| crate::thumbs::read(path)).clone();
+        let name = path.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let (rect, resp) = ui.allocate_exact_size(vec2(width, 112.0), Sense::click());
+        ui.painter().rect(rect, 8.0, if resp.hovered() { theme::BUTTON } else { CARD }, Stroke::new(1.0, if resp.hovered() { theme::HUE_TEAL } else { LINE }), StrokeKind::Inside);
+        let room = Rect::from_min_max(rect.min + vec2(8.0, 8.0), pos2(rect.right() - 8.0, rect.bottom() - 26.0));
+        // Shapes off the sheet are drawn too, but never past the card.
+        let p = ui.painter().with_clip_rect(room);
+        match &thumb {
+            Some(t) => {
+                // The sheet, as wide as the job, in the room left.
+                let (sw, sh) = if t.aspect >= room.width() / room.height() { (room.width(), room.width() / t.aspect) } else { (room.height() * t.aspect, room.height()) };
+                let sheet = Rect::from_center_size(room.center(), vec2(sw, sh));
+                p.rect_filled(sheet, 3.0, theme::SHEET);
+                let side = sw.max(sh);
+                let at = |q: &[f32; 2]| pos2(sheet.left() + q[0] * side, sheet.bottom() - q[1] * side);
+                for line in &t.lines {
+                    p.add(egui::Shape::line(line.iter().map(at).collect(), Stroke::new(1.0, theme::SHEET_INK)));
+                }
+            }
+            None => icons::paint(&p, Rect::from_center_size(room.center(), vec2(30.0, 30.0)), Icon::Doc, true),
+        }
+        // One line, cut short with an ellipsis when the name is long.
+        let fits = |t: &str| ui.painter().layout_no_wrap(t.to_string(), FontId::proportional(12.0), TEXT).size().x <= width - 16.0;
+        let mut shown = name.clone();
+        if !fits(&shown) {
+            let mut kept: Vec<char> = name.chars().collect();
+            while kept.len() > 1 {
+                kept.pop();
+                shown = format!("{}…", kept.iter().collect::<String>().trim_end());
+                if fits(&shown) {
+                    break;
+                }
+            }
+        }
+        ui.painter().text(pos2(rect.left() + 8.0, rect.bottom() - 13.0), Align2::LEFT_CENTER, shown, FontId::proportional(12.0), TEXT);
+        label_widget(&resp, &name);
+        resp.on_hover_text(path.display().to_string()).clicked()
     }
 
     pub(crate) fn start_link(&mut self, ui: &mut Ui, icon: Icon, label: &str) -> bool {

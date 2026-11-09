@@ -1129,6 +1129,8 @@ pub struct App {
     /// The selection's card: an edit under way (one step to undo), and whether width and height go together.
     pub inspector_editing: bool,
     pub inspector_keep_ratio: bool,
+    /// Recent projects' small drawings for the start screen, read once each.
+    pub thumbs: std::collections::HashMap<PathBuf, Option<crate::thumbs::Thumb>>,
     pub view3d: bool,
     /// Both views shown at once, and how.
     pub tiled: Option<Tiling>,
@@ -1567,6 +1569,7 @@ impl Default for App {
             forced_action: None,
             inspector_editing: false,
             inspector_keep_ratio: true,
+            thumbs: std::collections::HashMap::new(),
             view3d: false,
             tiled: None,
             last_draw: None,
