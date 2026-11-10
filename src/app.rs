@@ -687,23 +687,6 @@ pub enum DrawKind {
     Text,
 }
 
-impl DrawKind {
-    pub fn title(self) -> &'static str {
-        match self {
-            DrawKind::Circle => crate::i18n::tr("Draw Circle"),
-            DrawKind::Ellipse => crate::i18n::tr("Draw Ellipse"),
-            DrawKind::Rect => crate::i18n::tr("Draw Rectangle"),
-            DrawKind::Polygon => crate::i18n::tr("Draw Polygon"),
-            DrawKind::Star => crate::i18n::tr("Draw Star"),
-            DrawKind::Polyline => crate::i18n::tr("Draw Lines"),
-            DrawKind::Arc => crate::i18n::tr("Draw Arc"),
-            DrawKind::Curve => crate::i18n::tr("Draw Curve"),
-            DrawKind::Spiral => crate::i18n::tr("Draw Spiral"),
-            DrawKind::Text => crate::i18n::tr("Draw Text"),
-        }
-    }
-}
-
 /// The values of the open "Draw ..." form.
 #[derive(Clone, Debug)]
 pub struct DrawForm {

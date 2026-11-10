@@ -4,6 +4,28 @@
 //! tab = attache, stepover = recouvrement, allowance = surcote, pass = passe, job = projet.
 
 pub const FR: &[(&str, &str)] = &[
+    ("Circle", "Cercle"),
+    ("Ellipse", "Ellipse"),
+    ("Rectangle", "Rectangle"),
+    ("Polygon", "Polygone"),
+    ("Star", "Étoile"),
+    ("Lines", "Lignes"),
+    ("Arc", "Arc"),
+    ("Curve", "Courbe"),
+    // The draw forms, Burin's own wording.
+    ("changing it", "modification"),
+    ("Starts at", "Commence à"),
+    ("Middle at", "Milieu à"),
+    ("Rounded corners", "Coins arrondis"),
+    ("Sides", "Côtés"),
+    ("Tips at", "Pointes à"),
+    ("Hollows at", "Creux à"),
+    ("Points", "Branches"),
+    ("Turns", "Tours"),
+    ("Starts at angle", "Commence à l'angle"),
+    ("Goes round", "Tourne de"),
+    ("Changes go to the selected shape. Draw on the sheet for a new one.", "Les changements vont à la forme choisie. Dessinez sur la feuille pour en faire une nouvelle."),
+    ("Shift-click a shape to change it here.", "Maj-clic sur une forme pour la modifier ici."),
     ("Drilling", "Perçage"),
     // The toolpath settings, Burin's own wording.
     ("A bigger cutter clears first", "Une fraise plus grosse dégrossit d'abord"),

@@ -1213,12 +1213,12 @@ fn clicking_a_tool_with_its_kind_of_shape_selected_edits_it() {
 fn the_form_says_when_it_is_editing() {
     let (mut h, _) = job_with_shape(Prim::Circle { c: [3.0, 4.0], r: 1.5 });
     click(&mut h, "Draw circle");
-    h.get_by_label("Apply changes this shape.");
+    h.get_by_label("Changes go to the selected shape. Draw on the sheet for a new one.");
     let (mut h, _) = job_with_shape(Prim::Circle { c: [3.0, 4.0], r: 1.5 });
     h.state_mut().selected.clear();
     h.run();
     click(&mut h, "Draw circle");
-    h.get_by_label("hold shift while selecting");
+    h.get_by_label("Shift-click a shape to change it here.");
 }
 
 #[test]
