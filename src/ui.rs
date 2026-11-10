@@ -409,6 +409,11 @@ pub(crate) enum Pic {
     IssueZero,
     IssueOverlap,
     IssueCross,
+    BitEndMill,
+    BitBallNose,
+    BitV,
+    BitEngraving,
+    BitDrill,
 }
 
 /// Draws a choice's picture into a square, in the given colour.
@@ -882,6 +887,21 @@ pub(crate) fn draw_pic(p: &egui::Painter, r: Rect, pic: Pic, c: Color32) {
             line(&[(0.1, 0.1), (0.9, 0.9)], faint);
             line(&[(0.1, 0.9), (0.9, 0.1)], faint);
             p.circle_stroke(at(0.5, 0.5), w * 0.16, Stroke::new(1.6, c));
+        }
+        Pic::BitEndMill | Pic::BitBallNose | Pic::BitV | Pic::BitEngraving | Pic::BitDrill => {
+            // The shank, then the cutting end as the bit's kind has it.
+            rect(0.38, 0.0, 0.62, 0.35, faint);
+            match pic {
+                Pic::BitEndMill => line(&[(0.25, 0.35), (0.25, 0.95), (0.75, 0.95), (0.75, 0.35)], s),
+                Pic::BitBallNose => {
+                    line(&[(0.25, 0.35), (0.25, 0.7)], s);
+                    line(&[(0.75, 0.35), (0.75, 0.7)], s);
+                    arc(0.5, 0.7, 0.25, 180.0, 360.0, s);
+                }
+                Pic::BitV => line(&[(0.2, 0.35), (0.5, 0.95), (0.8, 0.35)], s),
+                Pic::BitEngraving => line(&[(0.3, 0.35), (0.3, 0.6), (0.48, 0.95), (0.52, 0.95), (0.7, 0.6), (0.7, 0.35)], s),
+                _ => line(&[(0.32, 0.35), (0.32, 0.8), (0.5, 0.97), (0.68, 0.8), (0.68, 0.35)], s),
+            }
         }
         Pic::Icon(_) => {}
     }
