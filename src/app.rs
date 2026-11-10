@@ -1377,7 +1377,7 @@ pub struct App {
     pub draw_block: bool,
     pub recent_wanted: Option<PathBuf>,
     /// The picture on the first screen, once it has been shown.
-    pub start_logo: Option<egui::TextureHandle>,
+    pub start_logo: Option<(bool, egui::TextureHandle)>,
     /// The one piece the save form is for, if not all of them.
     pub save_piece: Option<u64>,
     pub guides_locked: bool,

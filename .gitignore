@@ -15,6 +15,7 @@
 *.svg
 dist
 !/release/burin.svg
+!/release/burin-light.svg
 /demo/
 dist-web
 dist-site

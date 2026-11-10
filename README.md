@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="release/burin.png" width="150" alt="The Burin logo: a hammer driving a router bit into a block of wood">
+<img src="release/burin.png" width="150" alt="The Burin logo: an engraved orange block with a round pocket cut into it">
 
 # Burin
 
