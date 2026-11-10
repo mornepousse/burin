@@ -306,11 +306,279 @@ pub(crate) fn worded_button(ui: &mut Ui, enabled: bool, icon: Icon, label: &str)
     resp
 }
 
+/// A small picture that shows what a choice does, drawn in a pill beside its words.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Pic {
+    Icon(Icon),
+    SideOutside,
+    SideInside,
+    SideOn,
+    Climb,
+    Conventional,
+    ClearOffset,
+    ClearRaster,
+    ClearAdaptive,
+    RampSmooth,
+    RampZigZag,
+    RampSpiral,
+    RampDistance,
+    RampAngle,
+    LeadStraight,
+    LeadCircular,
+    StartDrawn,
+    StartNearest,
+    StartPoint,
+    OneFace,
+    TwoFaces,
+    FlipLeftRight,
+    FlipTopBottom,
+    Radius,
+    Diameter,
+    MarginNone,
+    MarginNormal,
+    MarginWide,
+    Outline,
+    Fill,
+    Hatch,
+    FluteBoth,
+    FluteStart,
+    FluteEnd,
+    WallFirst,
+    WallLast,
+    WallNever,
+    CutBoard,
+    CutOneColour,
+    CutByToolpath,
+}
+
+/// Draws a choice's picture into a square, in the given colour.
+pub(crate) fn draw_pic(p: &egui::Painter, r: Rect, pic: Pic, c: Color32) {
+    if let Pic::Icon(icon) = pic {
+        icons::paint(p, r, icon, true);
+        return;
+    }
+    let at = |x: f32, y: f32| pos2(r.left() + x * r.width(), r.top() + y * r.height());
+    let s = Stroke::new(1.3, c);
+    let faint = Stroke::new(1.0, MUTED());
+    let line = |pts: &[(f32, f32)], st: Stroke| {
+        p.add(Shape::line(pts.iter().map(|(x, y)| at(*x, *y)).collect(), st));
+    };
+    let rect = |x0: f32, y0: f32, x1: f32, y1: f32, st: Stroke| {
+        p.rect_stroke(Rect::from_two_pos(at(x0, y0), at(x1, y1)), 1.0, st, StrokeKind::Inside);
+    };
+    let arc = |cx: f32, cy: f32, rad: f32, from: f32, to: f32, st: Stroke| {
+        let n = 16;
+        let pts: Vec<egui::Pos2> = (0..=n)
+            .map(|i| {
+                let t = (from + (to - from) * i as f32 / n as f32).to_radians();
+                at(cx + rad * t.cos(), cy - rad * t.sin())
+            })
+            .collect();
+        p.add(Shape::line(pts, st));
+    };
+    let w = r.width();
+    match pic {
+        Pic::SideOutside | Pic::SideInside | Pic::SideOn => {
+            p.rect_filled(Rect::from_two_pos(at(0.5, 0.15), at(1.0, 0.85)), 1.0, theme::BUTTON());
+            line(&[(0.5, 0.1), (0.5, 0.9)], s);
+            let x = match pic {
+                Pic::SideOutside => 0.27,
+                Pic::SideInside => 0.73,
+                _ => 0.5,
+            };
+            p.circle_stroke(at(x, 0.5), w * 0.2, s);
+        }
+        Pic::Climb | Pic::Conventional => {
+            // The cutter turning, and the way it moves along the wall below it.
+            line(&[(0.0, 0.95), (1.0, 0.95)], faint);
+            p.circle_stroke(at(0.5, 0.45), w * 0.26, faint);
+            let (from, to) = if pic == Pic::Climb { (200.0, -40.0) } else { (-20.0, 220.0) };
+            arc(0.5, 0.45, 0.26, from, to, s);
+            let end = to.to_radians();
+            let tip = at(0.5 + 0.26 * end.cos(), 0.45 - 0.26 * end.sin());
+            p.circle_filled(tip, 1.8, c);
+            line(&[(0.15, 0.82), (0.85, 0.82)], s);
+            line(&[(0.72, 0.74), (0.85, 0.82), (0.72, 0.9)], s);
+        }
+        Pic::ClearOffset => {
+            rect(0.05, 0.05, 0.95, 0.95, faint);
+            rect(0.2, 0.2, 0.8, 0.8, s);
+            rect(0.37, 0.37, 0.63, 0.63, s);
+        }
+        Pic::ClearRaster => {
+            rect(0.05, 0.05, 0.95, 0.95, faint);
+            line(&[(0.18, 0.22), (0.82, 0.22), (0.82, 0.4), (0.18, 0.4), (0.18, 0.58), (0.82, 0.58), (0.82, 0.76), (0.18, 0.76)], s);
+        }
+        Pic::ClearAdaptive => {
+            rect(0.05, 0.05, 0.95, 0.95, faint);
+            for k in 0..4 {
+                let x = 0.25 + k as f32 * 0.17;
+                arc(x, 0.5, 0.13, 0.0, 330.0, s);
+            }
+        }
+        Pic::RampSmooth => {
+            line(&[(0.0, 0.25), (1.0, 0.25)], faint);
+            line(&[(0.08, 0.25), (0.92, 0.85)], s);
+        }
+        Pic::RampZigZag => {
+            line(&[(0.0, 0.2), (1.0, 0.2)], faint);
+            line(&[(0.08, 0.2), (0.92, 0.42), (0.08, 0.64), (0.92, 0.86)], s);
+        }
+        Pic::RampSpiral => {
+            arc(0.5, 0.32, 0.38, 0.0, 360.0, faint);
+            arc(0.5, 0.5, 0.38, 180.0, 360.0, s);
+            arc(0.5, 0.68, 0.38, 0.0, 180.0, s);
+        }
+        Pic::RampDistance => {
+            line(&[(0.05, 0.5), (0.95, 0.5)], s);
+            line(&[(0.05, 0.3), (0.05, 0.7)], s);
+            line(&[(0.95, 0.3), (0.95, 0.7)], s);
+        }
+        Pic::RampAngle => {
+            line(&[(0.05, 0.85), (0.95, 0.85)], faint);
+            line(&[(0.05, 0.85), (0.9, 0.2)], s);
+            arc(0.05, 0.85, 0.45, 0.0, 37.0, s);
+        }
+        Pic::LeadStraight | Pic::LeadCircular => {
+            p.rect_filled(Rect::from_two_pos(at(0.68, 0.0), at(1.0, 1.0)), 1.0, theme::BUTTON());
+            line(&[(0.68, 0.0), (0.68, 1.0)], faint);
+            if pic == Pic::LeadStraight {
+                line(&[(0.1, 0.9), (0.68, 0.45)], s);
+            } else {
+                arc(0.18, 0.45, 0.5, 0.0, -80.0, s);
+            }
+            p.circle_filled(at(0.68, 0.45), 2.0, c);
+        }
+        Pic::StartDrawn | Pic::StartNearest | Pic::StartPoint => {
+            rect(0.25, 0.25, 0.95, 0.95, faint);
+            match pic {
+                Pic::StartDrawn => {
+                    p.circle_filled(at(0.25, 0.25), 2.4, c);
+                }
+                Pic::StartNearest => {
+                    p.circle_filled(at(0.25, 0.6), 2.4, c);
+                    line(&[(0.0, 0.6), (0.2, 0.6)], s);
+                }
+                _ => {
+                    line(&[(0.05, 0.05), (0.2, 0.2)], s);
+                    line(&[(0.0, 0.12), (0.12, 0.0)], s);
+                    p.circle_filled(at(0.25, 0.25), 2.4, c);
+                }
+            }
+        }
+        Pic::OneFace | Pic::TwoFaces => {
+            rect(0.05, 0.35, 0.95, 0.65, faint);
+            line(&[(0.05, 0.35), (0.95, 0.35)], Stroke::new(2.2, c));
+            if pic == Pic::TwoFaces {
+                line(&[(0.05, 0.65), (0.95, 0.65)], Stroke::new(2.2, c));
+            }
+        }
+        Pic::FlipLeftRight => {
+            rect(0.25, 0.4, 0.75, 0.6, faint);
+            arc(0.5, 0.5, 0.42, 160.0, 20.0, s);
+            p.circle_filled(at(0.89, 0.36), 1.8, c);
+        }
+        Pic::FlipTopBottom => {
+            rect(0.4, 0.25, 0.6, 0.75, faint);
+            arc(0.5, 0.5, 0.42, 110.0, -110.0, s);
+            p.circle_filled(at(0.36, 0.89), 1.8, c);
+        }
+        Pic::Radius | Pic::Diameter => {
+            p.circle_stroke(at(0.5, 0.5), w * 0.42, faint);
+            if pic == Pic::Radius {
+                line(&[(0.5, 0.5), (0.92, 0.5)], s);
+                p.circle_filled(at(0.5, 0.5), 1.6, c);
+            } else {
+                line(&[(0.08, 0.5), (0.92, 0.5)], s);
+            }
+        }
+        Pic::MarginNone | Pic::MarginNormal | Pic::MarginWide => {
+            rect(0.02, 0.15, 0.98, 0.85, faint);
+            let m = match pic {
+                Pic::MarginNone => 0.06,
+                Pic::MarginNormal => 0.18,
+                _ => 0.3,
+            };
+            p.rect_filled(Rect::from_two_pos(at(m, 0.35), at(1.0 - m, 0.65)), 1.0, c);
+        }
+        Pic::Outline => {
+            rect(0.15, 0.15, 0.85, 0.85, s);
+        }
+        Pic::Fill => {
+            rect(0.15, 0.15, 0.85, 0.85, s);
+            for y in [0.32, 0.5, 0.68] {
+                line(&[(0.2, y), (0.8, y)], s);
+            }
+        }
+        Pic::Hatch => {
+            rect(0.15, 0.15, 0.85, 0.85, faint);
+            line(&[(0.15, 0.55), (0.55, 0.15)], s);
+            line(&[(0.15, 0.85), (0.85, 0.15)], s);
+            line(&[(0.45, 0.85), (0.85, 0.45)], s);
+        }
+        Pic::FluteBoth => line(&[(0.0, 0.3), (0.3, 0.75), (0.7, 0.75), (1.0, 0.3)], s),
+        Pic::FluteStart => line(&[(0.0, 0.3), (0.3, 0.75), (1.0, 0.75)], s),
+        Pic::FluteEnd => line(&[(0.0, 0.75), (0.7, 0.75), (1.0, 0.3)], s),
+        Pic::WallFirst | Pic::WallLast | Pic::WallNever => {
+            for y in [0.38, 0.62] {
+                line(&[(0.22, y), (0.78, y)], faint);
+            }
+            if pic != Pic::WallNever {
+                rect(0.05, 0.12, 0.95, 0.88, s);
+                let x = if pic == Pic::WallFirst { 0.05 } else { 0.95 };
+                p.circle_filled(at(x, 0.12), 2.2, c);
+            } else {
+                rect(0.05, 0.12, 0.95, 0.88, faint);
+            }
+        }
+        Pic::CutBoard => {
+            p.rect_filled(Rect::from_two_pos(at(0.1, 0.2), at(0.9, 0.8)), 2.0, Color32::from_rgb(214, 160, 104));
+        }
+        Pic::CutOneColour => {
+            p.rect_filled(Rect::from_two_pos(at(0.1, 0.2), at(0.9, 0.8)), 2.0, Color32::from_rgb(230, 230, 230));
+        }
+        Pic::CutByToolpath => {
+            for (k, col) in [Color32::from_rgb(240, 110, 90), Color32::from_rgb(110, 170, 250), Color32::from_rgb(130, 210, 110)].into_iter().enumerate() {
+                let x = 0.1 + k as f32 * 0.27;
+                p.rect_filled(Rect::from_two_pos(at(x, 0.2), at(x + 0.26, 0.8)), 1.0, col);
+            }
+        }
+        Pic::Icon(_) => {}
+    }
+}
+
+/// What climb and conventional cutting mean, with their pictures.
+pub(crate) fn explain_direction(ui: &mut Ui, climb: bool) {
+    if climb {
+        explain(ui, Pic::Climb, crate::i18n::tr("Climb: the cutter rolls along the wall. A cleaner edge, for a stiff machine."));
+    } else {
+        explain(ui, Pic::Conventional, crate::i18n::tr("Conventional: the cutter bites against its way. Gentler on a light machine."));
+    }
+}
+
+/// The chosen option drawn large, with a sentence on what it does: so a choice can be understood
+/// without knowing the word for it.
+pub(crate) fn explain(ui: &mut Ui, pic: Pic, text: &str) {
+    ui.horizontal(|ui| {
+        let (r, _) = ui.allocate_exact_size(vec2(46.0, 46.0), Sense::hover());
+        ui.painter().rect_filled(r, 8.0, CARD());
+        draw_pic(ui.painter(), r.shrink(7.0), pic, ACCENT);
+        ui.add(egui::Label::new(RichText::new(text).size(11.5).color(MUTED())).wrap());
+    });
+}
+
 /// A row of joined pill buttons, one chosen; returns the one clicked, if any. When they don't
 /// fit across, they go on as many rows as they need.
 pub(crate) fn pills(ui: &mut Ui, options: &[&str], chosen: usize) -> Option<usize> {
+    let plain: Vec<(Option<Pic>, &str)> = options.iter().map(|o| (None, *o)).collect();
+    pictured_pills(ui, &plain, chosen)
+}
+
+/// Pills that each show a small picture of what they do before their words.
+pub(crate) fn pictured_pills(ui: &mut Ui, options: &[(Option<Pic>, &str)], chosen: usize) -> Option<usize> {
     let font = FontId::proportional(12.0);
-    let widths: Vec<f32> = options.iter().map(|o| ui.painter().layout_no_wrap(o.to_string(), font.clone(), TEXT()).size().x + 20.0).collect();
+    let widths: Vec<f32> = options.iter().map(|(pic, o)| ui.painter().layout_no_wrap(o.to_string(), font.clone(), TEXT()).size().x + 20.0 + if pic.is_some() { 20.0 } else { 0.0 }).collect();
+    let tall = if options.iter().any(|(p, _)| p.is_some()) { 26.0 } else { 22.0 };
     let room = ui.available_width().max(60.0);
     let mut rows: Vec<Vec<usize>> = vec![Vec::new()];
     let mut used = 0.0;
@@ -327,19 +595,27 @@ pub(crate) fn pills(ui: &mut Ui, options: &[&str], chosen: usize) -> Option<usiz
         ui.spacing_mut().item_spacing.y = 3.0;
         for row in &rows {
             let total: f32 = row.iter().map(|k| widths[*k]).sum();
-            let (whole, _) = ui.allocate_exact_size(vec2(total, 22.0), Sense::hover());
-            ui.painter().rect(whole, 11.0, INPUT(), Stroke::new(1.0, LINE()), StrokeKind::Inside);
+            let (whole, _) = ui.allocate_exact_size(vec2(total, tall), Sense::hover());
+            ui.painter().rect(whole, tall / 2.0, INPUT(), Stroke::new(1.0, LINE()), StrokeKind::Inside);
             let mut x = whole.left();
             for &k in row {
-                let (o, w) = (options[k], widths[k]);
+                let ((pic, o), w) = (options[k], widths[k]);
                 let r = Rect::from_min_size(pos2(x, whole.top()), vec2(w, whole.height()));
                 let resp = ui.interact(r, ui.scope_id().with(("pill", o)), Sense::click());
                 if k == chosen {
-                    ui.painter().rect(r.shrink(2.0), 9.0, theme::ACCENT_SOFT(), Stroke::new(1.0, ACCENT), StrokeKind::Inside);
+                    ui.painter().rect(r.shrink(2.0), tall / 2.0 - 2.0, theme::ACCENT_SOFT(), Stroke::new(1.0, ACCENT), StrokeKind::Inside);
                 } else if resp.hovered() {
-                    ui.painter().rect_filled(r.shrink(2.0), 9.0, theme::BUTTON());
+                    ui.painter().rect_filled(r.shrink(2.0), tall / 2.0 - 2.0, theme::BUTTON());
                 }
-                ui.painter().text(r.center(), Align2::CENTER_CENTER, o, font.clone(), if k == chosen { TEXT() } else { MUTED() });
+                let colour = if k == chosen { TEXT() } else { MUTED() };
+                let text_left = if let Some(pic) = pic {
+                    let square = Rect::from_min_size(pos2(r.left() + 9.0, r.center().y - 8.0), vec2(16.0, 16.0));
+                    draw_pic(ui.painter(), square, pic, if k == chosen { ACCENT } else { MUTED() });
+                    r.left() + 29.0
+                } else {
+                    r.left() + 10.0
+                };
+                ui.painter().text(pos2(text_left, r.center().y), Align2::LEFT_CENTER, o, font.clone(), colour);
                 label_widget(&resp, o);
                 if resp.clicked() {
                     clicked = Some(k);
@@ -376,20 +652,6 @@ pub(crate) fn shape_preview(ui: &mut Ui, f: &DrawForm) {
     }
 }
 
-/// Where the tool runs against a shape's line: outside it, inside it, or on it. A square for the
-/// shape, its line in the logo's orange, and the tool as a circle.
-pub(crate) fn side_picture(ui: &mut Ui, side: Side) {
-    let (r, _) = ui.allocate_exact_size(vec2(52.0, 30.0), Sense::hover());
-    let shape = Rect::from_min_size(r.min + vec2(18.0, 2.0), vec2(30.0, 26.0));
-    ui.painter().rect_filled(shape, 2.0, theme::BUTTON());
-    ui.painter().line_segment([shape.left_top(), shape.left_bottom()], Stroke::new(2.0, ACCENT));
-    let x = match side {
-        Side::Outside => shape.left() - 6.0,
-        Side::Inside => shape.left() + 6.0,
-        Side::On => shape.left(),
-    };
-    ui.painter().circle(pos2(x, shape.center().y), 6.0, Color32::from_white_alpha(40), Stroke::new(1.4, TEXT()));
-}
 
 impl App {
     // ----- File dialogs -----
@@ -1758,7 +2020,7 @@ impl App {
             ui.horizontal(|ui| {
                 icon_caps(ui, Icon::SideTop, crate::i18n::tr("Faces"));
                 ui.add_space(8.0);
-                if let Some(k) = pills(ui, &[crate::i18n::tr("One face"), crate::i18n::tr("Two faces")], usize::from(self.doc.job.two_sided)) {
+                if let Some(k) = pictured_pills(ui, &[(Some(Pic::OneFace), crate::i18n::tr("One face")), (Some(Pic::TwoFaces), crate::i18n::tr("Two faces"))], usize::from(self.doc.job.two_sided)) {
                     self.doc.job.two_sided = k == 1;
                 }
             });
@@ -1767,7 +2029,7 @@ impl App {
                     icon_caps(ui, if self.doc.job.flip_around_y { Icon::FlipAroundY } else { Icon::FlipAroundX }, crate::i18n::tr("Turned"));
                     ui.add_space(8.0);
                     let around_y = self.doc.job.flip_around_y;
-                    if let Some(k) = pills(ui, &[crate::i18n::tr("left to right"), crate::i18n::tr("top to bottom")], if around_y { 0 } else { 1 }) {
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::FlipLeftRight), crate::i18n::tr("left to right")), (Some(Pic::FlipTopBottom), crate::i18n::tr("top to bottom"))], if around_y { 0 } else { 1 }) {
                         if (k == 0) != around_y {
                             self.change_flip_direction();
                         }
@@ -2084,7 +2346,7 @@ impl App {
                 }
                 match f.kind {
                     DrawKind::Circle => {
-                        if let Some(k) = pills(ui, &[crate::i18n::tr("Radius"), crate::i18n::tr("Diameter")], usize::from(f.use_dia)) {
+                        if let Some(k) = pictured_pills(ui, &[(Some(Pic::Radius), crate::i18n::tr("Radius")), (Some(Pic::Diameter), crate::i18n::tr("Diameter"))], usize::from(f.use_dia)) {
                             f.use_dia = k == 1;
                         }
                         ui.horizontal(|ui| {
@@ -2152,7 +2414,7 @@ impl App {
                             use crate::fonts::Margin;
                             let margins = [Margin::None, Margin::Normal, Margin::Wide];
                             let at = margins.iter().position(|m| *m == f.text_margin).unwrap_or(1);
-                            if let Some(k) = pills(ui, &[crate::i18n::tr("None"), crate::i18n::tr("Normal"), crate::i18n::tr("Wide")], at) {
+                            if let Some(k) = pictured_pills(ui, &[(Some(Pic::MarginNone), crate::i18n::tr("None")), (Some(Pic::MarginNormal), crate::i18n::tr("Normal")), (Some(Pic::MarginWide), crate::i18n::tr("Wide"))], at) {
                                 f.text_margin = margins[k];
                             }
                         }
@@ -2356,16 +2618,19 @@ impl App {
                 Side::Inside => 1,
                 Side::On => 2,
             };
-            ui.horizontal(|ui| {
-                side_picture(ui, op.side);
-                if let Some(k) = pills(ui, &[crate::i18n::tr("Outside"), crate::i18n::tr("Inside"), crate::i18n::tr("On the line")], side) {
-                    op.side = [Side::Outside, Side::Inside, Side::On][k];
-                }
+            if let Some(k) = pictured_pills(ui, &[(Some(Pic::SideOutside), crate::i18n::tr("Outside")), (Some(Pic::SideInside), crate::i18n::tr("Inside")), (Some(Pic::SideOn), crate::i18n::tr("On the line"))], side) {
+                op.side = [Side::Outside, Side::Inside, Side::On][k];
+            }
+            explain(ui, [Pic::SideOutside, Pic::SideInside, Pic::SideOn][side.min(2)], match op.side {
+                Side::Outside => crate::i18n::tr("The tool runs outside the line: the part keeps its size."),
+                Side::Inside => crate::i18n::tr("The tool runs inside the line: the hole keeps its size."),
+                Side::On => crate::i18n::tr("The middle of the tool follows the line."),
             });
             icon_caps(ui, Icon::Rotate, crate::i18n::tr("Direction"));
-            if let Some(k) = pills(ui, &[crate::i18n::tr("Climb"), crate::i18n::tr("Conventional")], if op.climb { 0 } else { 1 }) {
+            if let Some(k) = pictured_pills(ui, &[(Some(Pic::Climb), crate::i18n::tr("Climb")), (Some(Pic::Conventional), crate::i18n::tr("Conventional"))], if op.climb { 0 } else { 1 }) {
                 op.climb = k == 0;
             }
+            explain_direction(ui, op.climb);
             labelled(ui, crate::i18n::tr("Leave on the wall"), 0.0, &mut op.allowance, 50.0, unit);
         });
         if !self.show_advanced {
@@ -2399,9 +2664,14 @@ impl App {
                 ui.checkbox(&mut op.ramp, crate::i18n::tr("Ramp down instead of plunging"));
                 if op.ramp {
                     let kinds = [RampKind::Smooth, RampKind::ZigZag, RampKind::Spiral];
-                    if let Some(k) = pills(ui, &[crate::i18n::tr("Smooth"), crate::i18n::tr("Zig Zag"), crate::i18n::tr("Spiral")], kinds.iter().position(|k| *k == op.ramp_kind).unwrap_or(0)) {
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::RampSmooth), crate::i18n::tr("Smooth")), (Some(Pic::RampZigZag), crate::i18n::tr("Zig Zag")), (Some(Pic::RampSpiral), crate::i18n::tr("Spiral"))], kinds.iter().position(|k| *k == op.ramp_kind).unwrap_or(0)) {
                         op.ramp_kind = kinds[k];
                     }
+                    explain(ui, [Pic::RampSmooth, Pic::RampZigZag, Pic::RampSpiral][kinds.iter().position(|k| *k == op.ramp_kind).unwrap_or(0)], match op.ramp_kind {
+                        RampKind::Smooth => crate::i18n::tr("Goes down along the cut in one slope."),
+                        RampKind::ZigZag => crate::i18n::tr("Goes down back and forth over a short stretch."),
+                        RampKind::Spiral => crate::i18n::tr("Goes down little by little all the way round."),
+                    });
                     if op.ramp_kind == RampKind::Spiral {
                         ui.label(RichText::new(crate::i18n::tr("Slopes all the way around each closed shape.")).size(11.5).color(MUTED()));
                     } else {
@@ -2409,7 +2679,7 @@ impl App {
                             ui.checkbox(&mut op.ramp_on_lead, crate::i18n::tr("Ramp on Lead In"));
                         });
                         ui.add_enabled_ui(!(op.lead && op.ramp_on_lead), |ui| {
-                            if let Some(k) = pills(ui, &[crate::i18n::tr("Distance"), crate::i18n::tr("Angle")], usize::from(op.ramp_by_angle)) {
+                            if let Some(k) = pictured_pills(ui, &[(Some(Pic::RampDistance), crate::i18n::tr("Distance")), (Some(Pic::RampAngle), crate::i18n::tr("Angle"))], usize::from(op.ramp_by_angle)) {
                                 op.ramp_by_angle = k == 1;
                             }
                             if op.ramp_by_angle {
@@ -2426,9 +2696,10 @@ impl App {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.checkbox(&mut op.lead, crate::i18n::tr("Come in from the side"));
                 if op.lead {
-                    if let Some(k) = pills(ui, &[crate::i18n::tr("Straight"), crate::i18n::tr("Circular")], usize::from(op.lead_circular)) {
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::LeadStraight), crate::i18n::tr("Straight")), (Some(Pic::LeadCircular), crate::i18n::tr("Circular"))], usize::from(op.lead_circular)) {
                         op.lead_circular = k == 1;
                     }
+                    explain(ui, if op.lead_circular { Pic::LeadCircular } else { Pic::LeadStraight }, if op.lead_circular { crate::i18n::tr("Curves into the cut: no mark where it starts.") } else { crate::i18n::tr("Comes in on a straight line from the waste side.") });
                     if op.lead_circular {
                         labelled(ui, crate::i18n::tr("Radius"), 96.0, &mut op.lead_radius, 50.0, unit);
                     } else {
@@ -2460,7 +2731,12 @@ impl App {
                     StartAt::Optimize => 1,
                     StartAt::Near(_) => 2,
                 };
-                match pills(ui, &[crate::i18n::tr("As drawn"), crate::i18n::tr("Nearest"), crate::i18n::tr("Near a point")], chosen) {
+explain(ui, [Pic::StartDrawn, Pic::StartNearest, Pic::StartPoint][chosen], match chosen {
+                    0 => crate::i18n::tr("Each shape starts where it was drawn from."),
+                    1 => crate::i18n::tr("Each shape starts at its point nearest the tool."),
+                    _ => crate::i18n::tr("Each shape starts nearest the point picked below."),
+                });
+                                match pictured_pills(ui, &[(Some(Pic::StartDrawn), crate::i18n::tr("As drawn")), (Some(Pic::StartNearest), crate::i18n::tr("Nearest")), (Some(Pic::StartPoint), crate::i18n::tr("Near a point"))], chosen) {
                     Some(0) => {
                         op.start_at = StartAt::Keep;
                         op.start_mid_span = false;
@@ -2540,11 +2816,11 @@ impl App {
                 scope = 2;
             }
             icon_caps(ui, Icon::TpPocket, crate::i18n::tr("Carve"));
-            let mut options = vec![crate::i18n::tr("Selected"), crate::i18n::tr("Visible"), crate::i18n::tr("All")];
+            let mut options = vec![(Some(Pic::Icon(Icon::TpProfile)), crate::i18n::tr("Selected")), (Some(Pic::Icon(Icon::Eye)), crate::i18n::tr("Visible")), (Some(Pic::Icon(Icon::SelectAll)), crate::i18n::tr("All"))];
             if two {
-                options.push(crate::i18n::tr("Both faces"));
+                options.push((Some(Pic::TwoFaces), crate::i18n::tr("Both faces")));
             }
-            if let Some(k) = pills(ui, &options, scope) {
+            if let Some(k) = pictured_pills(ui, &options, scope) {
                 scope = k;
             }
             ui.data_mut(|d| d.insert_temp(scope_id, scope));
@@ -2665,7 +2941,7 @@ impl App {
                 Machined::Global => 1,
                 Machined::Toolpath => 2,
             };
-            if let Some(k) = pills(ui, &[crate::i18n::tr("as the board"), crate::i18n::tr("one colour"), crate::i18n::tr("by toolpath")], chosen) {
+            if let Some(k) = pictured_pills(ui, &[(Some(Pic::CutBoard), crate::i18n::tr("as the board")), (Some(Pic::CutOneColour), crate::i18n::tr("one colour")), (Some(Pic::CutByToolpath), crate::i18n::tr("by toolpath"))], chosen) {
                 self.machined = [Machined::Material, Machined::Global, Machined::Toolpath][k];
             }
             match self.machined {
