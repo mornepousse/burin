@@ -1369,6 +1369,8 @@ pub struct App {
     pub draw_rapids: bool,
     pub prefs_waiting: Option<crate::keys::Action>,
     pub prefs_note: String,
+    /// Words typed to find a shortcut in the preferences.
+    pub prefs_filter: String,
     /// How long the last sharp picture took, and the last preview from its start to that picture.
     pub picture_seconds: Option<f32>,
     pub preview_seconds: Option<f32>,
@@ -1743,6 +1745,7 @@ impl Default for App {
             draw_rapids: true,
             prefs_waiting: None,
             prefs_note: String::new(),
+            prefs_filter: String::new(),
             picture_seconds: None,
             preview_seconds: None,
             preview_started: None,

@@ -1713,64 +1713,105 @@ impl App {
             }
         }
         let mut open = true;
-        egui::Window::new(crate::i18n::tr("Preferences")).id(egui::Id::unique("preferences")).open(&mut open).collapsible(false).default_width(470.0).default_height(560.0).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(crate::i18n::tr("Language")).strong());
-                for lang in crate::i18n::Lang::ALL {
-                    if ui.selectable_label(crate::i18n::language() == lang, lang.name()).clicked() && crate::i18n::language() != lang {
-                        crate::i18n::set_language(lang);
+        // Burin's own layout: the language and look as pictures to pick, then the keys grouped
+        // under their icons, each key drawn as a key cap.
+        egui::Window::new(crate::i18n::tr("Preferences")).id(egui::Id::unique("preferences")).open(&mut open).collapsible(false).default_width(480.0).default_height(680.0).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            let heading = |ui: &mut Ui, icon: Icon, text: &str| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                    icons::paint(ui.painter(), r, icon, true);
+                    ui.label(RichText::new(text).strong().size(13.5));
+                });
+            };
+            ui.columns(2, |cols| {
+                let ui = &mut cols[0];
+                heading(ui, Icon::Text, crate::i18n::tr("Language"));
+                let langs: Vec<crate::i18n::Lang> = crate::i18n::Lang::ALL.into_iter().collect();
+                let names: Vec<&str> = langs.iter().map(|l| l.name()).collect();
+                let at = langs.iter().position(|l| *l == crate::i18n::language()).unwrap_or(0);
+                if let Some(k) = pills(ui, &names, at) {
+                    if langs[k] != crate::i18n::language() {
+                        crate::i18n::set_language(langs[k]);
                         crate::keys::save(self.keys);
                     }
                 }
-            });
-            // The dark look, or the light "workshop" one: warm paper, wood and ink.
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(crate::i18n::tr("Look")).strong());
-                let light = theme::light();
-                for (on, name) in [(false, crate::i18n::tr("Dark")), (true, crate::i18n::tr("Light (workshop)"))] {
-                    if ui.selectable_label(light == on, name).clicked() && light != on {
-                        theme::set_light(on);
-                        theme::save_look();
-                        setup_style(ui.ctx());
+                let ui = &mut cols[1];
+                // The dark look, or the light "workshop" one: warm paper, wood and ink.
+                heading(ui, Icon::Eye, crate::i18n::tr("Look"));
+                ui.horizontal(|ui| {
+                    let light = theme::light();
+                    for (on, name) in [(false, crate::i18n::tr("Dark")), (true, crate::i18n::tr("Light (workshop)"))] {
+                        if look_tile(ui, on, name, light == on).clicked() && light != on {
+                            theme::set_light(on);
+                            theme::save_look();
+                            setup_style(ui.ctx());
+                        }
                     }
-                }
+                });
             });
             ui.separator();
-            ui.label(RichText::new(crate::i18n::tr("Keyboard Shortcuts")).strong());
-            ui.label(RichText::new(crate::i18n::tr("Click a key to change it, then press the new one. Escape cancels.")).color(MUTED()));
+            heading(ui, Icon::Edit, crate::i18n::tr("Keyboard Shortcuts"));
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                icons::paint(ui.painter(), r, Icon::ZoomSel, true);
+                ui.add(egui::TextEdit::singleline(&mut self.prefs_filter).hint_text(crate::i18n::tr("Find a command")).desired_width(200.0));
+            });
+            ui.label(RichText::new(crate::i18n::tr("Click a key to change it, then press the new one. Escape cancels.")).size(11.5).color(MUTED()));
             if !self.prefs_note.is_empty() {
                 ui.label(RichText::new(self.prefs_note.as_str()).color(theme::ERROR));
             }
+            let filter = self.prefs_filter.trim().to_lowercase();
             egui::ScrollArea::vertical().max_height(ui.available_height() - 74.0).auto_shrink([false, false]).show(ui, |ui| {
                 for (section, actions) in crate::keys::SECTIONS {
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(crate::i18n::tr(section)).strong().color(ACCENT));
-                    egui::Grid::new(section).num_columns(3).spacing([10.0, 4.0]).show(ui, |ui| {
-                        for action in actions {
-                            ui.allocate_ui_with_layout(vec2(290.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                ui.set_min_width(290.0);
-                                ui.add(egui::Label::new(crate::keys::action_name(*action)).truncate());
+                    let shown: Vec<_> = actions.iter().copied().filter(|a| filter.is_empty() || crate::keys::action_name(*a).to_lowercase().contains(&filter)).collect();
+                    if shown.is_empty() {
+                        continue;
+                    }
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 5.0;
+                        let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                        icons::paint(ui.painter(), r, section_icon(section), true);
+                        small_caps(ui, crate::i18n::tr(section));
+                    });
+                    Frame::new().fill(CARD()).corner_radius(6).inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        for action in shown {
+                            ui.horizontal(|ui| {
+                                let name_width = (ui.available_width() - 160.0).max(80.0);
+                                ui.allocate_ui_with_layout(vec2(name_width, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                    ui.set_min_width(name_width);
+                                    ui.add(egui::Label::new(crate::keys::action_name(action)).truncate());
+                                });
+                                let waiting = self.prefs_waiting == Some(action);
+                                let text = if waiting { crate::i18n::tr("Press a key...").to_string() } else { self.keys.text(action) };
+                                if key_cap(ui, &text, waiting).clicked() {
+                                    self.prefs_waiting = (!waiting).then_some(action);
+                                    self.prefs_note.clear();
+                                }
+                                let has = self.keys.get(action).is_some();
+                                let (r, response) = ui.allocate_exact_size(vec2(20.0, 20.0), if has { Sense::click() } else { Sense::hover() });
+                                if has {
+                                    icons::paint(ui.painter(), r.shrink(2.0), Icon::Trash, response.hovered());
+                                }
+                                label_widget(&response, crate::i18n::tr("Remove this key"));
+                                if response.on_hover_text(crate::i18n::tr("Remove this key")).clicked() && has {
+                                    self.keys.set(action, None);
+                                    self.prefs_waiting = None;
+                                    self.prefs_note.clear();
+                                    crate::keys::save(self.keys);
+                                }
                             });
-                            let waiting = self.prefs_waiting == Some(*action);
-                            let text = if waiting { crate::i18n::tr("Press a key...").to_string() } else { self.keys.text(*action) };
-                            if ui.add_sized([130.0, 22.0], egui::Button::new(text).selected(waiting)).clicked() {
-                                self.prefs_waiting = (!waiting).then_some(*action);
-                                self.prefs_note.clear();
-                            }
-                            if ui.add_enabled(self.keys.get(*action).is_some(), egui::Button::new("x")).on_hover_text(crate::i18n::tr("Remove this key")).clicked() {
-                                self.keys.set(*action, None);
-                                self.prefs_waiting = None;
-                                self.prefs_note.clear();
-                                crate::keys::save(self.keys);
-                            }
-                            ui.end_row();
                         }
                     });
                 }
             });
             ui.separator();
             ui.label(RichText::new(crate::i18n::tr("These keys can't be changed: the arrows move the selection, Escape cancels, Enter finishes a line, and Space starts a new one.")).size(11.5).color(MUTED()));
-            if ui.button(crate::i18n::tr("Restore Default Keys")).clicked() {
+            if worded_button(ui, true, Icon::Undo, crate::i18n::tr("Restore Default Keys")).clicked() {
                 self.keys = crate::keys::Keys::default();
                 self.prefs_waiting = None;
                 self.prefs_note.clear();
@@ -3750,3 +3791,68 @@ pub(crate) fn tile_rects(view: Rect, tiling: crate::app::Tiling) -> (Rect, Rect)
 
 /// Space between two tiled views, in points.
 const TILE_GAP: f32 = 4.0;
+
+/// The icon for a group of keyboard shortcuts.
+fn section_icon(section: &str) -> Icon {
+    match section {
+        "Files" => Icon::Doc,
+        "Shapes" => Icon::Circle,
+        "Editing" => Icon::Edit,
+        "Groups" => Icon::Group,
+        "Pieces" => Icon::MakePiece,
+        "Mirror and turn" => Icon::Mirror,
+        "Tools" => Icon::Tools,
+        _ => Icon::ViewFit,
+    }
+}
+
+/// A key drawn as a key cap: a raised top over a darker edge.
+fn key_cap(ui: &mut Ui, text: &str, waiting: bool) -> egui::Response {
+    let (r, resp) = ui.allocate_exact_size(vec2(128.0, 22.0), Sense::click());
+    let p = ui.painter();
+    let edge = if waiting { ACCENT } else { LINE() };
+    if text.is_empty() {
+        p.rect_stroke(r.shrink(1.0), 5.0, Stroke::new(1.0, LINE()), StrokeKind::Inside);
+        p.text(r.center(), Align2::CENTER_CENTER, "–", FontId::proportional(12.0), MUTED());
+    } else {
+        p.rect_filled(r, 5.0, edge);
+        let top = Rect::from_min_max(r.min, r.max - vec2(0.0, 3.0));
+        p.rect(top, 5.0, if waiting { theme::ACCENT_SOFT() } else if resp.hovered() { theme::BUTTON_HOVER() } else { theme::BUTTON() }, Stroke::new(1.0, edge), StrokeKind::Inside);
+        p.text(top.center(), Align2::CENTER_CENTER, text, FontId::proportional(12.0), TEXT());
+    }
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, text));
+    resp
+}
+
+/// A small drawing of the window in the dark or light look, to pick by its look.
+fn look_tile(ui: &mut Ui, light: bool, name: &str, chosen: bool) -> egui::Response {
+    let (r, resp) = ui.allocate_exact_size(vec2(96.0, 74.0), Sense::click());
+    let p = ui.painter();
+    let shot = Rect::from_min_size(r.min + vec2(4.0, 4.0), vec2(r.width() - 8.0, 48.0));
+    let (ground, panel, sheet, text) = if light {
+        (Color32::from_rgb(244, 236, 220), Color32::from_rgb(230, 218, 196), Color32::from_rgb(255, 252, 245), Color32::from_rgb(70, 60, 50))
+    } else {
+        (Color32::from_rgb(30, 36, 44), Color32::from_rgb(40, 47, 57), Color32::from_rgb(250, 248, 244), Color32::from_rgb(220, 224, 230))
+    };
+    if chosen {
+        p.rect(r, 8.0, theme::ACCENT_SOFT(), Stroke::new(1.5, ACCENT), StrokeKind::Inside);
+    } else if resp.hovered() {
+        p.rect_filled(r, 8.0, theme::BUTTON_HOVER());
+    }
+    p.rect(shot, 4.0, ground, Stroke::new(1.0, LINE()), StrokeKind::Inside);
+    p.rect_filled(Rect::from_min_size(shot.min, vec2(shot.width(), 7.0)), 3.0, panel);
+    p.circle_filled(shot.min + vec2(6.0, 3.5), 2.0, ACCENT);
+    let side = Rect::from_min_size(shot.min + vec2(2.0, 9.0), vec2(22.0, shot.height() - 11.0));
+    p.rect_filled(side, 2.0, panel);
+    for k in 0..3 {
+        let y = side.top() + 6.0 + k as f32 * 9.0;
+        p.line_segment([pos2(side.left() + 4.0, y), pos2(side.right() - 4.0, y)], Stroke::new(1.5, text));
+    }
+    let page = Rect::from_min_max(pos2(side.right() + 5.0, side.top() + 2.0), shot.max - vec2(5.0, 4.0));
+    p.rect_filled(page, 1.0, sheet);
+    p.circle_stroke(page.center(), 8.0, Stroke::new(1.2, ACCENT));
+    let colour = if chosen { TEXT() } else { MUTED() };
+    p.text(pos2(r.center().x, r.bottom() - 10.0), Align2::CENTER_CENTER, name, FontId::proportional(11.5), colour);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, chosen, name));
+    resp
+}
