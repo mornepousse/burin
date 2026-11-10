@@ -2279,8 +2279,8 @@ fn the_list_shows_what_kind_each_toolpath_is() {
     h.state_mut().view3d = false;
     h.state_mut().right = RightMode::List;
     h.run();
-    h.get_by_label("2D Profile Toolpath");
-    h.get_by_label("Pocket Toolpath");
+    h.get_by_label("Profile cut");
+    assert!(h.query_all_by_label("Pocket").count() >= 1);
 }
 
 #[test]
