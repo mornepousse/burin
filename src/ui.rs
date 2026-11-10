@@ -349,6 +349,27 @@ pub(crate) enum Pic {
     CutBoard,
     CutOneColour,
     CutByToolpath,
+    MoveTo,
+    MoveBy,
+    OffsetOut,
+    OffsetIn,
+    AlignLeft,
+    AlignCentreX,
+    AlignRight,
+    AlignTop,
+    AlignCentreY,
+    AlignBottom,
+    AlignCentre,
+    SpaceAcross,
+    SpaceUpDown,
+    GridGap,
+    GridOffset,
+    TotalAngle,
+    StepAngle,
+    FlipEdgeLeft,
+    FlipEdgeRight,
+    FlipEdgeTop,
+    FlipEdgeBottom,
 }
 
 /// Draws a choice's picture into a square, in the given colour.
@@ -543,8 +564,115 @@ pub(crate) fn draw_pic(p: &egui::Painter, r: Rect, pic: Pic, c: Color32) {
                 p.rect_filled(Rect::from_two_pos(at(x, 0.2), at(x + 0.26, 0.8)), 1.0, col);
             }
         }
+        Pic::MoveTo => {
+            line(&[(0.1, 0.1), (0.1, 0.9), (0.9, 0.9)], faint);
+            rect(0.55, 0.15, 0.85, 0.45, s);
+            p.circle_filled(at(0.55, 0.45), 2.0, c);
+            line(&[(0.1, 0.9), (0.55, 0.45)], Stroke::new(1.0, c));
+        }
+        Pic::MoveBy => {
+            rect(0.05, 0.55, 0.35, 0.85, faint);
+            rect(0.6, 0.15, 0.9, 0.45, s);
+            line(&[(0.3, 0.6), (0.6, 0.4)], s);
+            line(&[(0.5, 0.4), (0.6, 0.4), (0.57, 0.5)], s);
+        }
+        Pic::OffsetOut | Pic::OffsetIn => {
+            let (inner, outer) = if pic == Pic::OffsetOut { (faint, s) } else { (s, faint) };
+            rect(0.3, 0.3, 0.7, 0.7, if pic == Pic::OffsetOut { faint } else { s });
+            rect(0.08, 0.08, 0.92, 0.92, outer);
+            if pic == Pic::OffsetIn {
+                rect(0.08, 0.08, 0.92, 0.92, faint);
+                rect(0.3, 0.3, 0.7, 0.7, inner);
+            }
+        }
+        Pic::AlignLeft | Pic::AlignCentreX | Pic::AlignRight => {
+            let x = match pic {
+                Pic::AlignLeft => 0.1,
+                Pic::AlignCentreX => 0.5,
+                _ => 0.9,
+            };
+            line(&[(x, 0.0), (x, 1.0)], faint);
+            let (a, b) = match pic {
+                Pic::AlignLeft => ((0.1, 0.7), (0.1, 0.5)),
+                Pic::AlignCentreX => ((0.15, 0.85), (0.3, 0.7)),
+                _ => ((0.2, 0.9), (0.4, 0.9)),
+            };
+            rect(a.0, 0.12, a.1, 0.42, s);
+            rect(b.0, 0.58, b.1, 0.88, s);
+        }
+        Pic::AlignTop | Pic::AlignCentreY | Pic::AlignBottom => {
+            let y = match pic {
+                Pic::AlignTop => 0.1,
+                Pic::AlignCentreY => 0.5,
+                _ => 0.9,
+            };
+            line(&[(0.0, y), (1.0, y)], faint);
+            let (a, b) = match pic {
+                Pic::AlignTop => ((0.1, 0.7), (0.1, 0.5)),
+                Pic::AlignCentreY => ((0.15, 0.85), (0.3, 0.7)),
+                _ => ((0.2, 0.9), (0.4, 0.9)),
+            };
+            rect(0.12, a.0, 0.42, a.1, s);
+            rect(0.58, b.0, 0.88, b.1, s);
+        }
+        Pic::AlignCentre => {
+            line(&[(0.5, 0.0), (0.5, 1.0)], faint);
+            line(&[(0.0, 0.5), (1.0, 0.5)], faint);
+            rect(0.25, 0.25, 0.75, 0.75, s);
+        }
+        Pic::SpaceAcross => {
+            for x in [0.05, 0.4, 0.75] {
+                rect(x, 0.3, x + 0.2, 0.7, s);
+            }
+        }
+        Pic::SpaceUpDown => {
+            for y in [0.05, 0.4, 0.75] {
+                rect(0.3, y, 0.7, y + 0.2, s);
+            }
+        }
+        Pic::GridGap | Pic::GridOffset => {
+            for (x, y) in [(0.05, 0.05), (0.55, 0.05), (0.05, 0.55), (0.55, 0.55)] {
+                rect(x, y, x + 0.4, y + 0.4, faint);
+            }
+            if pic == Pic::GridGap {
+                line(&[(0.45, 0.25), (0.55, 0.25)], Stroke::new(2.0, c));
+            } else {
+                line(&[(0.05, 0.25), (0.55, 0.25)], Stroke::new(2.0, c));
+            }
+        }
+        Pic::TotalAngle | Pic::StepAngle => {
+            p.circle_filled(at(0.5, 0.5), 1.6, c);
+            if pic == Pic::TotalAngle {
+                arc(0.5, 0.5, 0.4, 0.0, 270.0, s);
+            } else {
+                arc(0.5, 0.5, 0.4, 0.0, 60.0, s);
+                arc(0.5, 0.5, 0.4, 60.0, 360.0, faint);
+            }
+        }
+        Pic::FlipEdgeLeft | Pic::FlipEdgeRight | Pic::FlipEdgeTop | Pic::FlipEdgeBottom => {
+            rect(0.3, 0.3, 0.7, 0.7, s);
+            match pic {
+                Pic::FlipEdgeLeft => line(&[(0.3, 0.0), (0.3, 1.0)], Stroke::new(2.0, c)),
+                Pic::FlipEdgeRight => line(&[(0.7, 0.0), (0.7, 1.0)], Stroke::new(2.0, c)),
+                Pic::FlipEdgeTop => line(&[(0.0, 0.3), (1.0, 0.3)], Stroke::new(2.0, c)),
+                _ => line(&[(0.0, 0.7), (1.0, 0.7)], Stroke::new(2.0, c)),
+            }
+        }
         Pic::Icon(_) => {}
     }
+}
+
+/// A small button with a picture of what it does before its words.
+pub(crate) fn pic_button(ui: &mut Ui, pic: Pic, label: &str) -> egui::Response {
+    let font = FontId::proportional(12.0);
+    let galley = ui.painter().layout_no_wrap(label.to_string(), font, TEXT());
+    let (r, resp) = ui.allocate_exact_size(vec2(16.0 + 14.0 + galley.size().x + 6.0, 24.0), Sense::click());
+    let fill = if resp.hovered() { theme::BUTTON_HOVER() } else { theme::BUTTON() };
+    ui.painter().rect_filled(r, 6.0, fill);
+    draw_pic(ui.painter(), Rect::from_min_size(r.min + vec2(5.0, 4.0), vec2(16.0, 16.0)), pic, if resp.hovered() { ACCENT } else { TEXT() });
+    ui.painter().galley(pos2(r.min.x + 25.0, r.center().y - galley.size().y / 2.0), galley, TEXT());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    resp
 }
 
 /// What climb and conventional cutting mean, with their pictures.
