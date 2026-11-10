@@ -56,16 +56,18 @@ fn row_with(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
     });
 }
 
+/// The tool in a small rounded box of its own, with buttons to change it or adjust it there.
 fn tool_card(ui: &mut Ui, tool: &Tool) -> (bool, bool) {
     let mut result = (false, false);
-    ui.horizontal(|ui| {
-        bold(ui, crate::i18n::tr("Tool:"));
-        ui.add(egui::Label::new(tool.label()).truncate());
-    });
-    ui.horizontal(|ui| {
-        ui.add_space((ui.available_width() - 136.0).max(0.0));
-        result.0 = wide(ui, crate::i18n::tr("Select ..."), 64.0).clicked();
-        result.1 = wide(ui, crate::i18n::tr("Edit ..."), 64.0).clicked();
+    crate::ui::small_caps(ui, crate::i18n::tr("Tool"));
+    egui::Frame::new().fill(theme::INPUT()).corner_radius(8).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.add(egui::Label::new(RichText::new(tool.label()).strong()).truncate());
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            result.0 = ui.small_button(crate::i18n::tr("Change...")).clicked();
+            result.1 = ui.small_button(crate::i18n::tr("Adjust")).clicked();
+        });
     });
     result
 }
@@ -1915,8 +1917,13 @@ impl App {
             egui::Frame::new().inner_margin(egui::Margin { left: 14, right: 14, top: 6, bottom: 6 }).show(ui, |ui| {
                 ui.set_width(full.width() - 30.0);
                 ui.spacing_mut().item_spacing.y = 6.0;
-                let icon = op_icon(op.kind);
-                title_card(ui, icon, op.kind.title());
+                // Burin's own head: what kind of cut, small, then its name as the title.
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::hover());
+                    crate::icons::paint(ui.painter(), r, op_icon(op.kind), true);
+                    crate::ui::small_caps(ui, op.kind.title());
+                });
+                ui.add(TextEdit::singleline(&mut op.name).font(egui::FontId::proportional(16.0)).desired_width(f32::INFINITY).hint_text(crate::i18n::tr("Name")));
                 self.op_depths(ui, &mut op, unit);
                 self.op_tool(ui, &mut op, unit);
                 match op.kind {
@@ -1985,24 +1992,28 @@ impl App {
     fn op_depths(&mut self, ui: &mut Ui, op: &mut Op, unit: &str) {
         match op.kind {
             OpKind::Profile | OpKind::Pocket | OpKind::Drill => {
+                // From where to where, on one line.
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    bold(ui, crate::i18n::tr("Cutting Depths"));
-                    labelled_formula(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
-                    labelled_formula(ui, crate::i18n::tr("Cut Depth (C)"), 106.0, &mut op.cut_depth, &mut op.formulas.cut_depth, 50.0, unit);
-                    if op.kind != OpKind::Drill {
-                        ui.checkbox(&mut self.show_advanced, crate::i18n::tr("Show advanced toolpath options"));
-                    }
+                    crate::ui::small_caps(ui, crate::i18n::tr("Depth"));
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.label(crate::i18n::tr("from"));
+                        crate::ui::number_formula(ui, &mut op.start_depth, &mut op.formulas.start_depth, 46.0);
+                        ui.label(crate::i18n::tr("down to"));
+                        crate::ui::number_formula(ui, &mut op.cut_depth, &mut op.formulas.cut_depth, 46.0);
+                        ui.label(unit);
+                    });
                 });
             }
             OpKind::VCarve => {
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    bold(ui, crate::i18n::tr("Cutting Depths"));
-                    labelled_formula(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
+                    crate::ui::small_caps(ui, crate::i18n::tr("Depth"));
+                    labelled_formula(ui, crate::i18n::tr("Start depth"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
                     let mut flat = op.flat_depth > 0.0;
                     ui.horizontal(|ui| {
-                        if ui.checkbox(&mut flat, crate::i18n::tr("Flat Depth (F)")).changed() {
+                        if ui.checkbox(&mut flat, crate::i18n::tr("Flat depth")).changed() {
                             op.flat_depth = if flat { self.doc.job.thickness * 0.2 } else { 0.0 };
                             op.formulas.flat_depth.clear();
                             if !flat {
@@ -2024,8 +2035,8 @@ impl App {
             OpKind::Prism => {
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    bold(ui, crate::i18n::tr("Cutting Depths"));
-                    labelled_formula(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
+                    crate::ui::small_caps(ui, crate::i18n::tr("Depth"));
+                    labelled_formula(ui, crate::i18n::tr("Start depth"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
                     labelled_formula(ui, crate::i18n::tr("Prism Depth"), 106.0, &mut op.cut_depth, &mut op.formulas.cut_depth, 50.0, unit);
                     ui.vertical_centered(|ui| {
                         if wide(ui, crate::i18n::tr("Set Depth for Full Prism"), 170.0).clicked() {
@@ -2048,17 +2059,17 @@ impl App {
             OpKind::Flute => {
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    bold(ui, crate::i18n::tr("Cutting Depths"));
-                    labelled_formula(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
-                    labelled_formula(ui, crate::i18n::tr("Flute Depth (F)"), 106.0, &mut op.cut_depth, &mut op.formulas.cut_depth, 50.0, unit);
+                    crate::ui::small_caps(ui, crate::i18n::tr("Depth"));
+                    labelled_formula(ui, crate::i18n::tr("Start depth"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
+                    labelled_formula(ui, crate::i18n::tr("Flute depth"), 106.0, &mut op.cut_depth, &mut op.formulas.cut_depth, 50.0, unit);
                 });
             }
             OpKind::Chamfer => {
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     bold(ui, crate::i18n::tr("Chamfer"));
-                    labelled_formula(ui, crate::i18n::tr("Start Depth (D)"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
-                    labelled(ui, crate::i18n::tr("Chamfer Width (W)"), 106.0, &mut op.chamfer_width, 50.0, unit);
+                    labelled_formula(ui, crate::i18n::tr("Start depth"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
+                    labelled(ui, crate::i18n::tr("Chamfer width"), 106.0, &mut op.chamfer_width, 50.0, unit);
                     note(ui, &tf!("Cut depth: {} {unit}", toolpath::trim(toolpath::chamfer_depth(op))));
                     note(ui, crate::i18n::tr("The tip of the V-bit follows the line."));
                 });
@@ -2079,11 +2090,10 @@ impl App {
             }
             if matches!(op.kind, OpKind::Profile | OpKind::Pocket | OpKind::Rough3D) {
                 let passes = toolpath::pass_list(op).len();
-                ui.horizontal(|ui| {
-                    bold(ui, crate::i18n::tr("Passes:"));
-                    ui.label(if op.kind == OpKind::Rough3D { crate::i18n::tr("Auto").to_string() } else { passes.to_string() });
-                    ui.add_space((ui.available_width() - 112.0).max(0.0));
-                    if wide(ui, crate::i18n::tr("Edit Passes ..."), 110.0).clicked() {
+                ui.horizontal_wrapped(|ui| {
+                    let said = if op.kind == OpKind::Rough3D { crate::i18n::tr("Passes chosen as it goes").to_string() } else if passes == 1 { crate::i18n::tr("In one pass").to_string() } else { tf!("In {passes} passes") };
+                    ui.label(RichText::new(said).color(theme::MUTED()));
+                    if ui.small_button(crate::i18n::tr("Change passes...")).clicked() {
                         self.open_passes(op);
                     }
                 });
@@ -2198,44 +2208,33 @@ impl App {
 
     fn op_footer(&mut self, ui: &mut Ui, op: &mut Op, unit: &str) {
         card(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 2.0;
-            let m = self.doc.machine;
-            ui.horizontal(|ui| {
-                ui.add_sized([70.0, 14.0], egui::Label::new(crate::i18n::tr("Safe")));
-                ui.label(format!("{} {unit}", toolpath::trim(m.safe_z)));
-            });
-            ui.horizontal(|ui| {
-                ui.add_sized([70.0, 14.0], egui::Label::new(crate::i18n::tr("Home")));
-                ui.label(format!("X:{:.2} Y:{:.2} Z:{:.2}", m.home[0], m.home[1], m.home[2]));
-            });
-            let is_3d = op.kind.uses_model();
-            if !is_3d && op.kind != OpKind::Moulding && op.kind != OpKind::Engrave {
-                if self.doc.components.is_empty() {
-                    ui.add_enabled(false, egui::Checkbox::new(&mut op.project, crate::i18n::tr("Project toolpath onto 3D model"))).on_disabled_hover_text(crate::i18n::tr("Create a 3D shape first"));
-                } else {
-                    ui.checkbox(&mut op.project, crate::i18n::tr("Project toolpath onto 3D model"));
-                }
-            }
+            ui.spacing_mut().item_spacing.y = 4.0;
             if op.kind != OpKind::Moulding {
-                ui.horizontal(|ui| {
-                    ui.label(crate::i18n::tr("Vector Selection:"));
-                    ui.label(tf!("{} selected", self.selected.len()));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if wide(ui, crate::i18n::tr("Selector ..."), 74.0).on_hover_text(crate::i18n::tr("Selects shapes by kind, size and layer")).clicked() {
-                            self.open_selector(op);
-                        }
-                    });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(tf!("Shapes: {} selected", self.selected.len()));
+                    if ui.small_button(crate::i18n::tr("Pick by kind...")).on_hover_text(crate::i18n::tr("Selects shapes by kind, size and layer")).clicked() {
+                        self.open_selector(op);
+                    }
                 });
             } else {
                 note(ui, &tf!("Selected vectors: {}", self.selected.len()));
             }
-            ui.horizontal(|ui| {
-                ui.label(crate::i18n::tr("Name:"));
-                ui.add(TextEdit::singleline(&mut op.name).desired_width(f32::INFINITY));
-            });
+            let is_3d = op.kind.uses_model();
+            if !is_3d && op.kind != OpKind::Moulding && op.kind != OpKind::Engrave {
+                if self.doc.components.is_empty() {
+                    ui.add_enabled(false, egui::Checkbox::new(&mut op.project, crate::i18n::tr("Follow the 3D model's surface"))).on_disabled_hover_text(crate::i18n::tr("Create a 3D shape first"));
+                } else {
+                    ui.checkbox(&mut op.project, crate::i18n::tr("Follow the 3D model's surface"));
+                }
+            }
             egui::CollapsingHeader::new(crate::i18n::tr("Notes")).id_salt("toolpath-notes").default_open(!op.notes.is_empty()).show(ui, |ui| {
                 ui.add(TextEdit::multiline(&mut op.notes).desired_width(f32::INFINITY).desired_rows(2));
             });
+            if matches!(op.kind, OpKind::Profile | OpKind::Pocket) {
+                ui.checkbox(&mut self.show_advanced, crate::i18n::tr("Show every option"));
+            }
+            let m = self.doc.machine;
+            ui.add(egui::Label::new(RichText::new(tf!("Lifts to {} {unit} between cuts; starts and ends at X{:.2} Y{:.2} Z{:.2}.", toolpath::trim(m.safe_z), m.home[0], m.home[1], m.home[2])).size(11.0).color(theme::MUTED())).wrap());
         });
     }
 

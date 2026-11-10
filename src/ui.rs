@@ -2247,77 +2247,49 @@ impl App {
 
 
     pub(crate) fn profile_cards(&mut self, ui: &mut Ui, op: &mut crate::toolpath::Op, unit: &str, tab: &mut usize) {
+        // Burin's own layout: pills for the side and the direction, then what to leave on the wall.
         card(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 2.0;
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    bold(ui, crate::i18n::tr("Machine Vectors ..."));
-                    ui.radio_value(&mut op.side, Side::Outside, crate::i18n::tr("Outside / Right"));
-                    ui.radio_value(&mut op.side, Side::Inside, crate::i18n::tr("Inside / Left"));
-                    ui.radio_value(&mut op.side, Side::On, crate::i18n::tr("On"));
-                });
-                let (r, _) = ui.allocate_exact_size(vec2(54.0, 62.0), Sense::hover());
-                let square = Rect::from_center_size(r.center() + vec2(2.0, 4.0), vec2(42.0, 42.0));
-                ui.painter().rect_stroke(square, 0.0, Stroke::new(1.0, MUTED()), StrokeKind::Inside);
-                let offset = match op.side {
-                    Side::Outside => -9.0,
-                    Side::Inside => 9.0,
-                    Side::On => 0.0,
-                };
-                ui.painter().line_segment([square.left_bottom() + vec2(offset, 0.0), square.left_top() + vec2(offset, 0.0)], Stroke::new(1.5, Color32::from_rgb(210, 30, 30)));
-                ui.painter().circle(square.left_top() + vec2(offset, -6.0), 5.0, Color32::from_rgb(240, 220, 110), Stroke::new(1.0, MUTED()));
-            });
-            ui.horizontal(|ui| {
-                bold(ui, crate::i18n::tr("Direction"));
-                ui.add_space(6.0);
-                ui.radio_value(&mut op.climb, true, crate::i18n::tr("Climb"));
-                ui.radio_value(&mut op.climb, false, crate::i18n::tr("Conventional"));
-            });
-            labelled(ui, crate::i18n::tr("Allowance offset"), 96.0, &mut op.allowance, 50.0, unit);
+            ui.spacing_mut().item_spacing.y = 4.0;
+            small_caps(ui, crate::i18n::tr("Cut"));
+            let side = match op.side {
+                Side::Outside => 0,
+                Side::Inside => 1,
+                Side::On => 2,
+            };
+            if let Some(k) = pills(ui, &[crate::i18n::tr("Outside"), crate::i18n::tr("Inside"), crate::i18n::tr("On the line")], side) {
+                op.side = [Side::Outside, Side::Inside, Side::On][k];
+            }
+            small_caps(ui, crate::i18n::tr("Direction"));
+            if let Some(k) = pills(ui, &[crate::i18n::tr("Climb"), crate::i18n::tr("Conventional")], if op.climb { 0 } else { 1 }) {
+                op.climb = k == 0;
+            }
+            labelled(ui, crate::i18n::tr("Leave on the wall"), 0.0, &mut op.allowance, 50.0, unit);
         });
         if !self.show_advanced {
             return;
         }
         card(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.checkbox(&mut op.last_pass, crate::i18n::tr("Do Separate Last Pass"));
-            ui.add_enabled_ui(op.last_pass, |ui| {
-                labelled(ui, crate::i18n::tr("Allowance (A)"), 96.0, &mut op.last_allowance, 50.0, unit);
-                ui.horizontal(|ui| {
-                    ui.add_space(50.0);
-                    ui.checkbox(&mut op.last_reverse, crate::i18n::tr("Reverse direction"));
+            ui.checkbox(&mut op.last_pass, crate::i18n::tr("Finishing pass"));
+            if op.last_pass {
+                labelled(ui, crate::i18n::tr("It takes off"), 0.0, &mut op.last_allowance, 50.0, unit);
+                ui.checkbox(&mut op.last_reverse, crate::i18n::tr("The other way round"));
+            }
+            ui.checkbox(&mut op.tabs, crate::i18n::tr("Tabs to hold the part"));
+            if op.tabs {
+                ui.horizontal_wrapped(|ui| {
+                    labelled(ui, crate::i18n::tr("Length"), 0.0, &mut op.tab_length, 44.0, unit);
+                    labelled(ui, crate::i18n::tr("Thickness"), 0.0, &mut op.tab_thickness, 44.0, unit);
                 });
-            });
-        });
-        card(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 2.0;
-            ui.checkbox(&mut op.tabs, crate::i18n::tr("Add tabs to toolpath"));
-            ui.add_enabled_ui(op.tabs, |ui| {
-                labelled(ui, crate::i18n::tr("Length"), 96.0, &mut op.tab_length, 50.0, unit);
-                labelled(ui, crate::i18n::tr("Thickness"), 96.0, &mut op.tab_thickness, 50.0, unit);
                 ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(96.0, 18.0), Sense::hover());
-                    ui.painter().text(r.right_center() - vec2(1.0, 0.0), Align2::RIGHT_CENTER, crate::i18n::tr("Tabs per shape"), FontId::proportional(12.5), TEXT());
-                    count_box(ui, &mut op.tab_count, 50.0);
+                    ui.label(crate::i18n::tr("Tabs per shape"));
+                    count_box(ui, &mut op.tab_count, 44.0);
                 });
-            });
-        });
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 1.0;
-            for (i, name) in [crate::i18n::tr("Ramp"), crate::i18n::tr("Leads"), crate::i18n::tr("Order"), crate::i18n::tr("Start At"), crate::i18n::tr("Corners")].iter().enumerate() {
-                let active = *tab == i;
-                let fill = if active { CARD() } else { PANEL() };
-                let (rect, resp) = ui.allocate_exact_size(vec2(44.0, 19.0), Sense::click());
-                ui.painter().rect(rect, CornerRadius { nw: 2, ne: 2, sw: 0, se: 0 }, fill, Stroke::new(1.0, if active { ACCENT } else { LINE() }), StrokeKind::Inside);
-                ui.painter().text(rect.center(), Align2::CENTER_CENTER, *name, FontId::proportional(11.5), TEXT());
-                label_widget(&resp, name);
-                if resp.clicked() {
-                    *tab = i;
-                }
             }
         });
-        ui.add_space(-6.0);
-        card(ui, |ui| match *tab {
+        // The rarer choices, one section open at a time.
+        for (i, name) in [crate::i18n::tr("Ramps"), crate::i18n::tr("Leads"), crate::i18n::tr("Order"), crate::i18n::tr("Start point"), crate::i18n::tr("Corners")].into_iter().enumerate() {
+            let shown = egui::CollapsingHeader::new(RichText::new(name).strong()).id_salt(("op-section", i)).open(Some(*tab == i)).show(ui, |ui| match i {
             0 => {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 use crate::toolpath::RampKind;
@@ -2425,7 +2397,11 @@ impl App {
                     ui.label(RichText::new(crate::i18n::tr("The tool goes all the way into each outside corner, instead of rounding it. Shapes inside each other stay rounded.")).size(11.5).color(MUTED()));
                 }
             }
-        });
+            });
+            if shown.header_response.clicked() {
+                *tab = if *tab == i { 99 } else { i };
+            }
+        }
     }
 
     pub(crate) fn quality_list(&mut self, ui: &mut Ui) {
