@@ -59,14 +59,14 @@ fn row_with(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
 /// The tool in a small rounded box of its own, with buttons to change it or adjust it there.
 fn tool_card(ui: &mut Ui, tool: &Tool) -> (bool, bool) {
     let mut result = (false, false);
-    crate::ui::small_caps(ui, crate::i18n::tr("Tool"));
+    crate::ui::icon_caps(ui, crate::icons::Icon::Tools, crate::i18n::tr("Tool"));
     egui::Frame::new().fill(theme::INPUT()).corner_radius(8).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.add(egui::Label::new(RichText::new(tool.label()).strong()).truncate());
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            result.0 = ui.small_button(crate::i18n::tr("Change...")).clicked();
-            result.1 = ui.small_button(crate::i18n::tr("Adjust")).clicked();
+            result.0 = crate::ui::worded_button(ui, true, crate::icons::Icon::Tools, crate::i18n::tr("Change...")).clicked();
+            result.1 = crate::ui::worded_button(ui, true, crate::icons::Icon::Edit, crate::i18n::tr("Adjust")).clicked();
         });
     });
     result
@@ -1713,8 +1713,12 @@ impl App {
         egui::Frame::new().inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
             ui.set_width(width - 24.0);
             ui.spacing_mut().item_spacing.y = 6.0;
-            crate::ui::bold_sized(ui, crate::i18n::tr("Machine file"), 15.0, theme::TEXT());
-            crate::ui::small_caps(ui, crate::i18n::tr("What goes in"));
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), egui::Sense::hover());
+                crate::icons::paint(ui.painter(), r, Icon::SaveTp, true);
+                crate::ui::bold_sized(ui, crate::i18n::tr("Machine file"), 15.0, theme::TEXT());
+            });
+            crate::ui::icon_caps(ui, Icon::TpProfile, crate::i18n::tr("What goes in"));
             if let Some(k) = crate::ui::pills(ui, &[crate::i18n::tr("Selected toolpath"), crate::i18n::tr("All visible")], usize::from(self.one_file)) {
                 self.one_file = k == 1;
             }
@@ -1743,7 +1747,7 @@ impl App {
                 }
             });
             ui.add_space(2.0);
-            crate::ui::small_caps(ui, crate::i18n::tr("For which machine"));
+            crate::ui::icon_caps(ui, Icon::Doc, crate::i18n::tr("For which machine"));
             let before = self.post_index;
             let total = POSTS.len() + self.loaded_posts.len();
             let names: Vec<String> = (0..total).map(|i| self.post_name(i)).collect();
@@ -1786,23 +1790,23 @@ impl App {
             }
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                if ui.small_button(crate::i18n::tr("Add .pp files...")).clicked() {
+                if crate::ui::worded_button(ui, true, Icon::Open, crate::i18n::tr("Add .pp files...")).clicked() {
                     if let Some(files) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Post processor"), &["pp", "PP"]).pick_files() {
                         self.report_loaded_posts(files);
                     }
                 }
-                if ui.small_button(crate::i18n::tr("Add a folder...")).clicked() {
+                if crate::ui::worded_button(ui, true, Icon::Folder, crate::i18n::tr("Add a folder...")).clicked() {
                     if let Some(dir) = crate::platform::FileDialog::new().pick_folder() {
                         let files = App::post_files_in(&dir);
                         self.report_loaded_posts(files);
                     }
                 }
-                if self.post_index >= POSTS.len() && ui.small_button(crate::i18n::tr("Remove this machine")).clicked() {
+                if self.post_index >= POSTS.len() && crate::ui::worded_button(ui, true, Icon::Trash, crate::i18n::tr("Remove this machine")).clicked() {
                     self.remove_selected_post();
                 }
             });
             ui.add_space(2.0);
-            crate::ui::small_caps(ui, crate::i18n::tr("Options"));
+            crate::ui::icon_caps(ui, Icon::Edit, crate::i18n::tr("Options"));
             ui.checkbox(&mut self.output_arcs, crate::i18n::tr("Write curves as arcs (G2 / G3)")).on_hover_text(crate::i18n::tr("Smaller files and smoother curves. Try it in the air on your machine first."));
             ui.horizontal(|ui| {
                 ui.checkbox(&mut self.corner_slow, crate::i18n::tr("Slow down in tight corners")).on_hover_text(crate::i18n::tr("Near a sharp turn the cutter takes a wider bite; other CAM programs lower the rate there. Not in the original."));
@@ -1950,7 +1954,7 @@ impl App {
                 if matches!(op.kind, OpKind::Pocket | OpKind::Drill | OpKind::VCarve | OpKind::Prism) {
                     card(ui, |ui| {
                         let mut by_selection = op.order == toolpath::Order::AsDrawn;
-                        if ui.checkbox(&mut by_selection, crate::i18n::tr("Use Vector Selection Order")).changed() {
+                        if ui.checkbox(&mut by_selection, crate::i18n::tr("Cut in the order the shapes were picked")).changed() {
                             op.order = if by_selection { toolpath::Order::AsDrawn } else { toolpath::Order::Nearest };
                         }
                     });
@@ -1995,7 +1999,7 @@ impl App {
                 // From where to where, on one line.
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    crate::ui::small_caps(ui, crate::i18n::tr("Depth"));
+                    crate::ui::icon_caps(ui, Icon::Measure, crate::i18n::tr("Depth"));
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         ui.label(crate::i18n::tr("from"));
@@ -2009,7 +2013,7 @@ impl App {
             OpKind::VCarve => {
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    crate::ui::small_caps(ui, crate::i18n::tr("Depth"));
+                    crate::ui::icon_caps(ui, Icon::Measure, crate::i18n::tr("Depth"));
                     labelled_formula(ui, crate::i18n::tr("Start depth"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
                     let mut flat = op.flat_depth > 0.0;
                     ui.horizontal(|ui| {
@@ -2035,7 +2039,7 @@ impl App {
             OpKind::Prism => {
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    crate::ui::small_caps(ui, crate::i18n::tr("Depth"));
+                    crate::ui::icon_caps(ui, Icon::Measure, crate::i18n::tr("Depth"));
                     labelled_formula(ui, crate::i18n::tr("Start depth"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
                     labelled_formula(ui, crate::i18n::tr("Prism Depth"), 106.0, &mut op.cut_depth, &mut op.formulas.cut_depth, 50.0, unit);
                     ui.vertical_centered(|ui| {
@@ -2059,7 +2063,7 @@ impl App {
             OpKind::Flute => {
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    crate::ui::small_caps(ui, crate::i18n::tr("Depth"));
+                    crate::ui::icon_caps(ui, Icon::Measure, crate::i18n::tr("Depth"));
                     labelled_formula(ui, crate::i18n::tr("Start depth"), 106.0, &mut op.start_depth, &mut op.formulas.start_depth, 50.0, unit);
                     labelled_formula(ui, crate::i18n::tr("Flute depth"), 106.0, &mut op.cut_depth, &mut op.formulas.cut_depth, 50.0, unit);
                 });
@@ -2093,7 +2097,7 @@ impl App {
                 ui.horizontal_wrapped(|ui| {
                     let said = if op.kind == OpKind::Rough3D { crate::i18n::tr("Passes chosen as it goes").to_string() } else if passes == 1 { crate::i18n::tr("In one pass").to_string() } else { tf!("In {passes} passes") };
                     ui.label(RichText::new(said).color(theme::MUTED()));
-                    if ui.small_button(crate::i18n::tr("Change passes...")).clicked() {
+                    if crate::ui::worded_button(ui, true, Icon::TpRough, crate::i18n::tr("Change passes...")).clicked() {
                         self.open_passes(op);
                     }
                 });
@@ -2133,77 +2137,88 @@ impl App {
                 }
                 match &op.clearance_tool {
                     Some(t) => {
-                        ui.label(t.label());
-                        ui.horizontal(|ui| {
-                            ui.add_space((ui.available_width() - 66.0).max(0.0));
-                            if wide(ui, crate::i18n::tr("Select ..."), 64.0).clicked() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new(t.label()).strong());
+                            if ui.small_button(crate::i18n::tr("Change...")).clicked() {
                                 self.open_tool_list(Some(1));
                             }
                         });
                     }
-                    None => note(ui, crate::i18n::tr("Not using area clear tool")),
+                    None => {}
                 }
             });
         });
     }
 
     fn pocket_cards(&mut self, ui: &mut Ui, op: &mut Op, unit: &str) {
+        use crate::ui::pills;
         if self.show_advanced {
-            self.clearance_card(ui, op, crate::i18n::tr("Use Larger Area Clearance Tool"), true);
+            self.clearance_card(ui, op, crate::i18n::tr("A bigger cutter clears first"), true);
         }
         card(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 3.0;
-            bold(ui, crate::i18n::tr("Clear Pocket ..."));
-            ui.horizontal(|ui| {
-                let mut way = if op.adaptive { 2 } else if op.raster { 1 } else { 0 };
-                ui.radio_value(&mut way, 0, crate::i18n::tr("Offset"));
-                ui.radio_value(&mut way, 1, crate::i18n::tr("Raster"));
-                ui.radio_value(&mut way, 2, crate::i18n::tr("Adaptive")).on_hover_text(crate::i18n::tr("The cutter never bites more than its stepover: gentler on small cutters. From other CAM programs, not in the original."));
-                op.raster = way == 1;
-                op.adaptive = way == 2;
-            });
-            ui.horizontal(|ui| {
-                ui.label(crate::i18n::tr("Cut Direction"));
-                ui.radio_value(&mut op.climb, true, crate::i18n::tr("Climb"));
-                ui.radio_value(&mut op.climb, false, crate::i18n::tr("Conventional"));
-            });
-            ui.add_enabled_ui(op.raster, |ui| {
-                labelled(ui, crate::i18n::tr("Raster"), 40.0, &mut op.raster_angle, 50.0, crate::i18n::tr("degrees"));
-                ui.checkbox(&mut op.raster_second, crate::i18n::tr("Second raster at 90°"));
+            ui.spacing_mut().item_spacing.y = 4.0;
+            crate::ui::icon_caps(ui, Icon::TpPocket, crate::i18n::tr("Clearing"));
+            let way = if op.adaptive { 2 } else if op.raster { 1 } else { 0 };
+            if let Some(k) = pills(ui, &[crate::i18n::tr("Offset"), crate::i18n::tr("Raster"), crate::i18n::tr("Adaptive")], way) {
+                op.raster = k == 1;
+                op.adaptive = k == 2;
+            }
+            if op.adaptive {
+                note(ui, crate::i18n::tr("The cutter never bites more than its stepover: gentler on small cutters. From other CAM programs, not in the original."));
+            }
+            crate::ui::icon_caps(ui, Icon::Rotate, crate::i18n::tr("Direction"));
+            if let Some(k) = pills(ui, &[crate::i18n::tr("Climb"), crate::i18n::tr("Conventional")], if op.climb { 0 } else { 1 }) {
+                op.climb = k == 0;
+            }
+            if op.raster {
                 ui.horizontal(|ui| {
-                    ui.label(crate::i18n::tr("Profile"));
-                    profile_combo(ui, &mut op.profile_pass, "pocket_profile");
+                    ui.label(crate::i18n::tr("Rows at"));
+                    crate::ui::number(ui, &mut op.raster_angle, 44.0);
+                    ui.label("°");
                 });
-                ui.add_enabled_ui(op.profile_pass != ProfilePass::None, |ui| {
-                    labelled(ui, crate::i18n::tr("Raster Allowance"), 96.0, &mut op.raster_allowance, 50.0, unit);
-                });
-            });
-            ui.separator();
-            labelled_formula(ui, crate::i18n::tr("Pocket Allowance"), 96.0, &mut op.allowance, &mut op.formulas.allowance, 50.0, unit);
-        });
-        card(ui, |ui| {
-            ui.checkbox(&mut op.ramp, crate::i18n::tr("Ramp Plunge Moves"));
-            ui.add_enabled_ui(op.ramp, |ui| {
-                labelled(ui, crate::i18n::tr("Distance"), 56.0, &mut op.ramp_distance, 50.0, unit);
-            });
+                ui.checkbox(&mut op.raster_second, crate::i18n::tr("Second raster at 90°"));
+                ui.label(RichText::new(crate::i18n::tr("Round the wall")).size(12.0).color(theme::MUTED()));
+                let pass = match op.profile_pass {
+                    ProfilePass::First => 0,
+                    ProfilePass::Last => 1,
+                    ProfilePass::None => 2,
+                };
+                if let Some(k) = pills(ui, &[crate::i18n::tr("before"), crate::i18n::tr("after"), crate::i18n::tr("never")], pass) {
+                    op.profile_pass = [ProfilePass::First, ProfilePass::Last, ProfilePass::None][k];
+                }
+                if op.profile_pass != ProfilePass::None {
+                    labelled(ui, crate::i18n::tr("Rows stop short by"), 0.0, &mut op.raster_allowance, 46.0, unit);
+                }
+            }
+            labelled_formula(ui, crate::i18n::tr("Leave on the wall"), 0.0, &mut op.allowance, &mut op.formulas.allowance, 46.0, unit);
+            ui.checkbox(&mut op.ramp, crate::i18n::tr("Ramp down instead of plunging"));
+            if op.ramp {
+                labelled(ui, crate::i18n::tr("over"), 0.0, &mut op.ramp_distance, 46.0, unit);
+            }
         });
     }
 
     fn vcarve_cards(&mut self, ui: &mut Ui, op: &mut Op, unit: &str) {
+        use crate::ui::pills;
         let flat = op.flat_depth > 0.0;
-        self.clearance_card(ui, op, crate::i18n::tr("Use Flat Area Clearance Tool"), flat);
-        card(ui, |ui| {
-            ui.add_enabled_ui(flat && op.clearance_tool.is_some(), |ui| {
-                ui.spacing_mut().item_spacing.y = 3.0;
-                bold(ui, crate::i18n::tr("Flat Area Clearance ..."));
-                ui.horizontal(|ui| {
-                    ui.radio_value(&mut op.raster, false, crate::i18n::tr("Offset"));
-                    ui.radio_value(&mut op.raster, true, crate::i18n::tr("Raster"));
-                });
-                labelled(ui, crate::i18n::tr("Raster Angle"), 70.0, &mut op.raster_angle, 50.0, crate::i18n::tr("degrees"));
+        self.clearance_card(ui, op, crate::i18n::tr("A flat cutter clears the flat bottoms"), flat);
+        if flat && op.clearance_tool.is_some() {
+            card(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                crate::ui::icon_caps(ui, Icon::TpVCarve, crate::i18n::tr("Clearing the flats"));
+                if let Some(k) = pills(ui, &[crate::i18n::tr("Offset"), crate::i18n::tr("Raster")], usize::from(op.raster)) {
+                    op.raster = k == 1;
+                }
+                if op.raster {
+                    ui.horizontal(|ui| {
+                        ui.label(crate::i18n::tr("Rows at"));
+                        crate::ui::number(ui, &mut op.raster_angle, 44.0);
+                        ui.label("°");
+                    });
+                }
             });
-            let _ = unit;
-        });
+        }
+        let _ = unit;
     }
 
     fn op_footer(&mut self, ui: &mut Ui, op: &mut Op, unit: &str) {
@@ -2211,8 +2226,10 @@ impl App {
             ui.spacing_mut().item_spacing.y = 4.0;
             if op.kind != OpKind::Moulding {
                 ui.horizontal_wrapped(|ui| {
+                    let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
+                    crate::icons::paint(ui.painter(), r, Icon::Select, true);
                     ui.label(tf!("Shapes: {} selected", self.selected.len()));
-                    if ui.small_button(crate::i18n::tr("Pick by kind...")).on_hover_text(crate::i18n::tr("Selects shapes by kind, size and layer")).clicked() {
+                    if crate::ui::worded_button(ui, true, Icon::Similar, crate::i18n::tr("Pick by kind...")).on_hover_text(crate::i18n::tr("Selects shapes by kind, size and layer")).clicked() {
                         self.open_selector(op);
                     }
                 });
@@ -2534,59 +2551,68 @@ fn profile_combo(ui: &mut Ui, value: &mut ProfilePass, salt: &str) {
 }
 
 fn drill_cards(ui: &mut Ui, op: &mut Op, unit: &str) {
+    use crate::ui::pills;
     card(ui, |ui| {
-        ui.spacing_mut().item_spacing.y = 3.0;
-        ui.checkbox(&mut op.peck, crate::i18n::tr("Use Peck Drilling"));
-        ui.add_enabled_ui(op.peck, |ui| {
-            ui.radio_value(&mut op.retract_to_start, true, crate::i18n::tr("Retract above the cutting start depth"));
-            ui.radio_value(&mut op.retract_to_start, false, crate::i18n::tr("Retract above the height of the previous pass"));
-            labelled(ui, crate::i18n::tr("Retract Gap"), 76.0, &mut op.retract_gap, 50.0, unit);
-            ui.label(tf!("Peck Depth (P)   {} {unit}", toolpath::trim(op.tool.pass_depth)));
-            note(ui, crate::i18n::tr("Peck depth is the tool's Pass Depth."));
-        });
-    });
-    card(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        crate::ui::icon_caps(ui, Icon::TpDrill, crate::i18n::tr("Drilling"));
+        ui.checkbox(&mut op.peck, crate::i18n::tr("Peck: come up to clear the chips"));
+        if op.peck {
+            ui.label(RichText::new(crate::i18n::tr("Between pecks, back up to")).size(12.0).color(theme::MUTED()));
+            if let Some(k) = pills(ui, &[crate::i18n::tr("the start"), crate::i18n::tr("the last peck")], if op.retract_to_start { 0 } else { 1 }) {
+                op.retract_to_start = k == 0;
+            }
+            labelled(ui, crate::i18n::tr("plus a gap of"), 0.0, &mut op.retract_gap, 46.0, unit);
+            note(ui, &tf!("Each peck goes {} {unit} deeper: the tool's pass depth.", toolpath::trim(op.tool.pass_depth)));
+        }
         let mut on = op.dwell > 0.0;
-        if ui.checkbox(&mut on, crate::i18n::tr("Dwell at the bottom of each drill pass")).changed() {
+        if ui.checkbox(&mut on, crate::i18n::tr("Pause at the bottom of each hole")).changed() {
             op.dwell = if on { 0.5 } else { 0.0 };
         }
-        ui.add_enabled_ui(on, |ui| {
-            labelled(ui, crate::i18n::tr("Dwell Time"), 70.0, &mut op.dwell, 50.0, crate::i18n::tr("seconds"));
-        });
+        if on {
+            labelled(ui, crate::i18n::tr("for"), 0.0, &mut op.dwell, 46.0, crate::i18n::tr("seconds"));
+        }
     });
 }
 
 fn engrave_cards(ui: &mut Ui, op: &mut Op, unit: &str) {
+    use crate::ui::pills;
     card(ui, |ui| {
-        ui.spacing_mut().item_spacing.y = 3.0;
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut op.fill, false, crate::i18n::tr("Outline"));
-            ui.radio_value(&mut op.fill, true, crate::i18n::tr("Fill"));
-        });
-        ui.add_enabled_ui(op.fill, |ui| {
-            labelled(ui, crate::i18n::tr("Stepover"), 60.0, &mut op.stepover, 50.0, unit);
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut op.hatch, false, crate::i18n::tr("Offset"));
-                ui.radio_value(&mut op.hatch, true, crate::i18n::tr("Hatch"));
-            });
-            ui.add_enabled_ui(op.hatch, |ui| {
-                labelled(ui, crate::i18n::tr("Hatch"), 60.0, &mut op.raster_angle, 50.0, crate::i18n::tr("degrees"));
+        ui.spacing_mut().item_spacing.y = 4.0;
+        crate::ui::icon_caps(ui, Icon::TpEngrave, crate::i18n::tr("Engraving"));
+        if let Some(k) = pills(ui, &[crate::i18n::tr("Outline"), crate::i18n::tr("Fill")], usize::from(op.fill)) {
+            op.fill = k == 1;
+        }
+        if op.fill {
+            labelled(ui, crate::i18n::tr("Stepover"), 0.0, &mut op.stepover, 46.0, unit);
+            if let Some(k) = pills(ui, &[crate::i18n::tr("Offset"), crate::i18n::tr("Hatch")], usize::from(op.hatch)) {
+                op.hatch = k == 1;
+            }
+            if op.hatch {
+                ui.horizontal(|ui| {
+                    ui.label(crate::i18n::tr("Rows at"));
+                    crate::ui::number(ui, &mut op.raster_angle, 44.0);
+                    ui.label("°");
+                });
                 ui.checkbox(&mut op.cross_hatch, crate::i18n::tr("Cross Hatch"));
-            });
-        });
+            }
+        }
     });
 }
 
 fn flute_cards(ui: &mut Ui, op: &mut Op) {
     use crate::toolpath::FluteEnds;
     card(ui, |ui| {
-        ui.spacing_mut().item_spacing.y = 3.0;
-        bold(ui, crate::i18n::tr("Flute Type"));
-        ui.radio_value(&mut op.flute_ends, FluteEnds::Both, crate::i18n::tr("Ramp at both ends"));
-        ui.radio_value(&mut op.flute_ends, FluteEnds::Start, crate::i18n::tr("Ramp at the start only"));
-        ui.radio_value(&mut op.flute_ends, FluteEnds::End, crate::i18n::tr("Ramp at the end only"));
+        ui.spacing_mut().item_spacing.y = 4.0;
+        crate::ui::icon_caps(ui, Icon::TpFlute, crate::i18n::tr("Ramps at"));
+        let k = match op.flute_ends {
+            FluteEnds::Both => 0,
+            FluteEnds::Start => 1,
+            FluteEnds::End => 2,
+        };
+        if let Some(k) = crate::ui::pills(ui, &[crate::i18n::tr("both ends"), crate::i18n::tr("the start"), crate::i18n::tr("the end")], k) {
+            op.flute_ends = [FluteEnds::Both, FluteEnds::Start, FluteEnds::End][k];
+        }
         let mut share = op.flute_ramp as f32;
-        ui.add_space(3.0);
         ui.label(crate::i18n::tr("Ramp length"));
         ui.spacing_mut().slider_width = 120.0;
         if ui.add(egui::Slider::new(&mut share, 1.0..=100.0).step_by(1.0).custom_formatter(|v, _| format!("{v:.0}%"))).changed() {
