@@ -11,10 +11,10 @@ use egui::{pos2, vec2, Align2, Color32, CornerRadius, FontId, Frame, Margin, Rec
 
 use crate::theme::{self, ACCENT, CARD, CHROME, INPUT, LINE, MUTED, PANEL, TEXT, WORKSPACE};
 pub use crate::theme::setup_style;
-pub const SIDE_W: f32 = 248.0;
+pub const SIDE_W: f32 = 272.0;
 /// The strip of section icons along the left edge.
 pub const RAIL_W: f32 = 44.0;
-pub const RIGHT_W: f32 = 282.0;
+pub const RIGHT_W: f32 = 306.0;
 
 
 /// Gives a painted control a name for screen readers and tests.

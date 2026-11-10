@@ -195,7 +195,23 @@ pub fn hue_soft(c: Color32) -> Color32 {
     Color32::from_rgb(mix(c.r(), ground.r()), mix(c.g(), ground.g()), mix(c.b(), ground.b()))
 }
 
+/// A slightly heavier, rounder letter than egui's thin default, for reading at a glance: Noto
+/// Sans at weight 500 (SIL Open Font License, see assets/fonts/NOTO-OFL.txt). egui's own fonts
+/// stay behind it for any sign it lacks.
+fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    let mut data = egui::FontData::from_static(include_bytes!("../assets/fonts/NotoSans-Medium-latin.ttf"));
+    data.tweak.scale = TEXT_SCALE;
+    fonts.font_data.insert("burin-sans".into(), std::sync::Arc::new(data));
+    fonts.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "burin-sans".into());
+    ctx.set_fonts(fonts);
+}
+
+/// How much larger the letters are drawn than their nominal size.
+const TEXT_SCALE: f32 = 1.0;
+
 pub fn setup_style(ctx: &egui::Context) {
+    install_fonts(ctx);
     // A press counts as a click however long the button stays down, as long as it doesn't move.
     ctx.options_mut(|o| o.input_options.max_click_duration = 3600.0);
     // The look chosen in the preferences, whatever the computer is set to.
@@ -208,10 +224,10 @@ pub fn setup_style(ctx: &egui::Context) {
     }
     ctx.global_style_mut(|s| {
         use egui::{FontFamily::Proportional, TextStyle::*};
-        s.text_styles.insert(Body, FontId::new(13.0, Proportional));
-        s.text_styles.insert(Button, FontId::new(13.0, Proportional));
-        s.text_styles.insert(Small, FontId::new(11.0, Proportional));
-        s.text_styles.insert(Heading, FontId::new(15.0, Proportional));
+        s.text_styles.insert(Body, FontId::new(13.5, Proportional));
+        s.text_styles.insert(Button, FontId::new(13.5, Proportional));
+        s.text_styles.insert(Small, FontId::new(11.5, Proportional));
+        s.text_styles.insert(Heading, FontId::new(15.5, Proportional));
         s.spacing.item_spacing = egui::vec2(6.0, 5.0);
         s.spacing.button_padding = egui::vec2(10.0, 3.0);
         s.spacing.interact_size.y = 22.0;
