@@ -2882,13 +2882,28 @@ fn drill(e: &mut Emit, op: &Op) {
         e.retract();
         let safe = e.m.safe_z;
         e.rapid([x, y, safe]);
+        // Down fast to the plunge gap above the material, then drill from there, as the saved jobs
+        // do (a fast move to 0.2 or 1 mm above the top before every hole); as `Emit::go_to` does.
+        let near = e.z_at(x, y, 0.0) + e.m.plunge_gap;
+        let gap = near < safe && near >= e.z_at(x, y, -op.start_depth);
+        if gap {
+            e.rapid([x, y, near]);
+        }
         if op.peck && op.tool.pass_depth > 0.0 {
             let stops = peck_depths(op.start_depth, op.cut_depth, op.tool.pass_depth);
             for (i, z) in stops.iter().enumerate() {
                 e.feed(x, y, *z);
                 if i + 1 < stops.len() {
-                    let lift = if op.retract_to_start { -op.start_depth + op.retract_gap } else { *z + op.retract_gap };
-                    e.rapid([x, y, if op.retract_gap > 0.0 { lift } else { safe }]);
+                    if op.retract_gap > 0.0 {
+                        let lift = if op.retract_to_start { -op.start_depth + op.retract_gap } else { *z + op.retract_gap };
+                        e.rapid([x, y, lift]);
+                    } else {
+                        // Out of the hole altogether, then down fast again.
+                        e.rapid([x, y, safe]);
+                        if gap {
+                            e.rapid([x, y, near]);
+                        }
+                    }
                 }
             }
             e.rapid([x, y, safe]);
@@ -4204,6 +4219,24 @@ mod tests {
         assert_eq!(cut.len(), 2);
         assert!((cut[0][0] - 2.0).abs() < 1e-6 && (cut[0][2] + 0.5).abs() < 1e-9);
         assert!((cut[1][1] - 8.0).abs() < 1e-6);
+    }
+
+    /// Each hole is reached by a fast move down to the plunge gap above the top, as in the saved
+    /// jobs; only from there does the tool drill at its plunge rate.
+    #[test]
+    fn drill_comes_down_fast_to_the_plunge_gap() {
+        let m = Machine { safe_z: 1.0, plunge_gap: 0.05, ..M };
+        // With a retract gap the tool lifts only that much between pecks; without one it leaves the hole.
+        for (peck, retract) in [(false, 0.1), (true, 0.1), (true, 0.0)] {
+            let mut o = op(OpKind::Drill, vec![Path::closed(circle([2.0, 3.0], 0.2)), Path::closed(circle([7.0, 8.0], 0.2))]);
+            o.peck = peck;
+            o.retract_gap = retract;
+            o.tool.pass_depth = 0.2;
+            let moves = generate(&o, m, &J, None).unwrap();
+            // No hole is drilled at the plunge rate from the safe height.
+            assert!(moves.windows(2).all(|w| w[1].rapid || w[0].p[2] < 1.0 - 1e-9), "peck {peck}: a slow move from the safe height");
+            assert!(moves.windows(2).any(|w| w[0].rapid && !w[1].rapid && (w[0].p[2] - 0.05).abs() < 1e-9), "peck {peck}: drills from the plunge gap");
+        }
     }
 
     /// An end mill in a V-Carve toolpath follows each shape once, its radius inside, at the flat
