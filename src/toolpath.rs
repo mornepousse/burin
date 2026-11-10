@@ -2199,13 +2199,19 @@ fn pocket_set(e: &mut Emit, op: &Op) {
     // the ring before, as the original links a ring to the next (`0x1407b5200`, `0x1407b5500`): when
     // the start is within 1.001 stepovers, or further when the straight way crosses none of `walls`.
     // Never closer to a wall than the tool's radius.
-    let cut_ring = |e: &mut Emit, ring: Vec<P>, z: f64, from: f64, link: Link, walls: &[&[P]]| {
+    // `at`: where the ring is to start, its point nearest there; None for its point nearest the tool.
+    let cut_ring = |e: &mut Emit, ring: Vec<P>, z: f64, from: f64, link: Link, walls: &[&[P]], at: Option<P>| {
         let ramp = (op.ramp && op.ramp_distance > 0.0).then_some(from);
         let last = e.last();
         let far = |q: &P| (q[0] - last[0]).hypot(q[1] - last[1]);
         let mut pts = oriented(ring, op.climb);
-        let start = (0..pts.len()).min_by(|a, b| far(&pts[*a]).total_cmp(&far(&pts[*b]))).unwrap_or(0);
-        pts.rotate_left(start);
+        match at {
+            Some(target) => start_loop_near_point(&mut pts, target),
+            None => {
+                let start = (0..pts.len()).min_by(|a, b| far(&pts[*a]).total_cmp(&far(&pts[*b]))).unwrap_or(0);
+                pts.rotate_left(start);
+            }
+        }
         let across = far(&pts[0]);
         let to = [pts[0][0], pts[0][1]];
         let near = across <= step * RING_LINK_STEPS;
@@ -2244,7 +2250,7 @@ fn pocket_set(e: &mut Emit, op: &Op) {
         let mut first = true;
         while !rings.is_empty() {
             let i = nearest_of(e, &rings.iter().collect::<Vec<_>>());
-            cut_ring(e, rings.swap_remove(i), z, from, if first { Link::Clear } else { Link::No }, &walls);
+            cut_ring(e, rings.swap_remove(i), z, from, if first { Link::Clear } else { Link::No }, &walls, None);
             first = false;
         }
     };
@@ -2269,10 +2275,36 @@ fn pocket_set(e: &mut Emit, op: &Op) {
             }
         }
         let Some(top) = rings.first() else { return };
+        // Where a branch's first ring starts, as in the saved jobs: the start of the shape is carried
+        // in from ring to ring (each at its point nearest the start of the one around it), so the
+        // innermost ring starts on the side of the shape's start. The rings cut after it start where
+        // the tool is, so the starts run in a line from the middle out to the shape's start.
+        let shape_starts: Vec<P> = op.paths.iter().filter(|p| p.closed && !p.pts.is_empty()).map(|p| p.pts[0]).collect();
+        let nearest_point = |ring: &[P], q: P| {
+            let mut pts = ring.to_vec();
+            if pts.len() >= 2 {
+                start_loop_near_point(&mut pts, q);
+            }
+            pts.first().copied().unwrap_or(q)
+        };
+        let mut starts: Vec<Vec<P>> = rings.iter().map(|r| vec![[0.0, 0.0]; r.len()]).collect();
+        for (j, ring) in top.iter().enumerate() {
+            let line = Path::closed(ring.clone());
+            let target = shape_starts.iter().copied().min_by(|a, b| distance_to_path(*a, &line).total_cmp(&distance_to_path(*b, &line))).unwrap_or(ring[0]);
+            starts[0][j] = nearest_point(ring, target);
+        }
+        for i in 0..rings.len().saturating_sub(1) {
+            for j in 0..rings[i].len() {
+                for &c in &children[i][j] {
+                    starts[i + 1][c] = nearest_point(&rings[i + 1][c], starts[i][j]);
+                }
+            }
+        }
         let mut roots: Vec<usize> = (0..top.len()).collect();
         while !roots.is_empty() {
             let r = roots.swap_remove(nearest_of(e, &roots.iter().map(|k| &top[*k]).collect::<Vec<_>>()));
             let mut stack: Vec<(usize, usize, Vec<usize>)> = vec![(0, r, children[0][r].clone())];
+            let mut first_ring = true;
             while let Some(at) = stack.len().checked_sub(1) {
                 let (i, j) = (stack[at].0, stack[at].1);
                 if stack[at].2.is_empty() {
@@ -2288,7 +2320,11 @@ fn pocket_set(e: &mut Emit, op: &Op) {
                     let tiny = children[i][j].is_empty()
                         && crate::geom::bbox(std::iter::once(&Path::closed(rings[i][j].clone()))).is_some_and(|(lo, hi)| (hi[0] - lo[0]).max(hi[1] - lo[1]) < TINY_RING_SHARE * op.tool.dia);
                     if !tiny {
-                        cut_ring(e, rings[i][j].clone(), z, from, link, &walls);
+                        // Only the first ring of a branch starts on the side of the shape's start;
+                        // every ring after it starts where the tool is, as the original goes on.
+                        let at = first_ring.then_some(starts[i][j]);
+                        first_ring = false;
+                        cut_ring(e, rings[i][j].clone(), z, from, link, &walls, at);
                     }
                 } else {
                     let rest = &stack[at].2;
@@ -5560,6 +5596,24 @@ mod tests {
         o.tool.pass_depth = 100.0;
         o.cut_depth = 1.0;
         o
+    }
+
+    /// A ring pocket starts on the side where its shape starts, as the saved jobs do: the innermost
+    /// ring at its point nearest the shape's start carried in ring by ring, and the rings around it
+    /// from where the tool comes out, so the plunge moves with the shape's first point.
+    #[test]
+    fn a_ring_pocket_starts_on_the_side_of_the_shape_start() {
+        let first_cut = |pts: Vec<P>| {
+            let o = pocket_of(vec![Path::closed(pts)], 3.0, 0.4);
+            let moves = generate(&o, M, &J, None).unwrap();
+            let c = cuts(&moves);
+            c[0]
+        };
+        // From the bottom right corner, then the same rectangle from its top left.
+        let a = first_cut(vec![[40.0, 0.0], [40.0, 20.0], [0.0, 20.0], [0.0, 0.0]]);
+        let b = first_cut(vec![[0.0, 20.0], [0.0, 0.0], [40.0, 0.0], [40.0, 20.0]]);
+        assert!(a[0] > 20.0 && a[1] <= 10.0 + 1e-6, "{a:?}");
+        assert!(b[0] < 20.0 && b[1] >= 10.0 - 1e-6, "{b:?}");
     }
 
     /// A band bent round a corner, as a slot for a strip of lights is, wider at the bend.
