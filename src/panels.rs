@@ -1850,11 +1850,26 @@ impl App {
         let above = m.safe_z.max(m.plunge_gap).max(m.home[2]).max(0.0);
         let total = board + t + above;
         let room = Rect::from_min_max(area.min + vec2(40.0, 16.0), area.max - vec2(58.0, 12.0));
-        let k = room.height() as f64 / total.max(1e-6);
-        let y = |z: f64| room.bottom() - ((z + board) * k) as f32; // z counted from the board's foot
+        // The spoil board keeps at least 16 px so it stays visible; the rest is in proportion.
+        let band = if board > 0.0 { ((board * room.height() as f64 / total.max(1e-6)) as f32).max(16.0) } else { 0.0 };
+        let k = (room.height() - band) as f64 / (t + above).max(1e-6);
+        let y = |z: f64| {
+            if z >= 0.0 || board <= 0.0 { room.bottom() - band - (z * k) as f32 } else { room.bottom() - band * (1.0 + (z / board) as f32) }
+        };
         let (l, r) = (room.left(), room.right());
         if board > 0.0 {
-            p.rect_filled(egui::Rect::from_min_max(pos2(l, y(0.0)), pos2(r, y(-board))), 1.0, theme::BUTTON());
+            // The spoil board: MDF brown with hatching, so it reads on both the dark and light grounds.
+            let sb = egui::Rect::from_min_max(pos2(l, y(0.0)), pos2(r, y(-board)));
+            let edge = egui::Color32::from_rgb(70, 42, 20);
+            p.rect_filled(sb, 1.0, egui::Color32::from_rgb(168, 118, 72));
+            let hatch = p.with_clip_rect(sb);
+            let mut x = sb.left() - sb.height();
+            while x < sb.right() {
+                hatch.line_segment([pos2(x, sb.bottom()), pos2(x + sb.height(), sb.top())], egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 80, 45)));
+                x += 6.0;
+            }
+            p.rect_stroke(sb, 1.0, egui::Stroke::new(1.0, edge), egui::StrokeKind::Inside);
+            p.text(pos2(r + 4.0, sb.center().y), egui::Align2::LEFT_CENTER, tf!("spoil {}", toolpath::trim(board)), egui::FontId::proportional(10.5), egui::Color32::from_rgb(190, 135, 85));
         }
         p.rect(egui::Rect::from_min_max(pos2(l, y(t)), pos2(r, y(0.0))), 1.0, egui::Color32::from_rgb(255, 180, 0), egui::Stroke::new(1.0, egui::Color32::from_rgb(90, 28, 0)), egui::StrokeKind::Inside);
         if let Some(model) = &self.model {
