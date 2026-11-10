@@ -288,7 +288,7 @@ fn tools_can_be_kept_in_a_group_of_their_own() {
     h.state_mut().right_open = true;
     h.run();
     click(&mut h, "Profile toolpath");
-    click(&mut h, "Select ...");
+    click(&mut h, "Change...");
     click(&mut h, "End Mill (0.5 inch)");
     click(&mut h, "New Group");
     // The name starts as "New Group"; Apply puts the chosen tool in it.
@@ -337,7 +337,7 @@ fn the_tool_list_chooses_a_tool_for_the_form() {
     h.state_mut().right_open = true;
     h.run();
     click(&mut h, "Profile toolpath");
-    click(&mut h, "Select ...");
+    click(&mut h, "Change...");
     assert!(h.state().tools_open);
     click(&mut h, "End Mill (0.5 inch)");
     click(&mut h, "Use This Tool");
@@ -1820,7 +1820,7 @@ fn passes_set_in_their_window_are_the_passes_cut() {
     let mut h = job_with_square([5.0, 5.0]);
     let thick = h.state().doc.job.thickness;
     profile_on(&mut h, thick);
-    click(&mut h, "Edit Passes ...");
+    click(&mut h, "Change passes...");
     assert!(h.state().passes_dialog.is_some());
     // Cancel changes nothing.
     h.state_mut().passes_dialog.as_mut().unwrap().count = 5;
@@ -1831,7 +1831,7 @@ fn passes_set_in_their_window_are_the_passes_cut() {
     let RightMode::Op { op, .. } = &h.state().right else { panic!() };
     assert!(op.passes.is_empty());
     // OK keeps them, with one taken out.
-    click(&mut h, "Edit Passes ...");
+    click(&mut h, "Change passes...");
     h.state_mut().passes_dialog.as_mut().unwrap().count = 5;
     h.run();
     click(&mut h, "Use Number");
@@ -1856,7 +1856,7 @@ fn the_last_pass_cannot_be_removed_and_clearing_leaves_one() {
     let mut h = job_with_square([5.0, 5.0]);
     let thick = h.state().doc.job.thickness;
     profile_on(&mut h, thick);
-    click(&mut h, "Edit Passes ...");
+    click(&mut h, "Change passes...");
     click(&mut h, "Clear All Passes");
     assert_eq!(h.state().passes_dialog.as_ref().unwrap().list, [thick]);
     h.get_all_by_label("Delete").last().unwrap().click();
@@ -1875,7 +1875,7 @@ fn the_selector_chooses_by_kind_and_keeps_following_the_drawing() {
     h.get_all_by_label("Toolpaths").last().unwrap().click();
     h.run();
     click(&mut h, "Profile toolpath");
-    click(&mut h, "Selector ...");
+    click(&mut h, "Pick by kind...");
     click(&mut h, "Closed Vectors ...");
     assert_eq!(h.state().selected, [hole, plate]);
     click(&mut h, "Only Circles");
@@ -1908,7 +1908,7 @@ fn every_tab_of_the_profile_form_changes_the_cut() {
     click(&mut h, "Do lead out");
     click(&mut h, "Order");
     click(&mut h, "Shortest Path");
-    click(&mut h, "Start At");
+    click(&mut h, "Start point");
     click(&mut h, "Move Start Points to be closest to selected point on vector bounding box");
     click(&mut h, "Start point 5");
     click(&mut h, "Corners");
@@ -1929,14 +1929,14 @@ fn the_form_windows_hold_still_once_open() {
     let thick = h.state().doc.job.thickness;
     profile_on(&mut h, thick + 0.1);
     let place = |h: &Harness<'static, App>, label: &str| h.get_by_label(label).rect();
-    click(&mut h, "Selector ...");
+    click(&mut h, "Pick by kind...");
     let first = place(&h, "Open Vectors");
     h.run();
     h.run();
     assert_eq!(first, place(&h, "Open Vectors"));
     h.get_all_by_label("Close").last().unwrap().click();
     h.run();
-    click(&mut h, "Edit Passes ...");
+    click(&mut h, "Change passes...");
     let first = place(&h, "Clear All Passes");
     h.run();
     h.run();
@@ -2948,7 +2948,7 @@ fn changing_where_a_toolpath_starts_moves_its_first_cut() {
     click(&mut h, "Profile toolpath");
     h.state_mut().show_advanced = true;
     h.run();
-    click(&mut h, "Start At");
+    click(&mut h, "Start point");
     click(&mut h, "Move Start Points to be closest to selected point on vector bounding box");
     click(&mut h, "Start point 1");
     click(&mut h, "Calculate");
@@ -2958,7 +2958,7 @@ fn changing_where_a_toolpath_starts_moves_its_first_cut() {
     h.state_mut().selected_tp = Some(0);
     h.state_mut().edit_toolpath();
     h.run();
-    click(&mut h, "Start At");
+    click(&mut h, "Start point");
     click(&mut h, "Start point 5");
     click(&mut h, "Calculate");
     h.run();
