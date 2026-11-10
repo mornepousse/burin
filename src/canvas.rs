@@ -1000,7 +1000,7 @@ impl App {
         }
 
         // The machine's zero: Burin's own mark, a ring on two short axes, X along and Y up, in the
-        // teal of its other zero marks (the original puts a red square there).
+        // orange of its other zero marks (the original puts a red square there).
         let origin = self.doc.job.origin();
         let datum = self.to_screen(origin);
         let ink = Stroke::new(1.8, crate::theme::ACCENT);

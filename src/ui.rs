@@ -1164,13 +1164,21 @@ impl App {
             let mut body = ui.new_child(egui::UiBuilder::new().max_rect(column));
             let ui = &mut body;
             let (logo, _) = ui.allocate_exact_size(vec2(width, 92.0), Sense::hover());
-            let picture = self.start_logo.get_or_insert_with(|| {
+            // The logo on a cream ground in the light look, on slate in the dark one.
+            if self.start_logo.as_ref().is_some_and(|(light, _)| *light != theme::light()) {
+                self.start_logo = None;
+            }
+            let (_, picture) = self.start_logo.get_or_insert_with(|| {
                 // Made small here, as its fine lines would shimmer if the screen did it.
-                let icon = crate::icon();
-                let full = image::RgbaImage::from_raw(icon.width, icon.height, icon.rgba).expect("the icon has its full size");
+                let full = if theme::light() {
+                    image::load_from_memory(include_bytes!("../release/burin-light.png")).expect("the light logo is part of the program").into_rgba8()
+                } else {
+                    let icon = crate::icon();
+                    image::RgbaImage::from_raw(icon.width, icon.height, icon.rgba).expect("the icon has its full size")
+                };
                 let small = image::imageops::resize(&full, 184, 184, image::imageops::FilterType::Lanczos3);
                 let colours = egui::ColorImage::from_rgba_unmultiplied([184, 184], small.as_raw());
-                ui.ctx().load_texture("burin-logo", colours, egui::TextureOptions::LINEAR)
+                (theme::light(), ui.ctx().load_texture("burin-logo", colours, egui::TextureOptions::LINEAR))
             });
             let picture = picture.id();
             let p = ui.painter();
@@ -1247,7 +1255,7 @@ impl App {
         let thumb = self.thumbs.entry(path.clone()).or_insert_with(|| crate::thumbs::read(path)).clone();
         let name = path.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 112.0), Sense::click());
-        ui.painter().rect(rect, 8.0, if resp.hovered() { theme::BUTTON() } else { CARD() }, Stroke::new(1.0, if resp.hovered() { theme::HUE_TEAL() } else { LINE() }), StrokeKind::Inside);
+        ui.painter().rect(rect, 8.0, if resp.hovered() { theme::BUTTON() } else { CARD() }, Stroke::new(1.0, if resp.hovered() { theme::HUE_ORANGE() } else { LINE() }), StrokeKind::Inside);
         let room = Rect::from_min_max(rect.min + vec2(8.0, 8.0), pos2(rect.right() - 8.0, rect.bottom() - 26.0));
         // Shapes off the sheet are drawn too, but never past the card.
         let p = ui.painter().with_clip_rect(room);
@@ -1353,8 +1361,8 @@ impl App {
         for ((persona, icon, label, tip), r) in both.into_iter().zip(rects) {
             let resp = ui.interact(r, ui.scope_id().with(("persona", label)), Sense::click()).on_hover_text(tip);
             let on = self.persona == persona;
-            // Each workspace in its own colour: drawing in the logo's teal, machining in amber.
-            let hue = if persona == Persona::Machining { theme::HUE_AMBER() } else { theme::HUE_TEAL() };
+            // Each workspace in its own colour: drawing in the logo's orange, machining in the gold of its top.
+            let hue = if persona == Persona::Machining { theme::HUE_AMBER() } else { theme::HUE_ORANGE() };
             if on {
                 ui.painter().rect_filled(r.shrink(2.0), 5.0, theme::hue_soft(hue));
                 ui.painter().rect_stroke(r.shrink(2.0), 5.0, Stroke::new(1.0, hue.gamma_multiply(0.6)), StrokeKind::Inside);
@@ -1383,7 +1391,7 @@ impl App {
         egui::Panel::left("rail").exact_size(RAIL_W).resizable(false).frame(Frame::new().fill(CHROME())).show(ui, |ui| {
             let whole = ui.max_rect();
             let specs = [
-                (LeftTab::Drawing, Icon::Curve, crate::i18n::tr("Draw"), theme::HUE_TEAL()),
+                (LeftTab::Drawing, Icon::Curve, crate::i18n::tr("Draw"), theme::HUE_ORANGE()),
                 (LeftTab::Modeling, Icon::Dome, crate::i18n::tr("3D Model"), theme::HUE_AMBER()),
                 (LeftTab::Clipart, Icon::ImportModel, crate::i18n::tr("Library"), theme::HUE_VIOLET()),
                 (LeftTab::Layers, Icon::Layer, crate::i18n::tr("Layers"), theme::HUE_BLUE()),
@@ -2865,18 +2873,18 @@ pub(crate) fn wood_top_point(r: Rect, u: f32, v: f32) -> egui::Pos2 {
     low.lerp(high, v)
 }
 
-/// The material as a slab: a teal top face on slate sides, outlined. Burin's own picture of the
-/// job, wherever the material is shown small.
+/// The material as a slab, coloured like the logo's block: a gold top face on orange sides, with a
+/// dark brown outline. Burin's own picture of the job, wherever the material is shown small.
 pub(crate) fn wood_block(p: &egui::Painter, r: Rect) {
     let c = r.center();
     let (w, h) = (r.width() * 0.46, r.height() * 0.36);
     let top = vec![c + vec2(-w * 0.55, -h), c + vec2(w, -h), c + vec2(w * 0.55, h * 0.1), c + vec2(-w, h * 0.1)];
     let side = vec![c + vec2(-w, h * 0.1), c + vec2(w * 0.55, h * 0.1), c + vec2(w * 0.55, h), c + vec2(-w, h)];
     let end = vec![c + vec2(w * 0.55, h * 0.1), c + vec2(w, -h), c + vec2(w, h * 0.1), c + vec2(w * 0.55, h)];
-    let edge = Stroke::new(1.0, Color32::from_rgb(120, 200, 184));
-    p.add(Shape::convex_polygon(side, Color32::from_rgb(56, 66, 82), edge));
-    p.add(Shape::convex_polygon(end, Color32::from_rgb(42, 50, 64), edge));
-    p.add(Shape::convex_polygon(top, Color32::from_rgb(40, 112, 100), edge));
+    let edge = Stroke::new(1.0, Color32::from_rgb(90, 28, 0));
+    p.add(Shape::convex_polygon(side, Color32::from_rgb(255, 122, 0), edge));
+    p.add(Shape::convex_polygon(end, Color32::from_rgb(224, 74, 0), edge));
+    p.add(Shape::convex_polygon(top, Color32::from_rgb(255, 180, 0), edge));
 }
 
 /// Where the machine's zero is, on the slab: a white crosshair in a ring.

@@ -34,7 +34,8 @@ const INK: Color32 = Color32::from_rgb(40, 34, 28);
 const PAPER: Color32 = Color32::from_rgb(92, 100, 114);
 const WOOD: Color32 = Color32::from_rgb(214, 160, 104);
 const WOOD_DARK: Color32 = Color32::from_rgb(142, 92, 52);
-const TEAL: Color32 = Color32::from_rgb(70, 205, 190);
+/// The icons' main colour, the logo's orange (the name stays from when it was teal).
+const TEAL: Color32 = Color32::from_rgb(255, 138, 40);
 const SLATE: Color32 = Color32::from_rgb(58, 66, 80);
 const SLATE_EDGE: Color32 = Color32::from_rgb(96, 108, 128);
 
@@ -63,11 +64,11 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
         let pale = |t: Color32| Color32::from_rgb(((t.r() as u16 + 2 * 236) / 3) as u8, ((t.g() as u16 + 2 * 238) / 3) as u8, ((t.b() as u16 + 2 * 241) / 3) as u8);
         // On the light look, the light lines are ink.
         let col = if crate::theme::light() && col == BLACK { Color32::from_rgb(52, 48, 44) } else { col };
-        let col = if crate::theme::light() && col == TEAL { Color32::from_rgb(12, 140, 122) } else { col };
+        let col = if crate::theme::light() && col == TEAL { Color32::from_rgb(214, 88, 0) } else { col };
         // And the slate plates are light paper.
         let col = if crate::theme::light() && col == SLATE { Color32::from_rgb(228, 222, 211) } else { col };
         let col = match tint {
-            Some(t) if col == TEAL || col == Color32::from_rgb(12, 140, 122) => t,
+            Some(t) if col == TEAL || col == Color32::from_rgb(214, 88, 0) => t,
             Some(t) if col == BLACK => pale(t),
             Some(t) if col == Color32::from_rgb(52, 48, 44) => t,
             // The slate of boxes and outlines, leaning towards it.

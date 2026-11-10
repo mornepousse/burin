@@ -15,7 +15,7 @@ fn row(out: &mut String, label: &str, value: &str) {
     out.push_str(&format!("<tr><th>{}</th><td>{}</td></tr>\n", escaped(label), escaped(value)));
 }
 
-const STYLE: &str = "body{font:15px/1.4 system-ui,sans-serif;color:#1b1d21;margin:24px auto;max-width:900px;padding:0 16px}h1{font-size:26px;margin:0 0 4px}h2{font-size:18px;margin:26px 0 8px;border-bottom:2px solid #13a67f;padding-bottom:3px}h3{font-size:15px;margin:14px 0 4px}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:3px 8px 3px 0;border-bottom:1px solid #e4e4e0;font-weight:normal}th{color:#5b6068;width:38%}table.list th{width:auto;font-weight:600;color:#1b1d21}svg{display:block;width:100%;max-height:420px;background:#f9f8f5;border:1px solid #c8c8c2}.note{color:#5b6068;font-size:13px;margin-top:8px}section{break-inside:avoid}";
+const STYLE: &str = "body{font:15px/1.4 system-ui,sans-serif;color:#1b1d21;margin:24px auto;max-width:900px;padding:0 16px}h1{font-size:26px;margin:0 0 4px}h2{font-size:18px;margin:26px 0 8px;border-bottom:2px solid #e04a00;padding-bottom:3px}h3{font-size:15px;margin:14px 0 4px}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:3px 8px 3px 0;border-bottom:1px solid #e4e4e0;font-weight:normal}th{color:#5b6068;width:38%}table.list th{width:auto;font-weight:600;color:#1b1d21}svg{display:block;width:100%;max-height:420px;background:#f9f8f5;border:1px solid #c8c8c2}.note{color:#5b6068;font-size:13px;margin-top:8px}section{break-inside:avoid}";
 
 impl App {
     /// The whole page.

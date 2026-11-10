@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="release/burin.png" width="150" alt="Le logo de Burin : un marteau frappe une fraise plantée dans un bloc de bois">
+<img src="release/burin.png" width="150" alt="Le logo de Burin : un bloc orange gravé, creusé d’une poche ronde">
 
 # Burin
 

@@ -1,5 +1,6 @@
 //! The look of the program: quiet graphite panels that stay out of the way of the work, soft
-//! rounded controls, the green of the logo only for what acts or is chosen, and a pale sheet to draw on.
+//! rounded controls, the orange of the logo only for what acts or is chosen, and a pale sheet to draw on.
+//! The panels take the logo's grounds: deep slate in the dark look, cream in the light one.
 
 use egui::{Color32, CornerRadius, FontId, Stroke};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -41,66 +42,66 @@ pub fn save_look() {
 /// Menu and status bars, rulers.
 #[allow(non_snake_case)]
 pub fn CHROME() -> Color32 {
-    if light() { Color32::from_rgb(232, 227, 218) } else { Color32::from_rgb(18, 20, 24) }
+    if light() { Color32::from_rgb(236, 230, 218) } else { Color32::from_rgb(15, 19, 25) }
 }
 /// Side panels.
 #[allow(non_snake_case)]
 pub fn PANEL() -> Color32 {
-    if light() { Color32::from_rgb(242, 238, 231) } else { Color32::from_rgb(24, 27, 32) }
+    if light() { Color32::from_rgb(245, 240, 231) } else { Color32::from_rgb(27, 32, 41) }
 }
 /// Grouped controls on a panel.
 #[allow(non_snake_case)]
 pub fn CARD() -> Color32 {
-    if light() { Color32::from_rgb(251, 249, 245) } else { Color32::from_rgb(32, 36, 42) }
+    if light() { Color32::from_rgb(251, 247, 239) } else { Color32::from_rgb(36, 42, 54) }
 }
 /// Buttons.
 #[allow(non_snake_case)]
 pub fn BUTTON() -> Color32 {
-    if light() { Color32::from_rgb(226, 220, 210) } else { Color32::from_rgb(44, 49, 57) }
+    if light() { Color32::from_rgb(230, 222, 207) } else { Color32::from_rgb(48, 56, 71) }
 }
 #[allow(non_snake_case)]
 pub fn BUTTON_HOVER() -> Color32 {
-    if light() { Color32::from_rgb(213, 206, 193) } else { Color32::from_rgb(58, 64, 74) }
+    if light() { Color32::from_rgb(218, 207, 188) } else { Color32::from_rgb(63, 72, 91) }
 }
 /// Number boxes and lists.
 #[allow(non_snake_case)]
 pub fn INPUT() -> Color32 {
-    if light() { Color32::from_rgb(255, 254, 251) } else { Color32::from_rgb(16, 18, 22) }
+    if light() { Color32::from_rgb(255, 253, 248) } else { Color32::from_rgb(12, 15, 20) }
 }
 #[allow(non_snake_case)]
 pub fn LINE() -> Color32 {
-    if light() { Color32::from_rgb(206, 198, 185) } else { Color32::from_rgb(50, 55, 63) }
+    if light() { Color32::from_rgb(212, 201, 183) } else { Color32::from_rgb(56, 64, 82) }
 }
 #[allow(non_snake_case)]
 pub fn TEXT() -> Color32 {
-    if light() { Color32::from_rgb(38, 34, 30) } else { Color32::from_rgb(236, 238, 241) }
+    if light() { Color32::from_rgb(23, 19, 15) } else { Color32::from_rgb(236, 238, 241) }
 }
 #[allow(non_snake_case)]
 pub fn MUTED() -> Color32 {
-    if light() { Color32::from_rgb(98, 91, 83) } else { Color32::from_rgb(165, 171, 181) }
+    if light() { Color32::from_rgb(96, 84, 70) } else { Color32::from_rgb(166, 173, 189) }
 }
 #[allow(non_snake_case)]
 pub fn FAINT() -> Color32 {
-    if light() { Color32::from_rgb(140, 132, 122) } else { Color32::from_rgb(115, 122, 133) }
+    if light() { Color32::from_rgb(142, 128, 112) } else { Color32::from_rgb(112, 122, 142) }
 }
-/// The one bright colour: what is active or chosen. The background of the logo, exactly.
-pub const ACCENT: Color32 = Color32::from_rgb(19, 166, 127);
+/// The one bright colour: what is active or chosen. The orange of the logo's block, exactly.
+pub const ACCENT: Color32 = Color32::from_rgb(255, 122, 0);
 #[allow(non_snake_case)]
 pub fn ACCENT_SOFT() -> Color32 {
-    if light() { Color32::from_rgb(200, 236, 226) } else { Color32::from_rgb(16, 46, 40) }
+    if light() { Color32::from_rgb(255, 226, 196) } else { Color32::from_rgb(60, 38, 20) }
 }
 /// For saying to be careful, and only that.
 pub const WARNING: Color32 = Color32::from_rgb(245, 176, 65);
 /// Around the sheet in the 2D view.
 #[allow(non_snake_case)]
 pub fn WORKSPACE() -> Color32 {
-    if light() { Color32::from_rgb(214, 208, 197) } else { Color32::from_rgb(13, 15, 18) }
+    if light() { Color32::from_rgb(229, 222, 208) } else { Color32::from_rgb(10, 13, 17) }
 }
 /// The material in the 2D view: stays light, so shapes read as ink on a sheet.
 pub const SHEET: Color32 = Color32::from_rgb(249, 248, 245);
 pub const SHEET_INK: Color32 = Color32::from_rgb(24, 26, 30);
 /// Text on a button in the bright colour.
-pub const ON_ACCENT: Color32 = Color32::from_rgb(4, 28, 22);
+pub const ON_ACCENT: Color32 = Color32::from_rgb(43, 22, 9);
 /// What is selected on the sheet.
 pub const PICK: Color32 = Color32::from_rgb(222, 38, 120);
 /// Cutting and fast moves over the 3D view.
@@ -118,42 +119,42 @@ pub const BOTTOM_RULER_VALUE: u32 = 6603501;
 pub const JOIN: Color32 = Color32::from_rgb(190, 100, 230);
 #[allow(non_snake_case)]
 pub fn BACKDROP_TOP() -> Color32 {
-    if light() { Color32::from_rgb(236, 231, 222) } else { Color32::from_rgb(38, 42, 49) }
+    if light() { Color32::from_rgb(240, 234, 223) } else { Color32::from_rgb(40, 46, 58) }
 }
 #[allow(non_snake_case)]
 pub fn BACKDROP_BOTTOM() -> Color32 {
-    if light() { Color32::from_rgb(205, 198, 186) } else { Color32::from_rgb(13, 15, 18) }
+    if light() { Color32::from_rgb(210, 200, 183) } else { Color32::from_rgb(11, 14, 18) }
 }
 /// Guide lines that are never cut.
 /// The rest of a piece, and the frame around it, when one of its shapes is selected.
-pub const PIECE: Color32 = Color32::from_rgb(10, 125, 97);
+pub const PIECE: Color32 = Color32::from_rgb(224, 74, 0);
 pub const CONSTRUCTION: Color32 = Color32::from_rgb(104, 118, 150);
 pub const GRID_FINE: Color32 = Color32::from_rgb(226, 224, 217);
 pub const GRID_BOLD: Color32 = Color32::from_rgb(194, 192, 184);
 #[allow(non_snake_case)]
 pub fn GRID_FINE_DARK() -> Color32 {
-    if light() { Color32::from_rgb(226, 221, 212) } else { Color32::from_rgb(24, 27, 32) }
+    if light() { Color32::from_rgb(228, 220, 206) } else { Color32::from_rgb(27, 32, 41) }
 }
 #[allow(non_snake_case)]
 pub fn GRID_BOLD_DARK() -> Color32 {
-    if light() { Color32::from_rgb(206, 199, 188) } else { Color32::from_rgb(38, 42, 49) }
+    if light() { Color32::from_rgb(208, 197, 179) } else { Color32::from_rgb(40, 46, 58) }
 }
 pub const ERROR: Color32 = Color32::from_rgb(255, 136, 120);
 
-/// A colour for each family of tools, so the panels aren't all one green on grey: the shapes keep
-/// the logo's teal, moving and layers are blue, editing coral, repeating violet, sketching and 3D
-/// amber, machine files green. Burin's own.
+/// A colour for each family of tools, so the panels aren't all one colour on grey: the shapes take
+/// the logo's orange, sketching and 3D the gold of its top face, moving and layers are blue, editing
+/// teal, repeating violet, machine files green. Burin's own.
 #[allow(non_snake_case)]
-pub fn HUE_TEAL() -> Color32 {
-    if light() { Color32::from_rgb(12, 140, 122) } else { Color32::from_rgb(70, 205, 190) }
+pub fn HUE_ORANGE() -> Color32 {
+    if light() { Color32::from_rgb(214, 88, 0) } else { Color32::from_rgb(255, 138, 40) }
 }
 #[allow(non_snake_case)]
 pub fn HUE_BLUE() -> Color32 {
     if light() { Color32::from_rgb(46, 104, 196) } else { Color32::from_rgb(112, 168, 250) }
 }
 #[allow(non_snake_case)]
-pub fn HUE_CORAL() -> Color32 {
-    if light() { Color32::from_rgb(206, 82, 52) } else { Color32::from_rgb(250, 136, 108) }
+pub fn HUE_TEAL() -> Color32 {
+    if light() { Color32::from_rgb(12, 140, 122) } else { Color32::from_rgb(70, 205, 190) }
 }
 #[allow(non_snake_case)]
 pub fn HUE_VIOLET() -> Color32 {
@@ -161,7 +162,7 @@ pub fn HUE_VIOLET() -> Color32 {
 }
 #[allow(non_snake_case)]
 pub fn HUE_AMBER() -> Color32 {
-    if light() { Color32::from_rgb(180, 116, 10) } else { Color32::from_rgb(242, 186, 78) }
+    if light() { Color32::from_rgb(168, 106, 0) } else { Color32::from_rgb(255, 190, 40) }
 }
 #[allow(non_snake_case)]
 pub fn HUE_GREEN() -> Color32 {
@@ -172,14 +173,14 @@ pub fn HUE_GREEN() -> Color32 {
 pub fn section_hue(title: &str) -> Option<Color32> {
     use crate::i18n::tr;
     [
-        (tr("Shapes"), HUE_TEAL()),
+        (tr("Shapes"), HUE_ORANGE()),
         (tr("Move and Size"), HUE_BLUE()),
-        (tr("Edit Shapes"), HUE_CORAL()),
+        (tr("Edit Shapes"), HUE_TEAL()),
         (tr("Offset and Repeat"), HUE_VIOLET()),
         (tr("Repeat"), HUE_VIOLET()),
         (tr("Sketch"), HUE_AMBER()),
         (tr("3D Shapes"), HUE_AMBER()),
-        (tr("New Toolpath"), HUE_TEAL()),
+        (tr("New Toolpath"), HUE_ORANGE()),
     ]
     .into_iter()
     .find(|(t, _)| *t == title)
