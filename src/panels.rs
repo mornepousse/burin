@@ -1706,117 +1706,129 @@ impl App {
     }
 
     pub fn save_form(&mut self, ui: &mut Ui) {
+        // Burin's own layout: what goes in, for which machine, a few options, then one button.
         let width = ui.available_width();
-        egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
-            ui.set_width(width - 28.0);
+        egui::Frame::new().inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
+            ui.set_width(width - 24.0);
             ui.spacing_mut().item_spacing.y = 6.0;
-            title_card(ui, Icon::SaveTp, crate::i18n::tr("Save Toolpaths"));
-            card(ui, |ui| {
-                ui.checkbox(&mut self.one_file, crate::i18n::tr("Output all visible toolpaths to one file"));
-                self.piece_chooser(ui);
-                ui.checkbox(&mut self.output_arcs, crate::i18n::tr("Write curves as arcs (G2 / G3)")).on_hover_text(crate::i18n::tr("Smaller files and smoother curves. Try it in the air on your machine first."));
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.corner_slow, crate::i18n::tr("Slow down in tight corners")).on_hover_text(crate::i18n::tr("Near a sharp turn the cutter takes a wider bite; other CAM programs lower the rate there. Not in the original."));
-                    ui.add_enabled_ui(self.corner_slow, |ui| {
-                        let mut pct = self.corner_share * 100.0;
-                        crate::ui::number(ui, &mut pct, 40.0);
-                        self.corner_share = (pct / 100.0).clamp(0.05, 1.0);
-                        ui.label("%");
-                    });
-                });
-                if crate::toolpath::post_takes_blend(self.post_index) {
-                    ui.checkbox(&mut self.blend, crate::i18n::tr("Corner tolerance for LinuxCNC (G64 P)")).on_hover_text(crate::i18n::tr("Without it, LinuxCNC may round corners as far as it likes to keep its speed. Not in the original."));
+            crate::ui::bold_sized(ui, crate::i18n::tr("Machine file"), 15.0, theme::TEXT());
+            crate::ui::small_caps(ui, crate::i18n::tr("What goes in"));
+            if let Some(k) = crate::ui::pills(ui, &[crate::i18n::tr("Selected toolpath"), crate::i18n::tr("All visible")], usize::from(self.one_file)) {
+                self.one_file = k == 1;
+            }
+            self.piece_chooser(ui);
+            let rows: Vec<(String, [u8; 3])> = self
+                .doc
+                .toolpaths
+                .iter()
+                .enumerate()
+                .filter(|(i, t)| if self.one_file { t.visible } else { self.selected_tp == Some(*i) })
+                .filter(|(_, t)| self.save_piece.is_none_or(|piece| self.doc.vectors.iter().any(|v| v.piece == Some(piece) && t.op.source.contains(&v.id))))
+                .map(|(_, t)| (t.op.name.clone(), t.color))
+                .collect();
+            egui::Frame::new().fill(theme::INPUT()).corner_radius(6).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 2.0;
+                if rows.is_empty() {
+                    ui.label(RichText::new(crate::i18n::tr("Nothing to save yet")).color(theme::MUTED()));
+                }
+                for (name, c) in &rows {
                     ui.horizontal(|ui| {
-                        ui.add_space(24.0);
-                        ui.add_enabled_ui(self.blend, |ui| {
-                            crate::ui::number(ui, &mut self.blend_mm, 50.0);
-                            self.blend_mm = self.blend_mm.clamp(0.001, 1.0);
-                            ui.label("mm");
-                        });
+                        let (dot, _) = ui.allocate_exact_size(vec2(10.0, 14.0), egui::Sense::hover());
+                        ui.painter().circle_filled(dot.center(), 4.0, egui::Color32::from_rgb(c[0], c[1], c[2]));
+                        ui.label(name.as_str());
                     });
-                }
-                ui.add_space(6.0);
-                bold(ui, crate::i18n::tr("Toolpaths to be saved ..."));
-                let names: Vec<&str> = self
-                    .doc
-                    .toolpaths
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, t)| if self.one_file { t.visible } else { self.selected_tp == Some(*i) })
-                    .filter(|(_, t)| self.save_piece.is_none_or(|piece| self.doc.vectors.iter().any(|v| v.piece == Some(piece) && t.op.source.contains(&v.id))))
-                    .map(|(_, t)| t.op.name.as_str())
-                    .collect();
-                if names.is_empty() {
-                    ui.label(RichText::new(crate::i18n::tr("No Toolpaths")).color(theme::MUTED()));
-                }
-                for n in &names {
-                    ui.label(*n);
-                }
-                ui.add_space(6.0);
-                ui.separator();
-                bold(ui, crate::i18n::tr("Post Processor"));
-                let before = self.post_index;
-                let total = POSTS.len() + self.loaded_posts.len();
-                let names: Vec<String> = (0..total).map(|i| self.post_name(i)).collect();
-                self.post_index = self.post_index.min(total - 1);
-                egui::ComboBox::from_id_salt("post").selected_text(names[self.post_index].clone()).width(ui.available_width() - 8.0).truncate().show_ui(ui, |ui| {
-                    for (i, name) in names.iter().enumerate() {
-                        if i == POSTS.len() {
-                            ui.separator();
-                        }
-                        ui.selectable_value(&mut self.post_index, i, name.as_str());
-                    }
-                });
-                if self.post_index != before {
-                    self.remember_posts();
-                    // Files for this machine use arcs; it can still be turned off above.
-                    if self.is_planetcnc() {
-                        self.output_arcs = true;
-                    }
-                }
-                if self.is_planetcnc() {
-                    note(ui, crate::i18n::tr("Laid out like your own PlanetCNC file, in millimetres."));
-                }
-                ui.horizontal(|ui| {
-                    if ui.button(crate::i18n::tr("Load .pp Files ...")).clicked() {
-                        if let Some(files) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Post processor"), &["pp", "PP"]).pick_files() {
-                            self.report_loaded_posts(files);
-                        }
-                    }
-                    if ui.button(crate::i18n::tr("Load a Folder ...")).clicked() {
-                        if let Some(dir) = crate::platform::FileDialog::new().pick_folder() {
-                            let files = App::post_files_in(&dir);
-                            self.report_loaded_posts(files);
-                        }
-                    }
-                });
-                if let Some(def) = self.post_index.checked_sub(POSTS.len()).and_then(|k| self.loaded_posts.get(k)) {
-                    let unit = match def.metric {
-                        Some(true) => crate::i18n::tr("millimetres").to_string(),
-                        Some(false) => crate::i18n::tr("inches").to_string(),
-                        None => tf!("the job's unit ({})", self.doc.job.unit()),
-                    };
-                    let mut lines = vec![tf!("Writes .{} files in {unit}.", def.extension), if !self.output_arcs {
-                        crate::i18n::tr("Arcs are written as short straight lines.")
-                    } else if def.can_write_arcs() {
-                        crate::i18n::tr("Curves are written as arcs (G2 / G3).")
-                    } else {
-                        crate::i18n::tr("This file doesn't say how to write arcs, so curves stay short straight lines.")
-                    }.to_string()];
-                    lines.extend(def.notes.iter().cloned());
-                    for line in &lines {
-                        note(ui, line);
-                    }
-                    if ui.button(crate::i18n::tr("Remove This One")).clicked() {
-                        self.remove_selected_post();
-                    }
-                }
-                ui.add_space(4.0);
-                let can = !names.is_empty();
-                if ui.add_enabled(can, egui::Button::new(RichText::new(crate::i18n::tr("Save Toolpath(s) ...")).color(theme::ON_ACCENT).strong()).fill(theme::ACCENT).min_size(vec2(ui.available_width() - 2.0, 24.0))).clicked() {
-                    self.save_gcode_dialog();
                 }
             });
+            ui.add_space(2.0);
+            crate::ui::small_caps(ui, crate::i18n::tr("For which machine"));
+            let before = self.post_index;
+            let total = POSTS.len() + self.loaded_posts.len();
+            let names: Vec<String> = (0..total).map(|i| self.post_name(i)).collect();
+            self.post_index = self.post_index.min(total - 1);
+            egui::ComboBox::from_id_salt("post").selected_text(names[self.post_index].clone()).width(ui.available_width() - 8.0).truncate().show_ui(ui, |ui| {
+                for (i, name) in names.iter().enumerate() {
+                    if i == POSTS.len() {
+                        ui.separator();
+                    }
+                    ui.selectable_value(&mut self.post_index, i, name.as_str());
+                }
+            });
+            if self.post_index != before {
+                self.remember_posts();
+                // Files for this machine use arcs; it can still be turned off below.
+                if self.is_planetcnc() {
+                    self.output_arcs = true;
+                }
+            }
+            if self.is_planetcnc() {
+                note(ui, crate::i18n::tr("Laid out like your own PlanetCNC file, in millimetres."));
+            }
+            if let Some(def) = self.post_index.checked_sub(POSTS.len()).and_then(|k| self.loaded_posts.get(k)) {
+                let unit = match def.metric {
+                    Some(true) => crate::i18n::tr("millimetres").to_string(),
+                    Some(false) => crate::i18n::tr("inches").to_string(),
+                    None => tf!("the job's unit ({})", self.doc.job.unit()),
+                };
+                let mut lines = vec![tf!("Writes .{} files in {unit}.", def.extension), if !self.output_arcs {
+                    crate::i18n::tr("Arcs are written as short straight lines.")
+                } else if def.can_write_arcs() {
+                    crate::i18n::tr("Curves are written as arcs (G2 / G3).")
+                } else {
+                    crate::i18n::tr("This file doesn't say how to write arcs, so curves stay short straight lines.")
+                }.to_string()];
+                lines.extend(def.notes.iter().cloned());
+                for line in &lines {
+                    note(ui, line);
+                }
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if ui.small_button(crate::i18n::tr("Add .pp files...")).clicked() {
+                    if let Some(files) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Post processor"), &["pp", "PP"]).pick_files() {
+                        self.report_loaded_posts(files);
+                    }
+                }
+                if ui.small_button(crate::i18n::tr("Add a folder...")).clicked() {
+                    if let Some(dir) = crate::platform::FileDialog::new().pick_folder() {
+                        let files = App::post_files_in(&dir);
+                        self.report_loaded_posts(files);
+                    }
+                }
+                if self.post_index >= POSTS.len() && ui.small_button(crate::i18n::tr("Remove this machine")).clicked() {
+                    self.remove_selected_post();
+                }
+            });
+            ui.add_space(2.0);
+            crate::ui::small_caps(ui, crate::i18n::tr("Options"));
+            ui.checkbox(&mut self.output_arcs, crate::i18n::tr("Write curves as arcs (G2 / G3)")).on_hover_text(crate::i18n::tr("Smaller files and smoother curves. Try it in the air on your machine first."));
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.corner_slow, crate::i18n::tr("Slow down in tight corners")).on_hover_text(crate::i18n::tr("Near a sharp turn the cutter takes a wider bite; other CAM programs lower the rate there. Not in the original."));
+                ui.add_enabled_ui(self.corner_slow, |ui| {
+                    let mut pct = self.corner_share * 100.0;
+                    crate::ui::number(ui, &mut pct, 40.0);
+                    self.corner_share = (pct / 100.0).clamp(0.05, 1.0);
+                    ui.label("%");
+                });
+            });
+            if crate::toolpath::post_takes_blend(self.post_index) {
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.blend, crate::i18n::tr("Corner tolerance for LinuxCNC (G64 P)")).on_hover_text(crate::i18n::tr("Without it, LinuxCNC may round corners as far as it likes to keep its speed. Not in the original."));
+                });
+                ui.horizontal(|ui| {
+                    ui.add_space(24.0);
+                    ui.add_enabled_ui(self.blend, |ui| {
+                        crate::ui::number(ui, &mut self.blend_mm, 50.0);
+                        self.blend_mm = self.blend_mm.clamp(0.001, 1.0);
+                        ui.label("mm");
+                    });
+                });
+            }
+            ui.add_space(6.0);
+            let can = !rows.is_empty();
+            if ui.add_enabled(can, egui::Button::new(RichText::new(crate::i18n::tr("Save the file...")).color(theme::ON_ACCENT).strong()).fill(theme::ACCENT).min_size(vec2(ui.available_width(), 30.0))).clicked() {
+                self.save_gcode_dialog();
+            }
             ui.horizontal(|ui| {
                 ui.add_space((ui.available_width() - 80.0).max(0.0));
                 if wide(ui, crate::i18n::tr("Close"), 74.0).clicked() {
