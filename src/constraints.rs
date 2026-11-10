@@ -2203,11 +2203,14 @@ impl App {
     }
 
     /// The form with the dimension tool, line types, relations, and the rules in the drawing.
+    /// Burin's own layout: what to click next drawn large at the top, then Measure, Keep in
+    /// place (the relations as tiles with their pictures), the rules list, and line kinds.
     pub fn constraint_form(&mut self, ui: &mut egui::Ui, f: &mut XformForm) {
-        use crate::icons;
-        use crate::ui::{bold, card, number};
+        use crate::icons::{self, Icon};
+        use crate::ui::{explain, icon_caps, number, pic_button, pictured_pills, worded_button, Pic};
         let unit = self.doc.job.unit();
         let mut list_hover = None;
+        ui.spacing_mut().item_spacing.y = 6.0;
         if let Some((text, colour)) = self.definition_text() {
             ui.horizontal(|ui| {
                 let (dot, _) = ui.allocate_exact_size(vec2(10.0, 16.0), egui::Sense::hover());
@@ -2215,7 +2218,7 @@ impl App {
                 ui.colored_label(colour, text);
             });
         }
-        // What to do next, where it can't be missed.
+        // What to do next, drawn large where it can't be missed.
         let prompt = match (f.smart, f.constraint) {
             (true, _) if self.picks.is_empty() => crate::i18n::tr("Click a line or a circle, or two things to measure between.").to_string(),
             (true, _) => crate::i18n::tr("Click empty sheet for this one, or a second thing.").to_string(),
@@ -2223,40 +2226,83 @@ impl App {
             _ if self.picks.is_empty() => crate::i18n::tr("Click things on the sheet, or drag them to see what can still move. The rules that fit stay lit.").to_string(),
             _ => tf!("{} picked. Choose a rule, or click empty sheet to start over.", self.picks.len()),
         };
-        let note = self.sketch_note.clone();
-        egui::Frame::new().fill(if note.is_some() { Color32::from_rgb(92, 44, 40) } else { theme::ACCENT_SOFT() }).corner_radius(4).inner_margin(egui::Margin::symmetric(7, 5)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(egui::RichText::new(note.as_deref().unwrap_or(&prompt)).size(12.0));
-        });
-        card(ui, |ui| {
+        let pic = match (f.smart, f.constraint) {
+            (true, _) => match f.dim_mode {
+                DimMode::Horizontal => Pic::DimHorizontal,
+                DimMode::Vertical => Pic::DimVertical,
+                _ => Pic::DimAlong,
+            },
+            (false, Some(kind)) => Pic::Icon(relation_icon(kind)),
+            _ => Pic::Icon(Icon::Select),
+        };
+        match self.sketch_note.clone() {
+            Some(note) => {
+                egui::Frame::new().fill(Color32::from_rgb(92, 44, 40)).corner_radius(6).inner_margin(egui::Margin::symmetric(7, 5)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(egui::RichText::new(note).size(12.0));
+                });
+            }
+            None => explain(ui, pic, &prompt),
+        }
+        ui.separator();
+        icon_caps(ui, Icon::RDimension, crate::i18n::tr("Measure"));
+        {
             let wide = ui.available_width();
-            if ui.add(egui::Button::new(crate::i18n::tr("Smart Dimension")).selected(f.smart).min_size(vec2(wide, 24.0))).on_hover_text(crate::i18n::tr("Line: length. Circle: diameter. Two points: distance. Two lines: angle.")).clicked() {
+            let (r, response) = ui.allocate_exact_size(vec2(wide, 28.0), egui::Sense::click());
+            let fill = if f.smart {
+                theme::ACCENT_SOFT()
+            } else if response.hovered() {
+                theme::BUTTON_HOVER()
+            } else {
+                theme::BUTTON()
+            };
+            ui.painter().rect(r, 6.0, fill, egui::Stroke::new(1.0, if f.smart { theme::ACCENT } else { Color32::TRANSPARENT }), egui::StrokeKind::Inside);
+            icons::paint(ui.painter(), egui::Rect::from_min_size(r.min + vec2(7.0, 6.0), vec2(16.0, 16.0)), Icon::Dimension, true);
+            ui.painter().text(egui::pos2(r.min.x + 30.0, r.center().y), egui::Align2::LEFT_CENTER, crate::i18n::tr("Smart Dimension"), egui::FontId::proportional(12.5), theme::TEXT());
+            response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, f.smart, crate::i18n::tr("Smart Dimension")));
+            if response.on_hover_text(crate::i18n::tr("Line: length. Circle: diameter. Two points: distance. Two lines: angle.")).clicked() {
                 f.smart = !f.smart;
                 f.constraint = None;
                 self.picks.clear();
                 self.sketch_note = None;
             }
             if f.smart {
-                ui.horizontal(|ui| {
-                    ui.radio_value(&mut f.dim_mode, DimMode::Smart, crate::i18n::tr("Aligned"));
-                    ui.radio_value(&mut f.dim_mode, DimMode::Horizontal, crate::i18n::tr("Across"));
-                    ui.radio_value(&mut f.dim_mode, DimMode::Vertical, crate::i18n::tr("Up"));
-                });
+                let at = match f.dim_mode {
+                    DimMode::Vertical => 1,
+                    DimMode::Horizontal => 2,
+                    _ => 0,
+                };
+                if let Some(k) = pictured_pills(ui, &[(Some(Pic::DimAlong), crate::i18n::tr("Along")), (Some(Pic::DimVertical), crate::i18n::tr("Up")), (Some(Pic::DimHorizontal), crate::i18n::tr("Across"))], at) {
+                    f.dim_mode = [DimMode::Smart, DimMode::Vertical, DimMode::Horizontal][k];
+                }
             }
-        });
+        }
+        ui.separator();
         let mut apply: Option<(Kind, Vec<Elem>)> = None;
-        card(ui, |ui| {
-            bold(ui, crate::i18n::tr("Relations"));
-            ui.spacing_mut().button_padding.x = 3.0;
-            egui::Grid::new("constraint_kinds").num_columns(2).spacing([2.0, 2.0]).show(ui, |ui| {
-                for (i, kind) in RELATIONS.iter().enumerate() {
-                    let fits = kind.arrange(&self.picks);
-                    let usable = self.picks.is_empty() || fits.is_some();
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        let (r, _) = ui.allocate_exact_size(vec2(16.0, 18.0), egui::Sense::hover());
-                        icons::paint(ui.painter(), r, relation_icon(*kind), usable);
-                        let response = ui.add_enabled(usable, egui::Button::selectable(f.constraint == Some(*kind), kind.name()));
+        icon_caps(ui, Icon::Constraint, crate::i18n::tr("Keep in place"));
+        {
+            let half = ((ui.available_width() - 4.0) / 2.0).floor();
+            for pair in RELATIONS.chunks(2) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    for kind in pair {
+                        let fits = kind.arrange(&self.picks);
+                        let usable = self.picks.is_empty() || fits.is_some();
+                        let chosen = f.constraint == Some(*kind);
+                        let (r, response) = ui.allocate_exact_size(vec2(half, 26.0), if usable { egui::Sense::click() } else { egui::Sense::hover() });
+                        let fill = if chosen {
+                            theme::ACCENT_SOFT()
+                        } else if usable && response.hovered() {
+                            theme::BUTTON_HOVER()
+                        } else {
+                            theme::BUTTON()
+                        };
+                        ui.painter().rect(r, 6.0, fill, egui::Stroke::new(1.0, if chosen { theme::ACCENT } else { Color32::TRANSPARENT }), egui::StrokeKind::Inside);
+                        icons::paint(ui.painter(), egui::Rect::from_min_size(r.min + vec2(5.0, 5.0), vec2(16.0, 16.0)), relation_icon(*kind), usable);
+                        let colour = if usable { theme::TEXT() } else { theme::MUTED() };
+                        let text = ui.painter().layout(kind.name().to_string(), egui::FontId::proportional(11.5), colour, half - 28.0);
+                        ui.painter().galley(egui::pos2(r.min.x + 25.0, r.center().y - text.size().y / 2.0), text, colour);
+                        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, usable, chosen, kind.name()));
                         if response.clicked() {
                             self.sketch_note = None;
                             match fits {
@@ -2268,77 +2314,88 @@ impl App {
                                 }
                             }
                         }
-                    });
-                    if i % 2 == 1 {
-                        ui.end_row();
                     }
-                }
-            });
-            if f.constraint.is_some() && ui.small_button(crate::i18n::tr("Stop this relation")).clicked() {
+                });
+            }
+            if f.constraint.is_some() && worded_button(ui, true, Icon::Select, crate::i18n::tr("Stop this relation")).clicked() {
                 f.constraint = None;
                 self.picks.clear();
             }
-        });
+        }
         if let Some((kind, items)) = apply {
             self.picks.clear();
             self.add_constraint(kind, items);
         }
         let mut remove = None;
         let mut changed = false;
-        card(ui, |ui| {
-            ui.horizontal(|ui| {
-                bold(ui, &tf!("Rules in this drawing: {}", self.doc.constraints.len()));
-            });
-            ui.checkbox(&mut self.show_constraints, crate::i18n::tr("Show the rules on the sheet"));
-            if self.constraint_conflict {
-                ui.colored_label(theme::ERROR, crate::i18n::tr("These rules can't all be met."));
-            }
-            if self.doc.constraints.is_empty() {
-                ui.label(egui::RichText::new(crate::i18n::tr("None yet. Pick a rule above, then click on the drawing.")).size(11.5).color(theme::MUTED()));
-            }
-            // Dimensions first: those are the numbers worth reaching for.
-            let mut order: Vec<usize> = (0..self.doc.constraints.len()).filter(|i| self.doc.constraints[*i].kind != Kind::Keep).collect();
-            order.sort_by_key(|i| !self.doc.constraints[*i].kind.has_value());
-            egui::ScrollArea::vertical().max_height(230.0).id_salt("rule_list").show(ui, |ui| {
-                for i in order {
-                    let on = self.selected_rule == Some(i) || self.hover_rule == Some(i);
-                    let row = egui::Frame::new().fill(if on { theme::ACCENT_SOFT() } else { Color32::TRANSPARENT }).corner_radius(3).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            let kind = self.doc.constraints[i].kind;
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            let (r, _) = ui.allocate_exact_size(vec2(16.0, 18.0), egui::Sense::hover());
-                            icons::paint(ui.painter(), r, relation_icon(kind), true);
-                            if ui.add(egui::Label::new(kind.name()).sense(egui::Sense::click())).clicked() {
-                                self.selected_rule = if self.selected_rule == Some(i) { None } else { Some(i) };
-                            }
-                            if kind.has_value() {
-                                if number(ui, &mut self.doc.constraints[i].value, 48.0) {
-                                    changed = true;
-                                    self.dim_anchor = self.doc.constraints[i].items.first().copied();
-                                }
-                                ui.label(if kind == Kind::Angle { "deg" } else { unit });
-                            }
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let response = ui.small_button("x").on_hover_text(crate::i18n::tr("Remove this rule"));
-                                crate::ui::label_widget(&response, &tf!("Remove rule {}", i + 1));
-                                if response.clicked() {
-                                    remove = Some(i);
-                                }
-                            });
-                        });
-                    });
-                    if ui.rect_contains_pointer(row.response.rect) {
-                        list_hover = Some(i);
-                    }
+        ui.separator();
+        ui.horizontal(|ui| {
+            icon_caps(ui, Icon::Validate, &tf!("Rules in this drawing: {}", self.doc.constraints.len()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let icon = if self.show_constraints { Icon::Eye } else { Icon::EyeOff };
+                let (r, response) = ui.allocate_exact_size(vec2(22.0, 20.0), egui::Sense::click());
+                icons::paint(ui.painter(), r.shrink(2.0), icon, true);
+                crate::ui::label_widget(&response, crate::i18n::tr("Show the rules on the sheet"));
+                if response.on_hover_text(crate::i18n::tr("Show the rules on the sheet")).clicked() {
+                    self.show_constraints = !self.show_constraints;
                 }
             });
-            if !self.doc.constraints.is_empty() && ui.button(crate::i18n::tr("Remove All Rules")).clicked() {
-                self.checkpoint();
-                self.doc.constraints.clear();
-                self.selected_rule = None;
-            }
         });
+        if self.constraint_conflict {
+            ui.colored_label(theme::ERROR, crate::i18n::tr("These rules can't all be met."));
+        }
+        if self.doc.constraints.is_empty() {
+            ui.label(egui::RichText::new(crate::i18n::tr("None yet. Pick a rule above, then click on the drawing.")).size(11.5).color(theme::MUTED()));
+        }
+        // Dimensions first: those are the numbers worth reaching for.
+        let mut order: Vec<usize> = (0..self.doc.constraints.len()).filter(|i| self.doc.constraints[*i].kind != Kind::Keep).collect();
+        order.sort_by_key(|i| !self.doc.constraints[*i].kind.has_value());
+        if !order.is_empty() {
+            egui::Frame::new().fill(theme::INPUT()).corner_radius(6).inner_margin(egui::Margin::symmetric(4, 3)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                egui::ScrollArea::vertical().max_height(230.0).id_salt("rule_list").show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    for i in order {
+                        let on = self.selected_rule == Some(i) || self.hover_rule == Some(i);
+                        let row = egui::Frame::new().fill(if on { theme::ACCENT_SOFT() } else { Color32::TRANSPARENT }).corner_radius(4).inner_margin(egui::Margin::symmetric(3, 1)).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                let kind = self.doc.constraints[i].kind;
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                let (r, _) = ui.allocate_exact_size(vec2(16.0, 18.0), egui::Sense::hover());
+                                icons::paint(ui.painter(), r, relation_icon(kind), true);
+                                if ui.add(egui::Label::new(kind.name()).sense(egui::Sense::click())).clicked() {
+                                    self.selected_rule = if self.selected_rule == Some(i) { None } else { Some(i) };
+                                }
+                                if kind.has_value() {
+                                    if number(ui, &mut self.doc.constraints[i].value, 48.0) {
+                                        changed = true;
+                                        self.dim_anchor = self.doc.constraints[i].items.first().copied();
+                                    }
+                                    ui.label(egui::RichText::new(if kind == Kind::Angle { "deg" } else { unit }).color(theme::MUTED()));
+                                }
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let (r, response) = ui.allocate_exact_size(vec2(18.0, 18.0), egui::Sense::click());
+                                    icons::paint(ui.painter(), r.shrink(1.0), Icon::Trash, response.hovered());
+                                    crate::ui::label_widget(&response, &tf!("Remove rule {}", i + 1));
+                                    if response.on_hover_text(crate::i18n::tr("Remove this rule")).clicked() {
+                                        remove = Some(i);
+                                    }
+                                });
+                            });
+                        });
+                        if ui.rect_contains_pointer(row.response.rect) {
+                            list_hover = Some(i);
+                        }
+                    }
+                });
+            });
+        }
+        if !self.doc.constraints.is_empty() && worded_button(ui, true, Icon::Trash, crate::i18n::tr("Remove All Rules")).clicked() {
+            self.checkpoint();
+            self.doc.constraints.clear();
+            self.selected_rule = None;
+        }
         self.hover_rule = list_hover;
         if let Some(i) = remove {
             self.remove_rule(i);
@@ -2351,19 +2408,20 @@ impl App {
                 }
             }
         }
-        card(ui, |ui| {
-            bold(ui, crate::i18n::tr("Line Type"));
-            let some = !self.picks.is_empty() || !self.selected.is_empty();
-            ui.horizontal(|ui| {
-                if ui.add_enabled(some, egui::Button::new(crate::i18n::tr("Normal"))).clicked() {
+        ui.separator();
+        icon_caps(ui, Icon::RConstruction, crate::i18n::tr("Line Type"));
+        let some = !self.picks.is_empty() || !self.selected.is_empty();
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(some, |ui| {
+                if pic_button(ui, Pic::LineSolid, crate::i18n::tr("Normal")).clicked() {
                     self.set_construction(false);
                 }
-                if ui.add_enabled(some, egui::Button::new(crate::i18n::tr("Construction"))).on_hover_text(crate::i18n::tr("Construction lines guide the drawing and are never cut.")).clicked() {
+                if pic_button(ui, Pic::LineDashed, crate::i18n::tr("Construction")).on_hover_text(crate::i18n::tr("Construction lines guide the drawing and are never cut.")).clicked() {
                     self.set_construction(true);
                 }
             });
-            ui.checkbox(&mut self.doc.new_construction, crate::i18n::tr("Draw new shapes as construction"));
         });
+        ui.checkbox(&mut self.doc.new_construction, crate::i18n::tr("Draw new shapes as construction"));
     }
 
     /// Removes one rule, in one step of undo.
