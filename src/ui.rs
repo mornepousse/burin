@@ -395,6 +395,14 @@ pub(crate) enum Pic {
     PointAt,
     PointPolar,
     PointStep,
+    BrushSmooth,
+    BrushSmudge,
+    BrushDeposit,
+    BrushRemove,
+    BrushSwirl,
+    BrushBoth,
+    BrushOnlyUp,
+    BrushOnlyDown,
 }
 
 /// Draws a choice's picture into a square, in the given colour.
@@ -796,6 +804,42 @@ pub(crate) fn draw_pic(p: &egui::Painter, r: Rect, pic: Pic, c: Color32) {
         Pic::PointStep => {
             p.circle_filled(at(0.15, 0.8), 2.0, MUTED());
             line(&[(0.15, 0.8), (0.85, 0.8), (0.85, 0.25)], s);
+        }
+        Pic::BrushSmooth => {
+            line(&[(0.0, 0.5), (0.2, 0.3), (0.35, 0.7), (0.5, 0.5)], faint);
+            line(&[(0.5, 0.55), (1.0, 0.55)], s);
+        }
+        Pic::BrushSmudge => {
+            line(&[(0.05, 0.7), (0.4, 0.7)], faint);
+            line(&[(0.3, 0.45), (0.9, 0.45)], s);
+            line(&[(0.75, 0.32), (0.9, 0.45), (0.75, 0.58)], s);
+        }
+        Pic::BrushDeposit | Pic::BrushRemove => {
+            line(&[(0.0, 0.8), (1.0, 0.8)], faint);
+            if pic == Pic::BrushDeposit {
+                arc(0.5, 0.8, 0.3, 180.0, 0.0, s);
+                line(&[(0.5, 0.35), (0.5, 0.05)], s);
+                line(&[(0.38, 0.17), (0.5, 0.05), (0.62, 0.17)], s);
+            } else {
+                arc(0.5, 0.45, 0.3, 180.0, 360.0, s);
+                line(&[(0.5, 0.05), (0.5, 0.35)], s);
+                line(&[(0.38, 0.23), (0.5, 0.35), (0.62, 0.23)], s);
+            }
+        }
+        Pic::BrushSwirl => {
+            arc(0.5, 0.5, 0.4, 0.0, 300.0, s);
+            arc(0.5, 0.5, 0.2, 60.0, 330.0, s);
+        }
+        Pic::BrushBoth | Pic::BrushOnlyUp | Pic::BrushOnlyDown => {
+            line(&[(0.0, 0.5), (1.0, 0.5)], faint);
+            if pic != Pic::BrushOnlyDown {
+                line(&[(0.3, 0.42), (0.3, 0.1)], s);
+                line(&[(0.18, 0.22), (0.3, 0.1), (0.42, 0.22)], s);
+            }
+            if pic != Pic::BrushOnlyUp {
+                line(&[(0.7, 0.58), (0.7, 0.9)], s);
+                line(&[(0.58, 0.78), (0.7, 0.9), (0.82, 0.78)], s);
+            }
         }
         Pic::Icon(_) => {}
     }

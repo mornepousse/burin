@@ -149,18 +149,18 @@ pub enum OpKind {
 impl OpKind {
     pub fn title(self) -> &'static str {
         match self {
-            OpKind::Profile => crate::i18n::tr("2D Profile Toolpath"),
-            OpKind::Pocket => crate::i18n::tr("Pocket Toolpath"),
-            OpKind::Drill => crate::i18n::tr("Drilling Toolpath"),
-            OpKind::Engrave => crate::i18n::tr("Quick Engrave"),
-            OpKind::VCarve => crate::i18n::tr("V-Carve / Engraving Toolpath"),
-            OpKind::Rough3D => crate::i18n::tr("Rough Machining Toolpath"),
-            OpKind::Finish3D => crate::i18n::tr("Finish Machining Toolpath"),
-            OpKind::Prism => crate::i18n::tr("Prism Carving Toolpath"),
-            OpKind::Texture => crate::i18n::tr("Texture Toolpath"),
-            OpKind::Moulding => crate::i18n::tr("Moulding Toolpath"),
-            OpKind::Flute => crate::i18n::tr("Fluting Toolpath"),
-            OpKind::Chamfer => crate::i18n::tr("Chamfer Toolpath"),
+            OpKind::Profile => crate::i18n::tr("Profile cut"),
+            OpKind::Pocket => crate::i18n::tr("Pocket"),
+            OpKind::Drill => crate::i18n::tr("Drilling"),
+            OpKind::Engrave => crate::i18n::tr("Quick engrave"),
+            OpKind::VCarve => crate::i18n::tr("V-carve"),
+            OpKind::Rough3D => crate::i18n::tr("3D roughing"),
+            OpKind::Finish3D => crate::i18n::tr("3D finishing"),
+            OpKind::Prism => crate::i18n::tr("Prism carve"),
+            OpKind::Texture => crate::i18n::tr("Texture"),
+            OpKind::Moulding => crate::i18n::tr("Moulding"),
+            OpKind::Flute => crate::i18n::tr("Fluting"),
+            OpKind::Chamfer => crate::i18n::tr("Chamfer"),
         }
     }
     pub fn base_name(self) -> &'static str {

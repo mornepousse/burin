@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn words_find_commands_whatever_their_accents() {
         let names: Vec<String> = matching("pocket").into_iter().map(|f| f.1).collect();
-        assert!(names.iter().any(|n| n == "Pocket Toolpath"), "{names:?}");
+        assert!(names.iter().any(|n| n == "Pocket"), "{names:?}");
         assert!(matching("draw circ").iter().any(|f| f.0 == Command::Act(Action::DrawCircle)));
         assert!(matching("zzqx").is_empty());
         assert_eq!(plain("Décaler Ç"), "decaler c");

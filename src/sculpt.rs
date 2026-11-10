@@ -32,12 +32,12 @@ impl SculptTool {
 
     pub fn name(self) -> &'static str {
         match self {
-            SculptTool::Smooth => tr("Smooth"),
+            SculptTool::Smooth => tr("Smoothing"),
             SculptTool::Smudge => tr("Smudge"),
             SculptTool::Deposit => tr("Deposit"),
             SculptTool::Remove => tr("Remove"),
             SculptTool::Undo => tr("Undo Brush"),
-            SculptTool::Twiddle => tr("Twiddle"),
+            SculptTool::Twiddle => tr("Swirl"),
         }
     }
 }
@@ -290,10 +290,23 @@ impl App {
         let side = self.doc.job.width.min(self.doc.job.height);
         egui::Window::new(tr("Sculpting")).id(egui::Id::unique("sculpting")).open(&mut open).collapsible(false).resizable(false).default_pos(ctx.content_rect().right_top() + egui::vec2(-300.0, 80.0)).show(ctx, |ui| {
             ui.set_max_width(260.0);
-            ui.label(egui::RichText::new(tr("Tool")).strong());
-            for (n, tool) in SculptTool::ALL.into_iter().enumerate() {
-                ui.radio_value(&mut s.tool, tool, format!("{} {}", n + 1, tool.name()));
+            use crate::ui::{explain, icon_caps, pictured_pills, Pic};
+            icon_caps(ui, crate::icons::Icon::ReliefPicture, tr("Brush"));
+            let pics = [Pic::BrushSmooth, Pic::BrushSmudge, Pic::BrushDeposit, Pic::BrushRemove, Pic::Icon(crate::icons::Icon::Undo), Pic::BrushSwirl];
+            let names: Vec<String> = SculptTool::ALL.iter().enumerate().map(|(n, t)| format!("{} {}", n + 1, t.name())).collect();
+            let options: Vec<(Option<Pic>, &str)> = names.iter().zip(pics).map(|(n, p)| (Some(p), n.as_str())).collect();
+            let at = SculptTool::ALL.iter().position(|t| *t == s.tool).unwrap_or(0);
+            if let Some(k) = pictured_pills(ui, &options, at) {
+                s.tool = SculptTool::ALL[k];
             }
+            explain(ui, pics[at], match s.tool {
+                SculptTool::Smooth => tr("Evens out bumps under the brush."),
+                SculptTool::Smudge => tr("Drags the surface the way the brush moves."),
+                SculptTool::Deposit => tr("Builds the surface up."),
+                SculptTool::Remove => tr("Takes the surface down."),
+                SculptTool::Undo => tr("Brings back the surface as it was before sculpting."),
+                SculptTool::Twiddle => tr("Twists the surface round the brush."),
+            });
             ui.label(egui::RichText::new(tr("Hold Shift with the Undo Brush to erase.")).size(11.0).color(crate::theme::MUTED()));
             ui.horizontal(|ui| {
                 ui.label(tr("Diameter"));
@@ -308,12 +321,12 @@ impl App {
                 ui.add(egui::Slider::new(&mut s.smoothness, 0.0..=1.0).show_value(false));
             });
             ui.checkbox(&mut s.preserve, tr("Preserve Transparency (0)"));
-            ui.label(egui::RichText::new(tr("Mode")).strong());
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut s.mode, SculptMode::Normal, tr("Normal"));
-                ui.radio_value(&mut s.mode, SculptMode::Raise, tr("Raise"));
-                ui.radio_value(&mut s.mode, SculptMode::Lower, tr("Lower"));
-            });
+            crate::ui::icon_caps(ui, crate::icons::Icon::Dome, tr("Mode"));
+            let modes = [SculptMode::Normal, SculptMode::Raise, SculptMode::Lower];
+            let at = modes.iter().position(|m| *m == s.mode).unwrap_or(0);
+            if let Some(k) = crate::ui::pictured_pills(ui, &[(Some(crate::ui::Pic::BrushBoth), tr("Normal")), (Some(crate::ui::Pic::BrushOnlyUp), tr("Raise")), (Some(crate::ui::Pic::BrushOnlyDown), tr("Lower"))], at) {
+                s.mode = modes[k];
+            }
             ui.separator();
             ui.horizontal(|ui| {
                 keep = ui.button(tr("Keep")).clicked();

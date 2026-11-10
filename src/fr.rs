@@ -4,6 +4,23 @@
 //! tab = attache, stepover = recouvrement, allowance = surcote, pass = passe, job = projet.
 
 pub const FR: &[(&str, &str)] = &[
+    // Short toolpath names and the sculpting window.
+    ("Profile cut", "Contour"),
+    ("Quick engrave", "Gravure rapide"),
+    ("V-carve", "Gravure en V"),
+    ("3D roughing", "Ébauche 3D"),
+    ("3D finishing", "Finition 3D"),
+    ("Prism carve", "Prisme"),
+    ("Moulding", "Moulure"),
+    ("Fluting", "Cannelure"),
+    ("Swirl", "Tourbillon"),
+    ("Brush", "Pinceau"),
+    ("Evens out bumps under the brush.", "Égalise les bosses sous le pinceau."),
+    ("Drags the surface the way the brush moves.", "Entraîne la surface dans le sens du pinceau."),
+    ("Builds the surface up.", "Fait monter la surface."),
+    ("Takes the surface down.", "Fait descendre la surface."),
+    ("Brings back the surface as it was before sculpting.", "Remet la surface comme avant la sculpture."),
+    ("Twists the surface round the brush.", "Tord la surface autour du pinceau."),
     // The 3D shape and lines forms, Burin's own wording.
     ("Changing a 3D shape", "Modification d'une forme 3D"),
     ("3D shape", "Forme 3D"),
