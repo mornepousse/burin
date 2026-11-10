@@ -403,6 +403,12 @@ pub(crate) enum Pic {
     BrushBoth,
     BrushOnlyUp,
     BrushOnlyDown,
+    DimAlong,
+    DimVertical,
+    DimHorizontal,
+    IssueZero,
+    IssueOverlap,
+    IssueCross,
 }
 
 /// Draws a choice's picture into a square, in the given colour.
@@ -840,6 +846,42 @@ pub(crate) fn draw_pic(p: &egui::Painter, r: Rect, pic: Pic, c: Color32) {
                 line(&[(0.7, 0.58), (0.7, 0.9)], s);
                 line(&[(0.58, 0.78), (0.7, 0.9), (0.82, 0.78)], s);
             }
+        }
+        Pic::DimAlong => {
+            p.circle_filled(at(0.1, 0.85), 1.8, MUTED());
+            p.circle_filled(at(0.9, 0.35), 1.8, MUTED());
+            line(&[(0.05, 0.62), (0.85, 0.12)], s);
+            line(&[(0.1, 0.85), (0.04, 0.7)], faint);
+            line(&[(0.9, 0.35), (0.84, 0.2)], faint);
+        }
+        Pic::DimVertical => {
+            p.circle_filled(at(0.3, 0.1), 1.8, MUTED());
+            p.circle_filled(at(0.3, 0.9), 1.8, MUTED());
+            line(&[(0.75, 0.1), (0.75, 0.9)], s);
+            line(&[(0.6, 0.1), (0.9, 0.1)], s);
+            line(&[(0.6, 0.9), (0.9, 0.9)], s);
+        }
+        Pic::DimHorizontal => {
+            p.circle_filled(at(0.1, 0.7), 1.8, MUTED());
+            p.circle_filled(at(0.9, 0.7), 1.8, MUTED());
+            line(&[(0.1, 0.3), (0.9, 0.3)], s);
+            line(&[(0.1, 0.15), (0.1, 0.45)], s);
+            line(&[(0.9, 0.15), (0.9, 0.45)], s);
+        }
+        Pic::IssueZero => {
+            line(&[(0.05, 0.5), (0.45, 0.5)], faint);
+            line(&[(0.55, 0.5), (0.95, 0.5)], faint);
+            p.circle_filled(at(0.5, 0.5), 3.0, c);
+        }
+        Pic::IssueOverlap => {
+            line(&[(0.05, 0.4), (0.7, 0.4)], faint);
+            line(&[(0.3, 0.6), (0.95, 0.6)], faint);
+            line(&[(0.3, 0.5), (0.7, 0.5)], Stroke::new(3.0, c));
+        }
+        Pic::IssueCross => {
+            line(&[(0.1, 0.1), (0.9, 0.9)], faint);
+            line(&[(0.1, 0.9), (0.9, 0.1)], faint);
+            p.circle_stroke(at(0.5, 0.5), w * 0.16, Stroke::new(1.6, c));
         }
         Pic::Icon(_) => {}
     }

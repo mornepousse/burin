@@ -926,7 +926,7 @@ impl App {
             Xform::Join => (Icon::Join, crate::i18n::tr("Join Vectors")),
             Xform::Fillet => (Icon::Fillet, crate::i18n::tr("Create Fillets")),
             Xform::Trim => (Icon::Trim, crate::i18n::tr("Interactive Vector Trim")),
-            Xform::Validate => (Icon::Validate, crate::i18n::tr("Vector Validator")),
+            Xform::Validate => (Icon::Validate, crate::i18n::tr("Check the drawing")),
             Xform::Dimension => (Icon::Dimension, crate::i18n::tr("Dimensions")),
             Xform::Nest => (Icon::Nest, crate::i18n::tr("Nest Parts")),
             Xform::TextOnCurve => (Icon::TextCurve, crate::i18n::tr("Text On A Curve")),
@@ -1297,52 +1297,61 @@ impl App {
                 });
             }
             Xform::Validate => {
+                use crate::ui::{draw_pic, explain, Pic};
                 apply_label = None;
                 let zero = self.issues.iter().filter(|i| i.kind == crate::edit::IssueKind::ZeroLength).count();
                 card(ui, |ui| {
-                    ui.label(crate::i18n::tr("If there is no selection, all visible vectors on visible layers will be validated."));
-                    ui.add_space(4.0);
-                    ui.label(crate::i18n::tr("The following issues will be marked:"));
-                    for (name, colour, kind) in [
-                        (crate::i18n::tr("Zero-length"), theme::RAPID, crate::edit::IssueKind::ZeroLength),
-                        (crate::i18n::tr("Overlaps"), theme::WARNING, crate::edit::IssueKind::Overlap),
-                        (crate::i18n::tr("Intersections"), theme::CUT, crate::edit::IssueKind::Intersection),
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    explain(ui, Pic::Icon(Icon::Validate), crate::i18n::tr("Looks for what would trouble a toolpath. With nothing selected, it looks at every visible shape."));
+                    for (name, what, colour, kind, pic) in [
+                        (crate::i18n::tr("Zero-length"), crate::i18n::tr("a span with no length"), theme::RAPID, crate::edit::IssueKind::ZeroLength, Pic::IssueZero),
+                        (crate::i18n::tr("Overlaps"), crate::i18n::tr("lines lying on each other"), theme::WARNING, crate::edit::IssueKind::Overlap, Pic::IssueOverlap),
+                        (crate::i18n::tr("Intersections"), crate::i18n::tr("a shape crossing itself or another"), theme::CUT, crate::edit::IssueKind::Intersection, Pic::IssueCross),
                     ] {
                         ui.horizontal(|ui| {
-                            let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
-                            ui.painter().rect_filled(r.shrink(2.0), 2.0, colour);
+                            let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
+                            ui.painter().rect_filled(r, 6.0, theme::CARD());
+                            draw_pic(ui.painter(), r.shrink(4.0), pic, colour);
                             let n = self.issues.iter().filter(|i| i.kind == kind).count();
-                            ui.label(format!("{name}: {n}"));
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                ui.label(RichText::new(format!("{name}: {n}")).strong());
+                                ui.label(RichText::new(what).size(11.0).color(theme::MUTED()));
+                            });
                         });
                     }
-                    ui.add_space(4.0);
-                    if wide(ui, crate::i18n::tr("Search All"), ui.available_width() - 2.0).clicked() {
+                    if crate::ui::worded_button(ui, true, Icon::Validate, crate::i18n::tr("Look for problems")).clicked() {
                         self.validate();
                     }
+                    if crate::ui::worded_button(ui, zero > 0, Icon::Delete, crate::i18n::tr("Remove the spans with no length")).clicked() {
+                        self.fix_zero_length();
+                    }
                 });
-                if ui.add_enabled(zero > 0, egui::Button::new(crate::i18n::tr("Fix Zero-length Spans"))).clicked() {
-                    self.fix_zero_length();
-                }
             }
             Xform::Dimension => {
+                use crate::ui::{explain, icon_caps, pictured_pills, Pic};
                 apply_label = None;
                 card(ui, |ui| {
-                    ui.radio_value(&mut f.dim, DimKind::Length, crate::i18n::tr("Length Dimension"));
-                    ui.radio_value(&mut f.dim, DimKind::Vertical, crate::i18n::tr("Vertical Dimension"));
-                    ui.radio_value(&mut f.dim, DimKind::Horizontal, crate::i18n::tr("Horizontal Dimension"));
-                });
-                card(ui, |ui| {
-                    labelled(ui, crate::i18n::tr("Text"), 46.0, &mut f.size, 54.0, unit);
-                    row_with(ui, crate::i18n::tr("Decimal"), |ui| {
-                        count_box(ui, &mut f.decimals, 54.0);
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    let kinds = [DimKind::Length, DimKind::Vertical, DimKind::Horizontal];
+                    let at = kinds.iter().position(|k| *k == f.dim).unwrap_or(0);
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::DimAlong), crate::i18n::tr("Along")), (Some(Pic::DimVertical), crate::i18n::tr("Up")), (Some(Pic::DimHorizontal), crate::i18n::tr("Across"))], at) {
+                        f.dim = kinds[k];
+                    }
+                    explain(ui, [Pic::DimAlong, Pic::DimVertical, Pic::DimHorizontal][at], crate::i18n::tr("Drag on the sheet from the first point to the second."));
+                    icon_caps(ui, Icon::Text, crate::i18n::tr("Text"));
+                    ui.horizontal(|ui| {
+                        labelled(ui, crate::i18n::tr("Height"), 0.0, &mut f.size, 50.0, unit);
                     });
-                    labelled(ui, crate::i18n::tr("Offset:"), 46.0, &mut f.distance, 54.0, unit);
-                    row_with(ui, crate::i18n::tr("Custom Text:"), |ui| {
-                        ui.add(TextEdit::singleline(&mut f.text).desired_width(100.0));
+                    ui.horizontal(|ui| {
+                        ui.label(crate::i18n::tr("Decimal places"));
+                        count_box(ui, &mut f.decimals, 44.0);
                     });
-                });
-                card(ui, |ui| {
-                    ui.label(crate::i18n::tr("Drag on the sheet from the first point to the second."));
+                    labelled(ui, crate::i18n::tr("Away from the shape"), 0.0, &mut f.distance, 50.0, unit);
+                    ui.horizontal(|ui| {
+                        ui.label(crate::i18n::tr("Own words"));
+                        ui.add(TextEdit::singleline(&mut f.text).desired_width(110.0).hint_text(crate::i18n::tr("the length")));
+                    });
                     note(ui, crate::i18n::tr("Dimensions go on a layer named Dimensions."));
                 });
             }

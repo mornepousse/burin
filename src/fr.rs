@@ -4,6 +4,19 @@
 //! tab = attache, stepover = recouvrement, allowance = surcote, pass = passe, job = projet.
 
 pub const FR: &[(&str, &str)] = &[
+    // The validator and dimensions forms, Burin's own wording.
+    ("Looks for what would trouble a toolpath. With nothing selected, it looks at every visible shape.", "Cherche ce qui gênerait un parcours. Sans sélection, il regarde toutes les formes visibles."),
+    ("a span with no length", "un segment sans longueur"),
+    ("lines lying on each other", "des traits posés l'un sur l'autre"),
+    ("a shape crossing itself or another", "une forme qui se croise ou en croise une autre"),
+    ("Check the drawing", "Vérifier le dessin"),
+    ("Look for problems", "Chercher les problèmes"),
+    ("Remove the spans with no length", "Enlever les segments sans longueur"),
+    ("Along", "Le long"),
+    ("Decimal places", "Décimales"),
+    ("Away from the shape", "Écart à la forme"),
+    ("Own words", "Texte libre"),
+    ("the length", "la longueur"),
     // Short toolpath names and the sculpting window.
     ("Profile cut", "Contour"),
     ("Quick engrave", "Gravure rapide"),

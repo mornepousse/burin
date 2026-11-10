@@ -1059,7 +1059,7 @@ fn open_state(app: &mut App, state: &str) {
                 }
             }
         }
-        "move" | "align" | "array" | "lines" => {
+        "move" | "align" | "array" | "lines" | "validate" | "dimension" => {
             app.new_file();
             circle(app);
             app.right_open = true;
@@ -1068,6 +1068,11 @@ fn open_state(app: &mut App, state: &str) {
                 "move" => app.start_xform(app::Xform::Move),
                 "align" => app.start_xform(app::Xform::Align),
                 "array" => app.start_xform(app::Xform::BlockCopy),
+                "validate" => {
+                    app.start_xform(app::Xform::Validate);
+                    app.validate();
+                }
+                "dimension" => app.start_xform(app::Xform::Dimension),
                 _ => app.left = LeftForm::Draw(DrawForm::new(DrawKind::Polyline, &app.doc.job)),
             }
         }
