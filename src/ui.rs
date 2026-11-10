@@ -418,6 +418,8 @@ pub(crate) enum Pic {
     ZOnBed,
     ModelGapAbove,
     ModelGapBelow,
+    LineSolid,
+    LineDashed,
 }
 
 /// Draws a choice's picture into a square, in the given colour.
@@ -855,6 +857,16 @@ pub(crate) fn draw_pic(p: &egui::Painter, r: Rect, pic: Pic, c: Color32) {
                 line(&[(0.7, 0.58), (0.7, 0.9)], s);
                 line(&[(0.58, 0.78), (0.7, 0.9), (0.82, 0.78)], s);
             }
+        }
+        Pic::LineSolid => {
+            line(&[(0.05, 0.8), (0.95, 0.2)], Stroke::new(1.8, c));
+            p.circle_filled(at(0.05, 0.8), 2.0, c);
+            p.circle_filled(at(0.95, 0.2), 2.0, c);
+        }
+        Pic::LineDashed => {
+            p.extend(Shape::dashed_line(&[at(0.05, 0.8), at(0.95, 0.2)], Stroke::new(1.5, c), 3.0, 2.5));
+            p.circle_stroke(at(0.05, 0.8), 2.0, Stroke::new(1.0, c));
+            p.circle_stroke(at(0.95, 0.2), 2.0, Stroke::new(1.0, c));
         }
         Pic::DimAlong => {
             p.circle_filled(at(0.1, 0.85), 1.8, MUTED());

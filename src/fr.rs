@@ -1163,6 +1163,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Aligned", "Alignée"),
     ("Up", "Vers le haut"),
     ("Relations", "Relations"),
+    ("Measure", "Mesurer"),
     ("Stop this relation", "Arrêter cette relation"),
     ("Rules in this drawing: {}", "Règles de ce dessin : {}"),
     ("Show the rules on the sheet", "Afficher les règles sur la feuille"),
