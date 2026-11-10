@@ -95,12 +95,6 @@ pub fn anchor_grid_with(ui: &mut Ui, value: &mut Datum, name: &str, centre: bool
     }
 }
 
-fn row_with(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        add(ui);
-    });
-}
 
 /// The tool in a small rounded box of its own, with buttons to change it or adjust it there.
 fn tool_card(ui: &mut Ui, tool: &Tool) -> (bool, bool) {
@@ -1532,7 +1526,7 @@ impl App {
     fn bulk_form(&mut self, ui: &mut Ui, f: &mut XformForm, unit: &str) {
         use crate::bulk::{classify, Class};
         card(ui, |ui| {
-            bold(ui, crate::i18n::tr("Shapes on the sheet"));
+            crate::ui::icon_caps(ui, Icon::Similar, crate::i18n::tr("Shapes on the sheet"));
             note(ui, crate::i18n::tr("Click a line to select all the shapes in it."));
             let groups = self.similar_groups(f.tolerance, f.layer_only);
             if groups.is_empty() {
@@ -1542,7 +1536,18 @@ impl App {
                 for g in &groups {
                     let chosen = g.ids.iter().all(|id| self.selected.contains(id)) && g.ids.len() == self.selected.len();
                     let text = format!("{} x  {}", g.ids.len(), g.class.describe(unit));
-                    if ui.selectable_label(chosen, text).clicked() {
+                    // Each line with a picture of its kind of shape.
+                    let icon = match g.class {
+                        Class::Circle { .. } => Icon::Circle,
+                        Class::Rectangle { .. } => Icon::Rect,
+                        Class::Other { .. } => Icon::Curve,
+                    };
+                    let picked = ui.horizontal_wrapped(|ui| {
+                        let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                        crate::icons::paint(ui.painter(), r, icon, true);
+                        ui.selectable_label(chosen, text).clicked()
+                    }).inner;
+                    if picked {
                         self.selected = g.ids.clone();
                         f.bulk_d = 0.0;
                         f.bulk_w = 0.0;
@@ -1561,7 +1566,7 @@ impl App {
         let circles = selected.iter().filter(|c| matches!(c, Class::Circle { .. })).count();
         let others = selected.len() - circles;
         card(ui, |ui| {
-            bold(ui, &tf!("Change the {} selected", selected.len()));
+            crate::ui::icon_caps(ui, Icon::Scale, &tf!("Change the {} selected", selected.len()));
             if selected.is_empty() {
                 note(ui, crate::i18n::tr("Select shapes on the sheet, or pick a line above."));
                 return;
@@ -1569,6 +1574,8 @@ impl App {
             if circles > 0 {
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut f.set_d, "");
+                    let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                    crate::ui::draw_pic(ui.painter(), r, crate::ui::Pic::Diameter, theme::ACCENT);
                     labelled(ui, crate::i18n::tr("Diameter"), 52.0, &mut f.bulk_d, 60.0, unit);
                 });
             }
@@ -1589,7 +1596,7 @@ impl App {
             });
             note(ui, crate::i18n::tr("Each shape changes around its own point, so holes stay where they are."));
             ui.add_space(4.0);
-            if wide(ui, crate::i18n::tr("Apply to All Selected"), ui.available_width() - 2.0).clicked() {
+            if crate::ui::worded_button(ui, true, Icon::Scale, crate::i18n::tr("Apply to All Selected")).clicked() {
                 let d = (circles > 0 && f.set_d).then_some(f.bulk_d);
                 let w = (others > 0 && f.set_w).then_some(f.bulk_w);
                 let h = (others > 0 && f.set_h).then_some(f.bulk_h);
@@ -2539,23 +2546,27 @@ impl App {
                     ui.set_width(350.0);
                     let Some(t) = tools.get_mut(self.tool_index) else { return };
                     let unit = if t.metric { "mm" } else { crate::i18n::tr("inches") };
-                    bold(ui, crate::i18n::tr("Tool Info"));
-                    row_with(ui, crate::i18n::tr("Name"), |ui| {
-                        ui.add(TextEdit::singleline(&mut t.name).desired_width(280.0));
-                    });
-                    row_with(ui, crate::i18n::tr("Tool Type"), |ui| {
-                        egui::ComboBox::from_id_salt("tool_type").selected_text(kind_name(t.kind)).width(170.0).show_ui(ui, |ui| {
-                            for k in [ToolKind::EndMill, ToolKind::BallNose, ToolKind::VBit, ToolKind::Engraving, ToolKind::Drill] {
-                                ui.selectable_value(&mut t.kind, k, kind_name(k));
-                            }
+                    // Burin's own layout: the bit drawn from the side with its sizes, its kind as
+                    // pictured choices, then plain headings with their icons.
+                    ui.horizontal(|ui| {
+                        bit_side_view(ui, t, unit);
+                        ui.vertical(|ui| {
+                            crate::ui::icon_caps(ui, Icon::Tools, crate::i18n::tr("The tool"));
+                            ui.add(TextEdit::singleline(&mut t.name).desired_width(f32::INFINITY).font(egui::FontId::proportional(14.0)));
                         });
                     });
-                    ui.label(crate::i18n::tr("Notes"));
-                    ui.add(TextEdit::multiline(&mut t.notes).desired_rows(3).desired_width(340.0));
+                    let kinds = [ToolKind::EndMill, ToolKind::BallNose, ToolKind::VBit, ToolKind::Engraving, ToolKind::Drill];
+                    let pics = [crate::ui::Pic::BitEndMill, crate::ui::Pic::BitBallNose, crate::ui::Pic::BitV, crate::ui::Pic::BitEngraving, crate::ui::Pic::BitDrill];
+                    let at = kinds.iter().position(|k| *k == t.kind).unwrap_or(0);
+                    let options: Vec<(Option<crate::ui::Pic>, &str)> = kinds.iter().zip(pics).map(|(k, p)| (Some(p), kind_name(*k))).collect();
+                    if let Some(k) = crate::ui::pictured_pills(ui, &options, at) {
+                        t.kind = kinds[k];
+                    }
+                    ui.add(TextEdit::multiline(&mut t.notes).desired_rows(2).desired_width(340.0).hint_text(crate::i18n::tr("Notes")));
                     ui.add_space(4.0);
-                    bold(ui, crate::i18n::tr("Geometry"));
+                    crate::ui::icon_caps(ui, Icon::Measure, crate::i18n::tr("Its size"));
                     ui.horizontal(|ui| {
-                        labelled(ui, crate::i18n::tr("Diameter (D)"), 86.0, &mut t.dia, 64.0, "");
+                        labelled(ui, crate::i18n::tr("Diameter"), 86.0, &mut t.dia, 64.0, "");
                         let before = t.metric;
                         egui::ComboBox::from_id_salt("tool_unit").selected_text(if t.metric { "mm" } else { crate::i18n::tr("inches") }).width(70.0).show_ui(ui, |ui| {
                             ui.selectable_value(&mut t.metric, false, crate::i18n::tr("inches"));
@@ -2571,7 +2582,7 @@ impl App {
                         labelled(ui, crate::i18n::tr("Included Angle"), 86.0, &mut t.angle, 64.0, crate::i18n::tr("degrees"));
                     }
                     ui.add_space(4.0);
-                    bold(ui, crate::i18n::tr("Cutting Parameters"));
+                    crate::ui::icon_caps(ui, Icon::TpProfile, crate::i18n::tr("How it cuts"));
                     labelled(ui, crate::i18n::tr("Pass Depth"), 86.0, &mut t.pass_depth, 64.0, unit);
                     labelled(ui, crate::i18n::tr("Flute Length"), 86.0, &mut t.flute_length, 64.0, unit).then_some(()).unwrap_or(());
                     ui.label(egui::RichText::new(crate::i18n::tr("How deep it can cut. 0 if not known.")).size(11.5).color(crate::theme::MUTED()));
@@ -2587,7 +2598,7 @@ impl App {
                         ui.label("%");
                     });
                     ui.add_space(4.0);
-                    bold(ui, crate::i18n::tr("Feeds and Speeds"));
+                    crate::ui::icon_caps(ui, Icon::Clock, crate::i18n::tr("How fast"));
                     labelled(ui, crate::i18n::tr("Spindle Speed"), 86.0, &mut t.rpm, 64.0, "r.p.m");
                     rate_fields(ui, t, unit, 86.0, 64.0);
                     // Starting points from the material and the tool's size.
@@ -2649,6 +2660,27 @@ impl App {
             }
             None => self.tool_edit = Some(tools),
         }
+    }
+}
+
+/// The bit seen from the side, as big as the room allows, with its diameter across the cutting
+/// end and the angle of a V or engraving bit.
+fn bit_side_view(ui: &mut Ui, t: &Tool, unit: &str) {
+    let (area, _) = ui.allocate_exact_size(vec2(96.0, 96.0), Sense::hover());
+    let p = ui.painter_at(area);
+    p.rect_filled(area, 8.0, theme::CARD());
+    let pic = match t.kind {
+        ToolKind::EndMill => crate::ui::Pic::BitEndMill,
+        ToolKind::BallNose => crate::ui::Pic::BitBallNose,
+        ToolKind::VBit => crate::ui::Pic::BitV,
+        ToolKind::Engraving => crate::ui::Pic::BitEngraving,
+        ToolKind::Drill => crate::ui::Pic::BitDrill,
+    };
+    let square = egui::Rect::from_min_size(area.min + vec2(18.0, 6.0), vec2(60.0, 60.0));
+    crate::ui::draw_pic(&p, square, pic, theme::ACCENT);
+    p.text(area.center_bottom() - vec2(0.0, 18.0), egui::Align2::CENTER_CENTER, format!("Ø {} {unit}", toolpath::trim(t.dia)), egui::FontId::proportional(11.0), theme::TEXT());
+    if matches!(t.kind, ToolKind::VBit | ToolKind::Engraving) {
+        p.text(area.center_bottom() - vec2(0.0, 6.0), egui::Align2::CENTER_CENTER, format!("{}°", toolpath::trim(t.angle)), egui::FontId::proportional(11.0), theme::MUTED());
     }
 }
 

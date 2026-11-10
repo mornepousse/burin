@@ -4,6 +4,11 @@
 //! tab = attache, stepover = recouvrement, allowance = surcote, pass = passe, job = projet.
 
 pub const FR: &[(&str, &str)] = &[
+    // The tool list, Burin's own wording.
+    ("The tool", "L'outil"),
+    ("Its size", "Sa taille"),
+    ("How it cuts", "Comment il coupe"),
+    ("How fast", "À quelle vitesse"),
     // The validator and dimensions forms, Burin's own wording.
     ("Looks for what would trouble a toolpath. With nothing selected, it looks at every visible shape.", "Cherche ce qui gênerait un parcours. Sans sélection, il regarde toutes les formes visibles."),
     ("a span with no length", "un segment sans longueur"),
