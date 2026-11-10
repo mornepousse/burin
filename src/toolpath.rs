@@ -2208,8 +2208,17 @@ fn pocket_set(e: &mut Emit, op: &Op) {
         match at {
             Some(target) => start_loop_near_point(&mut pts, target),
             None => {
-                let start = (0..pts.len()).min_by(|a, b| far(&pts[*a]).total_cmp(&far(&pts[*b]))).unwrap_or(0);
-                pts.rotate_left(start);
+                let nearest = (0..pts.len()).min_by(|a, b| far(&pts[*a]).total_cmp(&far(&pts[*b]))).unwrap_or(0);
+                // Of the points about as near as the nearest (within half a stepover more),
+                // one the tool can go on to without crossing a ring: worked-out rings put their
+                // corners a hair apart on either side of a straight slot, and the nearest by a
+                // hair can be the one across the ring just cut.
+                let tie = far(&pts[nearest]) + 0.5 * step;
+                let reachable = (0..pts.len())
+                    .filter(|k| far(&pts[*k]) <= tie && !matches!(link, Link::No))
+                    .filter(|k| !crosses_rings([last[0], last[1]], pts[*k], walls, step * RING_LINK_TRIM))
+                    .min_by(|a, b| far(&pts[*a]).total_cmp(&far(&pts[*b])));
+                pts.rotate_left(reachable.unwrap_or(nearest));
             }
         }
         let across = far(&pts[0]);
