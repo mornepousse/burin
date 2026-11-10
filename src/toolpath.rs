@@ -405,6 +405,10 @@ pub struct Op {
     /// A second set of raster rows, at the angle + 90 degrees, after the first (`_pkpdDo2ndRaster`).
     #[serde(default)]
     pub raster_second: bool,
+    /// V-Carve with an end mill: clear the flat inside the first ring as well, a ring every stepover
+    /// until nothing is left, as F-Engrave's clean-up does. Not from the original, so off at first.
+    #[serde(default)]
+    pub clear_flat: bool,
     /// Absolute stepover; 0 uses the tool's own.
     #[serde(default)]
     pub stepover: f64,
@@ -830,13 +834,14 @@ fn lead_points_for(p: P, t: P, side_sign: f64, op: &Op, out: bool, distance: f64
     points
 }
 
-/// How long a lead into a closed loop can be without the tool reaching into the part: the
-/// toolpath's lead distance, or a tenth of it less each time until the lead stays on the waste
-/// side of the loop, with its far end at least a tenth of the tool's radius clear of the loop;
-/// `None` when no length fits, and the cut then starts with no lead. The saved jobs show this
-/// in small holes: a straight 2.5 mm lead in a loop of radius 1.0125 comes in 1.75 mm, in one of
-/// 0.9125 it comes in 1.5 mm, and a circular lead of radius 5 into a loop of radius 1.21 is
-/// left out. The tenths and the clearance are estimates that fit those cases.
+/// How long a lead into a closed loop can be (`0x1408437a0`, `0x140843ee0`): the whole lead is
+/// tried at ten points from the loop outwards, at 0, 1/9, 2/9 ... 1 of its length
+/// (`0x1421e2000`, up to `0x1421e2008` = 1.0001). From the second point on (the first lies on the
+/// loop), the first point on the other side of the loop, the k-th, cuts the lead to (k - 1) tenths
+/// of its length (`/ 10.0`, `0x142736370`), when that is under 1.01 (`0x142103338`); nothing left
+/// means no lead. A lead whose middle point (the sixth) isn't on the waste side is left out. `None`
+/// means no lead: the cut then starts on the loop. The original tests the toolpath's other loops
+/// too; here only the lead's own loop is known.
 fn fitted_lead(loop_pts: &[P], side: Side, side_sign: f64, op: &Op) -> Option<f64> {
     if loop_pts.len() < 3 || side == Side::On {
         return Some(op.lead_distance);
@@ -846,26 +851,40 @@ fn fitted_lead(loop_pts: &[P], side: Side, side_sign: f64, op: &Op) -> Option<f6
     let len = (next[0] - start[0]).hypot(next[1] - start[1]);
     let t = [(next[0] - start[0]) / len, (next[1] - start[1]) / len];
     let shape = [Path::closed(loop_pts.to_vec())];
-    let off_loop = |q: P| {
-        let n = loop_pts.len();
-        (0..n)
-            .map(|i| {
-                let (a, b) = (loop_pts[i], loop_pts[(i + 1) % n]);
-                let d = [b[0] - a[0], b[1] - a[1]];
-                let k = (((q[0] - a[0]) * d[0] + (q[1] - a[1]) * d[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-18)).clamp(0.0, 1.0);
-                (q[0] - a[0] - d[0] * k).hypot(q[1] - a[1] - d[1] * k)
-            })
-            .fold(f64::MAX, f64::min)
-    };
-    let clearance = op.tool.dia / 20.0;
     let waste_inside = side == Side::Inside;
-    (0..10).map(|k| op.lead_distance * (10 - k) as f64 / 10.0).find(|&distance| {
-        let points = lead_points_for(start, t, side_sign, op, false, distance);
-        // Points about on the loop count as on the waste side: a loop of arcs drawn as short lines
-        // passes a little inside a lead coming in along it.
-        let on_waste_side = points.iter().all(|q| off_loop(*q) < op.tool.dia / 100.0 || crate::geom::inside_even_odd(&shape, *q) == waste_inside);
-        on_waste_side && off_loop(points[0]) >= clearance
-    })
+    // The lead from the loop outwards.
+    let mut chain = vec![start];
+    let mut far = lead_points_for(start, t, side_sign, op, false, op.lead_distance);
+    far.reverse();
+    chain.extend(far);
+    let total: f64 = chain.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum();
+    if total <= 1e-12 {
+        return Some(op.lead_distance);
+    }
+    let at = |s: f64| -> P {
+        let mut left = s;
+        for w in chain.windows(2) {
+            let l = (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]);
+            if left <= l && l > 0.0 {
+                let f = left / l;
+                return [w[0][0] + (w[1][0] - w[0][0]) * f, w[0][1] + (w[1][1] - w[0][1]) * f];
+            }
+            left -= l;
+        }
+        chain[chain.len() - 1]
+    };
+    let sides: Vec<bool> = (0..10).map(|k| crate::geom::inside_even_odd(&shape, at(total * (k as f64 / 9.0).min(1.0)))).collect();
+    if sides[5] != waste_inside {
+        return None;
+    }
+    let fraction = (2..10).find(|&k| sides[k] != sides[1]).map_or(999.0, |k| (k - 1) as f64 / 10.0);
+    if fraction < 1.01 {
+        if fraction <= 0.0 {
+            return None;
+        }
+        return Some(op.lead_distance * fraction);
+    }
+    Some(op.lead_distance)
 }
 
 /// Starts a closed loop at the one of its points nearest to where the tool is.
@@ -3314,7 +3333,47 @@ fn vcarve(e: &mut Emit, op: &Op) {
         if depth <= 0.0 {
             return;
         }
-        let rings: Vec<Vec<P>> = field.contours(reach).into_iter().map(|pts| oriented(pts, op.climb)).collect();
+        // Only the ring a radius inside, as in the saved jobs. Read in the original but not
+        // followed: with a flat bottom it may add rings one stepover further in
+        // (`0x1407be050`, levels `L + k * step`, counted by `0x1407c1230`), yet the saved jobs
+        // clear nothing in the middle of big letters, so what stops it isn't known yet. Its
+        // Voronoi middle-line pieces (`0x1407c06f0`) are for V-bits; the end mill's flat-tool flag
+        // skips that walk (`0x1405697d0`).
+        let mut rings: Vec<Vec<P>> = field.contours(reach).into_iter().map(|pts| oriented(pts, op.climb)).collect();
+        // Not from the original: F-Engrave clears the flat bottom with a clean-up after the
+        // carving (`Clean_Path_Calc`: the edge of the flat, then cuts every half diameter by
+        // default). Here the same end mill goes on inwards, a ring every stepover, until nothing
+        // is left, the way the original's rings function (`0x1407be050`) steps.
+        // With a clearing tool, the end mill also cuts where that tool can't get in: rings at
+        // L + k * stepover (k from 1) below L + the clearing tool's radius, each only along the
+        // parts of the shape too narrow for a disc of that size (`0x1405697d0` with `local_468`,
+        // drawn by `0x1407bdec0` in mode 2, edges filtered by `0x1407c05c0`).
+        if let (Some(ct), true) = (&op.clearance_tool, op.flat_depth > 0.0) {
+            let limit = reach + ct.dia / 2.0;
+            let step = step_of(op).max(field.cell);
+            let reached = middle_reach(&field, reach + step, limit);
+            let mut level = reach + step;
+            while level < limit {
+                let mut band = field.clone();
+                for (i, v) in band.d.iter_mut().enumerate() {
+                    *v = (*v - level as f32).min(limit as f32 - reached[i]);
+                }
+                rings.extend(band.contours(0.0).into_iter().map(|pts| oriented(pts, op.climb)));
+                level += step;
+            }
+        }
+        if op.clear_flat && op.flat_depth > 0.0 {
+            let step = step_of(op).max(field.cell);
+            let mut level = reach + step;
+            loop {
+                let found = field.contours(level);
+                if found.is_empty() {
+                    break;
+                }
+                rings.extend(found.into_iter().map(|pts| oriented(pts, op.climb)));
+                level += step;
+            }
+        }
         for d in passes_for(depth, op.tool.pass_depth, false) {
             let z = -(op.start_depth + d);
             for pts in &rings {
@@ -3349,6 +3408,48 @@ fn vcarve(e: &mut Emit, op: &Op) {
         }
         level += step;
     }
+}
+
+/// For each grid point between `from` and `limit` from the outline: how far from the outline the
+/// middle line is, straight inwards from the outline through that point (the radius of the
+/// middle-line edge it belongs to in the original's Voronoi diagram). The distance grows by as
+/// much as one moves inwards until the middle line is reached, where it stops growing. Points
+/// outside that band get `limit` or more when deeper in, `from` minus one when nearer the edge.
+fn middle_reach(field: &Field, from: f64, limit: f64) -> Vec<f32> {
+    let (nx, cell) = (field.nx, field.cell);
+    let mut out = vec![0f32; field.d.len()];
+    for (i, o) in out.iter_mut().enumerate() {
+        let v = field.d[i] as f64;
+        if v >= limit {
+            *o = v as f32;
+            continue;
+        }
+        if v < from - 2.0 * cell {
+            *o = (from - 1.0) as f32;
+            continue;
+        }
+        let (x, y) = (field.x0 + (i % nx) as f64 * cell, field.y0 + (i / nx) as f64 * cell);
+        let gx = field.sample(x + cell, y) - field.sample(x - cell, y);
+        let gy = field.sample(x, y + cell) - field.sample(x, y - cell);
+        let len = gx.hypot(gy);
+        if len < 1e-9 {
+            *o = v as f32;
+            continue;
+        }
+        let (ux, uy) = (gx / len, gy / len);
+        let tol = 0.35 * cell;
+        let mut t = 0.0;
+        let step = cell * 0.5;
+        while v + t < limit {
+            let next = field.sample(x + ux * (t + step), y + uy * (t + step));
+            if next < v + t + step - tol {
+                break;
+            }
+            t += step;
+        }
+        *o = (v + t) as f32;
+    }
+    out
 }
 
 /// Straight cutting lines across the model, back and forth.
@@ -4169,6 +4270,7 @@ pub fn blank_op(kind: OpKind, name: String, tool: Tool, depth: f64, paths: Vec<P
         profile_pass: ProfilePass::Last,
         raster_allowance: 0.0,
         raster_second: false,
+        clear_flat: false,
         last_thickness: 0.0,
         keep_exact: false,
         zigzag_open: false,
@@ -4435,6 +4537,77 @@ mod tests {
             on_side
         }), "on the ring a radius inside");
         assert_eq!(m.windows(2).filter(|w| w[1].rapid && !w[0].rapid).count(), 1, "one trace, one lift");
+    }
+
+    /// With a clearing tool, the end mill adds a ring one stepover further in only where the shape
+    /// is too narrow for that tool: none in a wide disc, one in a narrow strip.
+    #[test]
+    fn vcarve_end_mill_adds_rings_only_where_the_clearing_tool_cannot_go() {
+        let lifts = |paths: Vec<Path>| {
+            let mut o = op(OpKind::VCarve, paths);
+            o.flat_depth = 0.1;
+            let mut ct = o.tool.clone();
+            ct.dia = o.tool.dia * 1.6;
+            o.clearance_tool = Some(ct);
+            generate(&o, M, &J, None).unwrap().windows(2).filter(|w| w[1].rapid && !w[0].rapid).count()
+        };
+        let o = op(OpKind::VCarve, vec![]);
+        let (r, step) = (o.tool.dia / 2.0, o.tool.dia * o.tool.stepover);
+        // Wide and round: the middle is far from every point, so the clearing tool reaches
+        // everywhere past the first ring. (Corners are different: next to one the middle line is
+        // near, so the original cuts a small loop there too, as its corner edges aren't skipped,
+        // `0x1407c9b90` returning false.)
+        assert_eq!(lifts(vec![Path::closed(crate::geom::circle([5.0, 5.0], 3.0))]), 1);
+        // A strip whose half width lies between L + step and L + the clearing radius.
+        let half = r + step + 0.3 * (o.tool.dia * 0.8 - step);
+        assert_eq!(lifts(vec![Path::closed(rect([5.0, 5.0], 2.0 * half, 6.0, 0.0))]), 2);
+    }
+
+    /// Asked for, the end mill clears the whole flat inside its first ring, a ring every stepover;
+    /// left off, it cuts the one ring as the original does.
+    #[test]
+    fn vcarve_with_an_end_mill_clears_the_flat_when_asked() {
+        let mut o = op(OpKind::VCarve, vec![Path::closed(rect([5.0, 5.0], 4.0, 4.0, 0.0))]);
+        o.flat_depth = 0.1;
+        let lifts = |o: &Op| generate(o, M, &J, None).unwrap().windows(2).filter(|w| w[1].rapid && !w[0].rapid).count();
+        assert_eq!(lifts(&o), 1);
+        o.clear_flat = true;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let rings = moves.windows(2).filter(|w| w[1].rapid && !w[0].rapid).count();
+        let step = o.tool.dia * o.tool.stepover;
+        let expected = ((2.0 - o.tool.dia / 2.0) / step).ceil() as usize;
+        assert!(rings >= expected.max(2) - 1 && rings <= expected + 1, "{rings} rings, about {expected}");
+        // The innermost cut comes within a stepover of the middle.
+        let nearest = moves.iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| (m.p[0] - 5.0).abs().max((m.p[1] - 5.0).abs())).fold(f64::MAX, f64::min);
+        assert!(nearest <= step + 1e-6, "{nearest}");
+    }
+
+    /// The original's lead fitting (`0x1408437a0`): ten points at ninths of the lead, cut to
+    /// (k - 1) tenths at the first one across the loop. The saved jobs' four cases, and a 4 mm lead,
+    /// which comes in by tenths of 4 (0.4 mm), not by 0.25 mm steps, or not at all when its middle
+    /// point is already across.
+    #[test]
+    fn a_lead_into_a_small_loop_is_cut_to_tenths_where_it_crosses() {
+        let lead_in = |loop_r: f64, lead: f64| {
+            let mut o = op(OpKind::Profile, vec![]);
+            o.lead = true;
+            o.lead_distance = lead;
+            o.lead_circular = false;
+            o.lead_angle = 90.0;
+            let pts = crate::geom::circle([0.0, 0.0], loop_r);
+            let pts = if signed_area(&pts) > 0.0 { pts } else { pts.into_iter().rev().collect() };
+            let side_sign = away_from_part(&pts, true, Side::Inside);
+            fitted_lead(&pts, Side::Inside, side_sign, &o)
+        };
+        let close = |a: Option<f64>, b: f64| a.is_some_and(|a| (a - b).abs() < 1e-9);
+        assert!(close(lead_in(1.9125, 2.5), 2.5));
+        assert!(close(lead_in(1.4625, 2.5), 2.5));
+        assert!(close(lead_in(1.0125, 2.5), 1.75), "{:?}", lead_in(1.0125, 2.5));
+        assert!(close(lead_in(0.9125, 2.5), 1.5), "{:?}", lead_in(0.9125, 2.5));
+        // 2.6 across: the 7th point (4 x 6/9 = 2.67) is the first across, so 5 tenths of 4.
+        assert!(close(lead_in(1.3, 4.0), 2.0), "{:?}", lead_in(1.3, 4.0));
+        // 2.0 across: the middle point (4 x 5/9 = 2.22) is already across, so no lead at all.
+        assert_eq!(lead_in(1.0, 4.0), None);
     }
 
     #[test]
