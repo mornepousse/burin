@@ -79,7 +79,8 @@ fn from_start_screen_to_a_carved_ring() {
     assert!(matches!(h.state().right, RightMode::Preview));
 
     // Preview it: the disc inside the ring stays, the ring goes through.
-    h.get_by_label("Preview Selected Toolpath").click();
+    click(&mut h, "Selected");
+    h.get_by_label("Carve it").click();
     h.run_steps(3);
     assert!(h.state().anim.playing, "the preview animates");
     click(&mut h, "Go to end");
@@ -88,7 +89,7 @@ fn from_start_screen_to_a_carved_ring() {
         assert!(sim.grid.sample(6.125, 5.0) <= -0.49, "cut through");
         assert_eq!(sim.grid.sample(5.0, 5.0), 0.0);
     }
-    click(&mut h, "Reset Preview");
+    click(&mut h, "Start over");
     assert!(h.state().sim.is_none());
 }
 
