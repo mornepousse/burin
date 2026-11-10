@@ -4,6 +4,22 @@
 //! tab = attache, stepover = recouvrement, allowance = surcote, pass = passe, job = projet.
 
 pub const FR: &[(&str, &str)] = &[
+    // The illustrated explanations of the choices.
+    ("The tool runs outside the line: the part keeps its size.", "L'outil passe à l'extérieur du trait : la pièce garde sa taille."),
+    ("The tool runs inside the line: the hole keeps its size.", "L'outil passe à l'intérieur du trait : le trou garde sa taille."),
+    ("The middle of the tool follows the line.", "Le centre de l'outil suit le trait."),
+    ("Climb: the cutter rolls along the wall. A cleaner edge, for a stiff machine.", "En avalant : la fraise roule le long de la paroi. Un bord plus net, pour une machine rigide."),
+    ("Conventional: the cutter bites against its way. Gentler on a light machine.", "En opposition : la fraise mord contre son avance. Plus doux pour une machine légère."),
+    ("Goes down along the cut in one slope.", "Descend le long de la coupe en une seule pente."),
+    ("Goes down back and forth over a short stretch.", "Descend en allers-retours sur une courte distance."),
+    ("Goes down little by little all the way round.", "Descend petit à petit sur tout le tour."),
+    ("Curves into the cut: no mark where it starts.", "Arrive en courbe : pas de marque au départ."),
+    ("Comes in on a straight line from the waste side.", "Arrive en ligne droite depuis la chute."),
+    ("Each shape starts where it was drawn from.", "Chaque forme commence là où elle a été dessinée."),
+    ("Each shape starts at its point nearest the tool.", "Chaque forme commence à son point le plus proche de l'outil."),
+    ("Each shape starts nearest the point picked below.", "Chaque forme commence au plus près du point choisi dessous."),
+    ("Back and forth in straight rows.", "En allers-retours, par rangées droites."),
+    ("Rings that follow the shape, from the middle out.", "Des anneaux qui suivent la forme, du milieu vers l'extérieur."),
     ("Circle", "Cercle"),
     ("Ellipse", "Ellipse"),
     ("Rectangle", "Rectangle"),

@@ -1719,7 +1719,7 @@ impl App {
                 crate::ui::bold_sized(ui, crate::i18n::tr("Machine file"), 15.0, theme::TEXT());
             });
             crate::ui::icon_caps(ui, Icon::TpProfile, crate::i18n::tr("What goes in"));
-            if let Some(k) = crate::ui::pills(ui, &[crate::i18n::tr("Selected toolpath"), crate::i18n::tr("All visible")], usize::from(self.one_file)) {
+            if let Some(k) = crate::ui::pictured_pills(ui, &[(Some(crate::ui::Pic::Icon(Icon::TpProfile)), crate::i18n::tr("Selected toolpath")), (Some(crate::ui::Pic::Icon(Icon::Eye)), crate::i18n::tr("All visible"))], usize::from(self.one_file)) {
                 self.one_file = k == 1;
             }
             self.piece_chooser(ui);
@@ -1923,11 +1923,14 @@ impl App {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 // Burin's own head: what kind of cut, small, then its name as the title.
                 ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::hover());
+                    let (r, _) = ui.allocate_exact_size(vec2(34.0, 34.0), egui::Sense::hover());
                     crate::icons::paint(ui.painter(), r, op_icon(op.kind), true);
-                    crate::ui::small_caps(ui, op.kind.title());
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        crate::ui::small_caps(ui, op.kind.title());
+                        ui.add(TextEdit::singleline(&mut op.name).font(egui::FontId::proportional(15.0)).desired_width(f32::INFINITY).hint_text(crate::i18n::tr("Name")));
+                    });
                 });
-                ui.add(TextEdit::singleline(&mut op.name).font(egui::FontId::proportional(16.0)).desired_width(f32::INFINITY).hint_text(crate::i18n::tr("Name")));
                 self.op_depths(ui, &mut op, unit);
                 self.op_tool(ui, &mut op, unit);
                 match op.kind {
@@ -2151,7 +2154,6 @@ impl App {
     }
 
     fn pocket_cards(&mut self, ui: &mut Ui, op: &mut Op, unit: &str) {
-        use crate::ui::pills;
         if self.show_advanced {
             self.clearance_card(ui, op, crate::i18n::tr("A bigger cutter clears first"), true);
         }
@@ -2159,17 +2161,22 @@ impl App {
             ui.spacing_mut().item_spacing.y = 4.0;
             crate::ui::icon_caps(ui, Icon::TpPocket, crate::i18n::tr("Clearing"));
             let way = if op.adaptive { 2 } else if op.raster { 1 } else { 0 };
-            if let Some(k) = pills(ui, &[crate::i18n::tr("Offset"), crate::i18n::tr("Raster"), crate::i18n::tr("Adaptive")], way) {
+            if let Some(k) = crate::ui::pictured_pills(ui, &[(Some(crate::ui::Pic::ClearOffset), crate::i18n::tr("Offset")), (Some(crate::ui::Pic::ClearRaster), crate::i18n::tr("Raster")), (Some(crate::ui::Pic::ClearAdaptive), crate::i18n::tr("Adaptive"))], way) {
                 op.raster = k == 1;
                 op.adaptive = k == 2;
             }
-            if op.adaptive {
-                note(ui, crate::i18n::tr("The cutter never bites more than its stepover: gentler on small cutters. From other CAM programs, not in the original."));
-            }
+            crate::ui::explain(ui, [crate::ui::Pic::ClearOffset, crate::ui::Pic::ClearRaster, crate::ui::Pic::ClearAdaptive][if op.adaptive { 2 } else if op.raster { 1 } else { 0 }], if op.adaptive {
+                crate::i18n::tr("The cutter never bites more than its stepover: gentler on small cutters. From other CAM programs, not in the original.")
+            } else if op.raster {
+                crate::i18n::tr("Back and forth in straight rows.")
+            } else {
+                crate::i18n::tr("Rings that follow the shape, from the middle out.")
+            });
             crate::ui::icon_caps(ui, Icon::Rotate, crate::i18n::tr("Direction"));
-            if let Some(k) = pills(ui, &[crate::i18n::tr("Climb"), crate::i18n::tr("Conventional")], if op.climb { 0 } else { 1 }) {
+            if let Some(k) = crate::ui::pictured_pills(ui, &[(Some(crate::ui::Pic::Climb), crate::i18n::tr("Climb")), (Some(crate::ui::Pic::Conventional), crate::i18n::tr("Conventional"))], if op.climb { 0 } else { 1 }) {
                 op.climb = k == 0;
             }
+            crate::ui::explain_direction(ui, op.climb);
             if op.raster {
                 ui.horizontal(|ui| {
                     ui.label(crate::i18n::tr("Rows at"));
@@ -2183,7 +2190,7 @@ impl App {
                     ProfilePass::Last => 1,
                     ProfilePass::None => 2,
                 };
-                if let Some(k) = pills(ui, &[crate::i18n::tr("before"), crate::i18n::tr("after"), crate::i18n::tr("never")], pass) {
+                if let Some(k) = crate::ui::pictured_pills(ui, &[(Some(crate::ui::Pic::WallFirst), crate::i18n::tr("before")), (Some(crate::ui::Pic::WallLast), crate::i18n::tr("after")), (Some(crate::ui::Pic::WallNever), crate::i18n::tr("never"))], pass) {
                     op.profile_pass = [ProfilePass::First, ProfilePass::Last, ProfilePass::None][k];
                 }
                 if op.profile_pass != ProfilePass::None {
@@ -2199,14 +2206,13 @@ impl App {
     }
 
     fn vcarve_cards(&mut self, ui: &mut Ui, op: &mut Op, unit: &str) {
-        use crate::ui::pills;
         let flat = op.flat_depth > 0.0;
         self.clearance_card(ui, op, crate::i18n::tr("A flat cutter clears the flat bottoms"), flat);
         if flat && op.clearance_tool.is_some() {
             card(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 crate::ui::icon_caps(ui, Icon::TpVCarve, crate::i18n::tr("Clearing the flats"));
-                if let Some(k) = pills(ui, &[crate::i18n::tr("Offset"), crate::i18n::tr("Raster")], usize::from(op.raster)) {
+                if let Some(k) = crate::ui::pictured_pills(ui, &[(Some(crate::ui::Pic::ClearOffset), crate::i18n::tr("Offset")), (Some(crate::ui::Pic::ClearRaster), crate::i18n::tr("Raster"))], usize::from(op.raster)) {
                     op.raster = k == 1;
                 }
                 if op.raster {
@@ -2551,14 +2557,13 @@ fn profile_combo(ui: &mut Ui, value: &mut ProfilePass, salt: &str) {
 }
 
 fn drill_cards(ui: &mut Ui, op: &mut Op, unit: &str) {
-    use crate::ui::pills;
     card(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
         crate::ui::icon_caps(ui, Icon::TpDrill, crate::i18n::tr("Drilling"));
         ui.checkbox(&mut op.peck, crate::i18n::tr("Peck: come up to clear the chips"));
         if op.peck {
             ui.label(RichText::new(crate::i18n::tr("Between pecks, back up to")).size(12.0).color(theme::MUTED()));
-            if let Some(k) = pills(ui, &[crate::i18n::tr("the start"), crate::i18n::tr("the last peck")], if op.retract_to_start { 0 } else { 1 }) {
+            if let Some(k) = crate::ui::pills(ui, &[crate::i18n::tr("the start"), crate::i18n::tr("the last peck")], if op.retract_to_start { 0 } else { 1 }) {
                 op.retract_to_start = k == 0;
             }
             labelled(ui, crate::i18n::tr("plus a gap of"), 0.0, &mut op.retract_gap, 46.0, unit);
@@ -2575,16 +2580,15 @@ fn drill_cards(ui: &mut Ui, op: &mut Op, unit: &str) {
 }
 
 fn engrave_cards(ui: &mut Ui, op: &mut Op, unit: &str) {
-    use crate::ui::pills;
     card(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
         crate::ui::icon_caps(ui, Icon::TpEngrave, crate::i18n::tr("Engraving"));
-        if let Some(k) = pills(ui, &[crate::i18n::tr("Outline"), crate::i18n::tr("Fill")], usize::from(op.fill)) {
+        if let Some(k) = crate::ui::pictured_pills(ui, &[(Some(crate::ui::Pic::Outline), crate::i18n::tr("Outline")), (Some(crate::ui::Pic::Fill), crate::i18n::tr("Fill"))], usize::from(op.fill)) {
             op.fill = k == 1;
         }
         if op.fill {
             labelled(ui, crate::i18n::tr("Stepover"), 0.0, &mut op.stepover, 46.0, unit);
-            if let Some(k) = pills(ui, &[crate::i18n::tr("Offset"), crate::i18n::tr("Hatch")], usize::from(op.hatch)) {
+            if let Some(k) = crate::ui::pictured_pills(ui, &[(Some(crate::ui::Pic::ClearOffset), crate::i18n::tr("Offset")), (Some(crate::ui::Pic::Hatch), crate::i18n::tr("Hatch"))], usize::from(op.hatch)) {
                 op.hatch = k == 1;
             }
             if op.hatch {
@@ -2609,7 +2613,7 @@ fn flute_cards(ui: &mut Ui, op: &mut Op) {
             FluteEnds::Start => 1,
             FluteEnds::End => 2,
         };
-        if let Some(k) = crate::ui::pills(ui, &[crate::i18n::tr("both ends"), crate::i18n::tr("the start"), crate::i18n::tr("the end")], k) {
+        if let Some(k) = crate::ui::pictured_pills(ui, &[(Some(crate::ui::Pic::FluteBoth), crate::i18n::tr("both ends")), (Some(crate::ui::Pic::FluteStart), crate::i18n::tr("the start")), (Some(crate::ui::Pic::FluteEnd), crate::i18n::tr("the end"))], k) {
             op.flute_ends = [FluteEnds::Both, FluteEnds::Start, FluteEnds::End][k];
         }
         let mut share = op.flute_ramp as f32;
