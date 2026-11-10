@@ -1196,69 +1196,89 @@ impl App {
                 });
             }
             Xform::CopyAlong => {
+                use crate::ui::{explain, icon_caps, pictured_pills, Pic};
                 apply_label = Some(crate::i18n::tr("Copy"));
                 card(ui, |ui| {
-                    ui.radio_value(&mut f.copy_circles, false, crate::i18n::tr("Copy object"));
-                    note(ui, crate::i18n::tr("Select the object to copy, then one vector to copy it along."));
-                    ui.radio_value(&mut f.copy_circles, true, crate::i18n::tr("Copy Circles"));
-                    ui.add_enabled_ui(f.copy_circles, |ui| {
-                        labelled(ui, crate::i18n::tr("Diameter"), 60.0, &mut f.size, 54.0, unit);
-                    });
-                    bold(ui, crate::i18n::tr("Specify ..."));
-                    ui.radio_value(&mut f.by_number, false, crate::i18n::tr("Distance between copies"));
-                    ui.add_enabled_ui(!f.by_number, |ui| {
-                        labelled(ui, "", 14.0, &mut f.distance, 54.0, unit);
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    icon_caps(ui, Icon::CopyAlong, crate::i18n::tr("What goes along the line"));
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::AlongObjects), crate::i18n::tr("The shape picked")), (Some(Pic::AlongCircles), crate::i18n::tr("Circles"))], usize::from(f.copy_circles)) {
+                        f.copy_circles = k == 1;
+                    }
+                    if f.copy_circles {
+                        labelled(ui, crate::i18n::tr("Diameter"), 0.0, &mut f.size, 54.0, unit);
+                    } else {
+                        explain(ui, Pic::AlongObjects, crate::i18n::tr("Select the object to copy, then one vector to copy it along."));
+                    }
+                    icon_caps(ui, Icon::Measure, crate::i18n::tr("How they're spaced"));
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::ByDistance), crate::i18n::tr("A set distance apart")), (Some(Pic::ByCount), crate::i18n::tr("A set number"))], usize::from(f.by_number)) {
+                        f.by_number = k == 1;
+                    }
+                    if f.by_number {
+                        ui.horizontal(|ui| {
+                            ui.label(crate::i18n::tr("Number of copies"));
+                            count_box(ui, &mut f.count, 44.0);
+                        });
+                    } else {
+                        labelled(ui, crate::i18n::tr("Distance between copies"), 0.0, &mut f.distance, 54.0, unit);
                         ui.checkbox(&mut f.even, crate::i18n::tr("Force even spacing"));
-                    });
-                    ui.radio_value(&mut f.by_number, true, crate::i18n::tr("Number of copies"));
-                    ui.add_enabled_ui(f.by_number, |ui| {
-                        count_box(ui, &mut f.count, 54.0);
-                    });
-                    ui.separator();
-                    ui.checkbox(&mut f.align, crate::i18n::tr("Align objects to curve"));
+                    }
+                    ui.checkbox(&mut f.align, crate::i18n::tr("Turn them to follow the line"));
                     ui.checkbox(&mut f.new_layer, crate::i18n::tr("Create copies on new layer"));
-                    ui.checkbox(&mut f.reverse, crate::i18n::tr("Reverse direction"));
+                    ui.checkbox(&mut f.reverse, crate::i18n::tr("Start from the other end"));
                 });
             }
             Xform::Join => {
+                use crate::ui::{explain, icon_caps, Pic};
                 apply_label = Some(crate::i18n::tr("Join"));
                 let (before, after) = self.join_counts(f.distance);
                 card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Selected vectors:"));
-                    ui.label(tf!("Closed: {}", before[0]));
-                    ui.label(tf!("Open: {}", before[1]));
-                    ui.add_space(4.0);
-                    bold(ui, crate::i18n::tr("Tolerance:"));
-                    labelled(ui, "", 2.0, &mut f.distance, 60.0, unit);
-                    ui.add_space(4.0);
-                    bold(ui, crate::i18n::tr("Vectors after"));
-                    ui.label(tf!("Closed: {}", after[0]));
-                    ui.label(tf!("Open: {}", after[1]));
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    explain(ui, Pic::JoinEnds, crate::i18n::tr("Ends closer than the gap below are joined into one line or a closed shape."));
+                    labelled(ui, crate::i18n::tr("Gap"), 0.0, &mut f.distance, 60.0, unit);
+                    icon_caps(ui, Icon::Select, crate::i18n::tr("Shapes"));
+                    egui::Grid::new("join_counts").num_columns(3).show(ui, |ui| {
+                        ui.label("");
+                        ui.label(RichText::new(crate::i18n::tr("now")).color(theme::MUTED()));
+                        ui.label(RichText::new(crate::i18n::tr("after")).color(theme::MUTED()));
+                        ui.end_row();
+                        ui.label(crate::i18n::tr("closed"));
+                        ui.label(before[0].to_string());
+                        ui.label(RichText::new(after[0].to_string()).strong());
+                        ui.end_row();
+                        ui.label(crate::i18n::tr("open"));
+                        ui.label(before[1].to_string());
+                        ui.label(RichText::new(after[1].to_string()).strong());
+                        ui.end_row();
+                    });
                 });
             }
             Xform::Fillet => {
+                use crate::ui::{explain, pictured_pills, Pic};
                 apply_label = None;
                 card(ui, |ui| {
-                    labelled(ui, crate::i18n::tr("Fillet / Tool"), 62.0, &mut f.distance, 54.0, unit);
-                    note(ui, crate::i18n::tr("Click on an angled corner to change it into a circular fillet. Undo removes a fillet."));
-                    bold(ui, crate::i18n::tr("Fillet Type"));
-                    ui.radio_value(&mut f.fillet, FilletKind::Normal, crate::i18n::tr("Normal fillet"));
-                    ui.radio_value(&mut f.fillet, FilletKind::DogBone, crate::i18n::tr("'Dog-Bone' Fillet"));
-                    note(ui, crate::i18n::tr("Clears inside corners so slotted pieces fit together."));
-                    ui.radio_value(&mut f.fillet, FilletKind::TBone, crate::i18n::tr("'T-Bone' Fillet"));
-                    note(ui, crate::i18n::tr("The same clearance, for when the slot is the same size as the tool."));
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    let kinds = [FilletKind::Normal, FilletKind::DogBone, FilletKind::TBone];
+                    let at = kinds.iter().position(|k| *k == f.fillet).unwrap_or(0);
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::FilletNormal), crate::i18n::tr("Rounded")), (Some(Pic::FilletDogBone), crate::i18n::tr("Dog-bone")), (Some(Pic::FilletTBone), crate::i18n::tr("T-bone"))], at) {
+                        f.fillet = kinds[k];
+                    }
+                    explain(ui, [Pic::FilletNormal, Pic::FilletDogBone, Pic::FilletTBone][at], match f.fillet {
+                        FilletKind::Normal => crate::i18n::tr("Click on an angled corner to change it into a circular fillet. Undo removes a fillet."),
+                        FilletKind::DogBone => crate::i18n::tr("Clears inside corners so slotted pieces fit together."),
+                        FilletKind::TBone => crate::i18n::tr("The same clearance, for when the slot is the same size as the tool."),
+                    });
+                    labelled(ui, crate::i18n::tr("Radius or tool"), 0.0, &mut f.distance, 54.0, unit);
                 });
             }
             Xform::Trim => {
+                use crate::ui::{explain, Pic};
                 apply_label = None;
                 card(ui, |ui| {
-                    ui.label(crate::i18n::tr("To trim overlapping vectors click on sections of vectors you want to delete, or hold the button and sweep across them."));
-                    ui.add_space(4.0);
-                    ui.label(crate::i18n::tr("To delete closed non-overlapping vectors hold down the Shift key when clicking."));
-                    ui.add_space(4.0);
-                    ui.checkbox(&mut f.rejoin, crate::i18n::tr("Rejoin trimmed sections automatically when form is closed."));
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    explain(ui, Pic::Icon(Icon::Trim), crate::i18n::tr("To trim overlapping vectors click on sections of vectors you want to delete, or hold the button and sweep across them."));
+                    explain(ui, Pic::Icon(Icon::Delete), crate::i18n::tr("To delete closed non-overlapping vectors hold down the Shift key when clicking."));
+                    ui.checkbox(&mut f.rejoin, crate::i18n::tr("Join what's left when closing"));
                     if !self.doc.constraints.is_empty() {
-                        ui.add_space(4.0);
                         note(ui, crate::i18n::tr("Rules stay on the edges they were on. A dimension on a shortened line takes its new length, and rules on a removed part are removed."));
                     }
                 });
@@ -1316,12 +1336,13 @@ impl App {
             Xform::Nest => {
                 apply_label = Some(crate::i18n::tr("Nest"));
                 card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Tool and Clearance Settings"));
+                    use crate::ui::{icon_caps, pictured_pills, Pic};
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    icon_caps(ui, Icon::Tools, crate::i18n::tr("Gaps around the parts"));
                     labelled(ui, crate::i18n::tr("Tool Dia. (D)"), 74.0, &mut f.tool_dia, 54.0, unit);
                     labelled(ui, crate::i18n::tr("Clearance"), 74.0, &mut f.clearance, 54.0, unit);
                     labelled(ui, crate::i18n::tr("Border Gap"), 74.0, &mut f.border, 54.0, unit);
-                    ui.separator();
-                    bold(ui, crate::i18n::tr("Sheet Options"));
+                    icon_caps(ui, Icon::JobSetup, crate::i18n::tr("On the sheet"));
                     ui.horizontal(|ui| {
                         ui.label(crate::i18n::tr("Nest from"));
                         ui.add_space(14.0);
@@ -1330,11 +1351,9 @@ impl App {
                             f.anchor = Datum::BottomLeft;
                         }
                     });
-                    ui.label(crate::i18n::tr("Nest Direction"));
-                    ui.horizontal(|ui| {
-                        ui.radio_value(&mut f.along_x, true, crate::i18n::tr("Along X"));
-                        ui.radio_value(&mut f.along_x, false, crate::i18n::tr("Along Y"));
-                    });
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::NestAlongX), crate::i18n::tr("Along X")), (Some(Pic::NestAlongY), crate::i18n::tr("Along Y"))], if f.along_x { 0 } else { 1 }) {
+                        f.along_x = k == 0;
+                    }
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut f.nest_turn, crate::i18n::tr("Allow rotation"));
                         ui.add_enabled_ui(f.nest_turn, |ui| {
@@ -1343,6 +1362,7 @@ impl App {
                             ui.label("°");
                         });
                     });
+                    icon_caps(ui, Icon::Nest, crate::i18n::tr("Packing"));
                     // Copies of the chosen parts, kept with each shape (`nestNumCopies`).
                     // As the original fills the box (`0x1403bdebd`): each chosen shape's count, 1 when it
                     // has none; the box shows it when they all agree and stays empty when they don't.
@@ -1394,12 +1414,14 @@ impl App {
                 apply_label = None;
                 use crate::distort::EnvelopeKind;
                 card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Create Envelope"));
+                    crate::ui::icon_caps(ui, Icon::Distort, crate::i18n::tr("Create Envelope"));
                     ui.label(crate::i18n::tr("Select the object to distort and (optionally) one or two open vectors to define the bottom and top of the initial distortion envelope."));
                     ui.add_space(4.0);
-                    ui.radio_value(&mut f.envelope_kind, EnvelopeKind::BoundingBox, crate::i18n::tr("Bounding Box"));
-                    ui.radio_value(&mut f.envelope_kind, EnvelopeKind::OneCurve, crate::i18n::tr("Above a Single Curve"));
-                    ui.radio_value(&mut f.envelope_kind, EnvelopeKind::TwoCurves, crate::i18n::tr("Between Two Curves"));
+                    let kinds = [EnvelopeKind::BoundingBox, EnvelopeKind::OneCurve, EnvelopeKind::TwoCurves];
+                    let at = kinds.iter().position(|k| *k == f.envelope_kind).unwrap_or(0);
+                    if let Some(k) = crate::ui::pictured_pills(ui, &[(Some(crate::ui::Pic::EnvelopeBox), crate::i18n::tr("Bounding Box")), (Some(crate::ui::Pic::EnvelopeOneCurve), crate::i18n::tr("Above a Single Curve")), (Some(crate::ui::Pic::EnvelopeTwoCurves), crate::i18n::tr("Between Two Curves"))], at) {
+                        f.envelope_kind = kinds[k];
+                    }
                     ui.add_space(4.0);
                     let check = self.envelope_check(f.envelope_kind);
                     match &check {
@@ -1419,7 +1441,7 @@ impl App {
                     });
                 });
                 card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Edit Envelope"));
+                    crate::ui::icon_caps(ui, Icon::Edit, crate::i18n::tr("Edit Envelope"));
                     let active = self.envelope.is_some();
                     let handles = self.envelope.as_ref().is_some_and(|e| e.has_handles());
                     ui.label(if handles {
@@ -1435,20 +1457,24 @@ impl App {
                 });
             }
             Xform::TextOnCurve => {
+                use crate::ui::{explain, icon_caps, pictured_pills, Pic};
                 card(ui, |ui| {
-                    note(ui, crate::i18n::tr("Select a SINGLE LINE of text and the curve to wrap it onto."));
-                    bold(ui, crate::i18n::tr("Text Spacing"));
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    explain(ui, Pic::TextFollows, crate::i18n::tr("Select a SINGLE LINE of text and the curve to wrap it onto."));
+                    icon_caps(ui, Icon::Text, crate::i18n::tr("Text Spacing"));
                     ui.add(egui::Slider::new(&mut f.spacing, 0.5..=3.0).show_value(true));
-                    bold(ui, crate::i18n::tr("Text Position"));
-                    labelled(ui, crate::i18n::tr("Offset Distance"), 86.0, &mut f.distance, 50.0, unit);
+                    icon_caps(ui, Icon::Move, crate::i18n::tr("Text Position"));
+                    labelled(ui, crate::i18n::tr("Offset Distance"), 0.0, &mut f.distance, 50.0, unit);
                     note(ui, crate::i18n::tr("A positive offset sits above the curve, a negative one below."));
-                    bold(ui, crate::i18n::tr("Text Alignment"));
-                    ui.radio_value(&mut f.anchor, Datum::BottomLeft, crate::i18n::tr("Left"));
-                    ui.radio_value(&mut f.anchor, Datum::Centre, crate::i18n::tr("Middle"));
-                    ui.radio_value(&mut f.anchor, Datum::BottomRight, crate::i18n::tr("Right"));
-                    ui.separator();
-                    ui.radio_value(&mut f.align, true, crate::i18n::tr("Align to Curve"));
-                    ui.radio_value(&mut f.align, false, crate::i18n::tr("Keep Vertical"));
+                    let spots = [Datum::BottomLeft, Datum::Centre, Datum::BottomRight];
+                    let at = spots.iter().position(|d| *d == f.anchor).unwrap_or(0);
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::AlignLeft), crate::i18n::tr("Left")), (Some(Pic::AlignCentreX), crate::i18n::tr("Middle")), (Some(Pic::AlignRight), crate::i18n::tr("Right"))], at) {
+                        f.anchor = spots[k];
+                    }
+                    icon_caps(ui, Icon::Rotate, crate::i18n::tr("Letters"));
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::TextFollows), crate::i18n::tr("Align to Curve")), (Some(Pic::TextUpright), crate::i18n::tr("Keep Vertical"))], if f.align { 0 } else { 1 }) {
+                        f.align = k == 0;
+                    }
                 });
             }
         }

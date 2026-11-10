@@ -370,6 +370,21 @@ pub(crate) enum Pic {
     FlipEdgeRight,
     FlipEdgeTop,
     FlipEdgeBottom,
+    AlongObjects,
+    AlongCircles,
+    ByDistance,
+    ByCount,
+    FilletNormal,
+    FilletDogBone,
+    FilletTBone,
+    NestAlongX,
+    NestAlongY,
+    EnvelopeBox,
+    EnvelopeOneCurve,
+    EnvelopeTwoCurves,
+    TextFollows,
+    TextUpright,
+    JoinEnds,
 }
 
 /// Draws a choice's picture into a square, in the given colour.
@@ -657,6 +672,83 @@ pub(crate) fn draw_pic(p: &egui::Painter, r: Rect, pic: Pic, c: Color32) {
                 Pic::FlipEdgeTop => line(&[(0.0, 0.3), (1.0, 0.3)], Stroke::new(2.0, c)),
                 _ => line(&[(0.0, 0.7), (1.0, 0.7)], Stroke::new(2.0, c)),
             }
+        }
+        Pic::AlongObjects | Pic::AlongCircles => {
+            arc(0.5, 1.2, 0.85, 145.0, 35.0, faint);
+            for (x, y) in [(0.18, 0.62), (0.5, 0.38), (0.82, 0.62)] {
+                if pic == Pic::AlongObjects {
+                    rect(x - 0.1, y - 0.1, x + 0.1, y + 0.1, s);
+                } else {
+                    p.circle_stroke(at(x, y), w * 0.1, s);
+                }
+            }
+        }
+        Pic::ByDistance => {
+            p.circle_filled(at(0.15, 0.5), 2.2, c);
+            p.circle_filled(at(0.85, 0.5), 2.2, c);
+            line(&[(0.28, 0.5), (0.72, 0.5)], s);
+            line(&[(0.28, 0.35), (0.28, 0.65)], s);
+            line(&[(0.72, 0.35), (0.72, 0.65)], s);
+        }
+        Pic::ByCount => {
+            for x in [0.12, 0.37, 0.63, 0.88] {
+                p.circle_filled(at(x, 0.5), 2.2, c);
+            }
+        }
+        Pic::FilletNormal | Pic::FilletDogBone | Pic::FilletTBone => {
+            match pic {
+                Pic::FilletNormal => {
+                    line(&[(0.1, 0.9), (0.1, 0.45)], s);
+                    arc(0.55, 0.45, 0.45, 180.0, 90.0, s);
+                    line(&[(0.55, 0.0), (0.95, 0.0)], s);
+                }
+                Pic::FilletDogBone => {
+                    line(&[(0.15, 0.95), (0.15, 0.15), (0.95, 0.15)], faint);
+                    p.circle_stroke(at(0.25, 0.25), w * 0.17, s);
+                }
+                _ => {
+                    line(&[(0.15, 0.95), (0.15, 0.15), (0.95, 0.15)], faint);
+                    p.circle_stroke(at(0.15, 0.35), w * 0.17, s);
+                }
+            }
+        }
+        Pic::NestAlongX | Pic::NestAlongY => {
+            rect(0.02, 0.02, 0.98, 0.98, faint);
+            let cells: [(f32, f32); 3] = if pic == Pic::NestAlongX { [(0.1, 0.62), (0.4, 0.62), (0.7, 0.62)] } else { [(0.1, 0.62), (0.1, 0.32), (0.1, 0.02)] };
+            for (x, y) in cells {
+                rect(x + 0.02, y + 0.06, x + 0.24, y + 0.3, s);
+            }
+            if pic == Pic::NestAlongX {
+                line(&[(0.15, 0.4), (0.85, 0.4)], Stroke::new(1.0, c));
+            } else {
+                line(&[(0.6, 0.85), (0.6, 0.15)], Stroke::new(1.0, c));
+            }
+        }
+        Pic::EnvelopeBox => {
+            rect(0.1, 0.25, 0.9, 0.75, s);
+            line(&[(0.25, 0.6), (0.4, 0.4), (0.55, 0.6), (0.7, 0.4)], faint);
+        }
+        Pic::EnvelopeOneCurve => {
+            arc(0.5, 1.4, 0.95, 120.0, 60.0, s);
+            line(&[(0.25, 0.45), (0.4, 0.25), (0.55, 0.45), (0.7, 0.25)], faint);
+        }
+        Pic::EnvelopeTwoCurves => {
+            arc(0.5, 1.4, 0.95, 120.0, 60.0, s);
+            arc(0.5, 1.0, 0.95, 120.0, 60.0, s);
+            line(&[(0.3, 0.5), (0.45, 0.35), (0.6, 0.5)], faint);
+        }
+        Pic::TextFollows | Pic::TextUpright => {
+            arc(0.5, 1.3, 0.9, 150.0, 30.0, faint);
+            for (x, y, a) in [(0.2, 0.62, 0.5f32), (0.5, 0.42, 0.0), (0.8, 0.62, -0.5)] {
+                let t = if pic == Pic::TextFollows { a } else { 0.0 };
+                let (ox, oy) = (t.sin() * 0.14, t.cos() * 0.14);
+                p.line_segment([at(x, y), at(x + ox, y - oy)], Stroke::new(2.4, c));
+            }
+        }
+        Pic::JoinEnds => {
+            line(&[(0.05, 0.75), (0.45, 0.3)], s);
+            line(&[(0.55, 0.3), (0.95, 0.75)], s);
+            p.circle_stroke(at(0.5, 0.3), w * 0.1, faint);
         }
         Pic::Icon(_) => {}
     }
