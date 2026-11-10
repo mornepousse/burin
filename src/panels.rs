@@ -805,25 +805,38 @@ impl App {
     /// The form of the Lines and Curve tools.
     pub fn line_form(&mut self, ui: &mut Ui, mut f: DrawForm) {
         let icon = if f.kind == DrawKind::Curve { Icon::Curve } else { Icon::Lines };
-        title_card(ui, icon, if f.kind == DrawKind::Curve { crate::i18n::tr("Create Curve") } else { crate::i18n::tr("Create Line / Polyline") });
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
+            crate::icons::paint(ui.painter(), r, icon, true);
+            crate::ui::bold_sized(ui, if f.kind == DrawKind::Curve { crate::i18n::tr("Curve") } else { crate::i18n::tr("Lines") }, 15.0, theme::TEXT());
+        });
         let last = f.points.last().copied();
         card(ui, |ui| {
-            bold(ui, crate::i18n::tr("Next Point"));
+            crate::ui::icon_caps(ui, Icon::Move, crate::i18n::tr("Next point"));
             let zero = self.doc.job.origin();
             let mut changed_abs = false;
             let mut changed_delta = false;
             let mut changed_polar = false;
-            egui::Grid::new("next_point").num_columns(4).spacing([6.0, 4.0]).show(ui, |ui| {
+            // Three ways to say where the next point goes, each with its picture.
+            let pic = |ui: &mut Ui, pic: crate::ui::Pic, tip: &str| {
+                let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                crate::ui::draw_pic(ui.painter(), r, pic, theme::ACCENT);
+                resp.on_hover_text(tip);
+            };
+            egui::Grid::new("next_point").num_columns(5).spacing([6.0, 4.0]).show(ui, |ui| {
+                pic(ui, crate::ui::Pic::PointAt, crate::i18n::tr("At a place on the sheet"));
                 ui.label("X");
                 changed_abs |= number_from(ui, &mut f.next[0], zero[0], 54.0);
                 ui.label("Y");
                 changed_abs |= number_from(ui, &mut f.next[1], zero[1], 54.0);
                 ui.end_row();
+                pic(ui, crate::ui::Pic::PointPolar, crate::i18n::tr("In a direction, this far"));
                 ui.label(crate::i18n::tr("Angle"));
                 changed_polar |= number(ui, &mut f.step[0], 54.0);
                 ui.label("L");
                 changed_polar |= number(ui, &mut f.step[1], 54.0);
                 ui.end_row();
+                pic(ui, crate::ui::Pic::PointStep, crate::i18n::tr("So far across and up from the last point"));
                 ui.label("dx");
                 changed_delta |= number(ui, &mut f.delta[0], 54.0);
                 ui.label("dy");
@@ -847,7 +860,7 @@ impl App {
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if wide(ui, crate::i18n::tr("Add"), 56.0).clicked() {
+                if crate::ui::worded_button(ui, true, Icon::Lines, crate::i18n::tr("Add")).clicked() {
                     f.points.push(f.next);
                 }
                 if ui.add_enabled(!f.points.is_empty(), egui::Button::new(crate::i18n::tr("Undo")).min_size(vec2(56.0, 20.0))).clicked() {
@@ -860,7 +873,7 @@ impl App {
                 }
             });
             ui.separator();
-            bold(ui, crate::i18n::tr("Cursor Position"));
+            crate::ui::icon_caps(ui, Icon::Select, crate::i18n::tr("Cursor Position"));
             if let Some(c) = self.cursor {
                 let from = f.points.last().copied().unwrap_or([0.0, 0.0]);
                 let (dx, dy) = (c[0] - from[0], c[1] - from[1]);
@@ -872,7 +885,7 @@ impl App {
                 note(ui, crate::i18n::tr("Move over the sheet to see it here."));
             }
             ui.separator();
-            note(ui, crate::i18n::tr("Click on the sheet to add points. Press the Space bar to finish this line and start a new one. Right click to finish and leave. Click the first point to close the shape."));
+            crate::ui::explain(ui, crate::ui::Pic::Icon(icon), crate::i18n::tr("Click on the sheet to add points. Press the Space bar to finish this line and start a new one. Right click to finish and leave. Click the first point to close the shape."));
         });
         if matches!(self.left, LeftForm::Draw(_)) {
             self.left = LeftForm::Draw(f);

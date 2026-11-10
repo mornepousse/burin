@@ -385,6 +385,16 @@ pub(crate) enum Pic {
     TextFollows,
     TextUpright,
     JoinEnds,
+    ProfileRound,
+    ProfileAngular,
+    ProfileFlat,
+    CombineAdd,
+    CombineSubtract,
+    CombineHighest,
+    CombineLowest,
+    PointAt,
+    PointPolar,
+    PointStep,
 }
 
 /// Draws a choice's picture into a square, in the given colour.
@@ -750,7 +760,79 @@ pub(crate) fn draw_pic(p: &egui::Painter, r: Rect, pic: Pic, c: Color32) {
             line(&[(0.55, 0.3), (0.95, 0.75)], s);
             p.circle_stroke(at(0.5, 0.3), w * 0.1, faint);
         }
+        Pic::ProfileRound => {
+            line(&[(0.0, 0.85), (1.0, 0.85)], faint);
+            arc(0.5, 0.85, 0.42, 180.0, 0.0, s);
+        }
+        Pic::ProfileAngular => {
+            line(&[(0.0, 0.85), (1.0, 0.85)], faint);
+            line(&[(0.08, 0.85), (0.5, 0.2), (0.92, 0.85)], s);
+        }
+        Pic::ProfileFlat => {
+            line(&[(0.0, 0.85), (1.0, 0.85)], faint);
+            line(&[(0.1, 0.85), (0.1, 0.4), (0.9, 0.4), (0.9, 0.85)], s);
+        }
+        Pic::CombineAdd | Pic::CombineSubtract | Pic::CombineHighest | Pic::CombineLowest => {
+            // The model as a low hump, the new shape over it.
+            line(&[(0.0, 0.7), (0.3, 0.55), (0.7, 0.55), (1.0, 0.7)], faint);
+            match pic {
+                Pic::CombineAdd => arc(0.5, 0.55, 0.3, 180.0, 0.0, s),
+                Pic::CombineSubtract => arc(0.5, 0.55, 0.3, 180.0, 360.0, s),
+                Pic::CombineHighest => line(&[(0.2, 0.55), (0.5, 0.15), (0.8, 0.55)], s),
+                _ => line(&[(0.2, 0.55), (0.5, 0.85), (0.8, 0.55)], s),
+            }
+        }
+        Pic::PointAt => {
+            line(&[(0.1, 0.1), (0.1, 0.9), (0.9, 0.9)], faint);
+            p.circle_filled(at(0.7, 0.3), 2.4, c);
+            line(&[(0.1, 0.3), (0.62, 0.3)], Stroke::new(1.0, c));
+            line(&[(0.7, 0.9), (0.7, 0.38)], Stroke::new(1.0, c));
+        }
+        Pic::PointPolar => {
+            p.circle_filled(at(0.15, 0.8), 2.0, MUTED());
+            line(&[(0.15, 0.8), (0.85, 0.25)], s);
+            arc(0.15, 0.8, 0.35, 0.0, 38.0, faint);
+        }
+        Pic::PointStep => {
+            p.circle_filled(at(0.15, 0.8), 2.0, MUTED());
+            line(&[(0.15, 0.8), (0.85, 0.8), (0.85, 0.25)], s);
+        }
         Pic::Icon(_) => {}
+    }
+}
+
+/// A cut through a 3D shape: its base, then the round, pointed or flat top above it.
+pub(crate) fn section_preview(ui: &mut Ui, profile: Profile, height: f64, base: f64, unit: &str) {
+    let w = ui.available_width();
+    let (area, _) = ui.allocate_exact_size(vec2(w, 78.0), Sense::hover());
+    let p = ui.painter_at(area);
+    p.rect_filled(area, 8.0, CARD());
+    let total = (height + base).max(1e-9);
+    let room = area.shrink2(vec2(40.0, 12.0));
+    let ground = room.bottom();
+    let k = room.height() as f64 / total;
+    let base_top = ground - (base * k) as f32;
+    let top = ground - (total * k) as f32;
+    let (l, r) = (room.left(), room.right());
+    p.line_segment([pos2(area.left() + 6.0, ground), pos2(area.right() - 6.0, ground)], Stroke::new(1.0, MUTED()));
+    if base > 0.0 {
+        p.rect_filled(Rect::from_min_max(pos2(l, base_top), pos2(r, ground)), 1.0, theme::ACCENT_SOFT());
+    }
+    let pts: Vec<egui::Pos2> = match profile {
+        Profile::Round => (0..=24).map(|i| {
+            let t = std::f32::consts::PI * i as f32 / 24.0;
+            pos2(l + (r - l) * (1.0 - t.cos()) / 2.0, base_top - (base_top - top) * t.sin())
+        }).collect(),
+        Profile::Angular => vec![pos2(l, base_top), pos2((l + r) / 2.0, top), pos2(r, base_top)],
+        Profile::Flat => vec![pos2(l, base_top), pos2(l, top), pos2(r, top), pos2(r, base_top)],
+    };
+    p.add(Shape::line(pts, Stroke::new(1.8, ACCENT)));
+    let tag = |y: f32, text: String| {
+        p.text(pos2(area.right() - 6.0, y), Align2::RIGHT_CENTER, text, FontId::proportional(10.5), MUTED());
+    };
+    tag(top, format!("{} {unit}", crate::toolpath::trim(height + base)));
+    if base > 0.0 {
+        tag(base_top + 6.0, format!("{} {unit}", crate::toolpath::trim(base)));
     }
 }
 
@@ -2665,28 +2747,44 @@ impl App {
 
 
     fn shape_form(&mut self, ui: &mut Ui, mut f: ShapeForm) {
-        title_card(ui, Icon::Dome, if f.editing.is_some() { crate::i18n::tr("Edit 3D Shape") } else { crate::i18n::tr("Create 3D Shape") });
+        // Burin's own layout: a cut through the shape, then pictured choices.
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
+            icons::paint(ui.painter(), r, Icon::Dome, true);
+            bold_sized(ui, if f.editing.is_some() { crate::i18n::tr("Changing a 3D shape") } else { crate::i18n::tr("3D shape") }, 15.0, TEXT());
+        });
         let unit = self.doc.job.unit();
+        section_preview(ui, f.profile, f.height, f.base, unit);
         card(ui, |ui| {
-            bold(ui, crate::i18n::tr("Profile"));
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut f.profile, Profile::Round, crate::i18n::tr("Round"));
-                ui.radio_value(&mut f.profile, Profile::Angular, crate::i18n::tr("Angular"));
-                ui.radio_value(&mut f.profile, Profile::Flat, crate::i18n::tr("Flat"));
-            });
-            ui.add_space(4.0);
-            labelled(ui, crate::i18n::tr("Height"), 66.0, &mut f.height, 54.0, unit);
-            labelled(ui, crate::i18n::tr("Base Height:"), 66.0, &mut f.base, 54.0, unit);
+            ui.spacing_mut().item_spacing.y = 4.0;
+            icon_caps(ui, Icon::Dome, crate::i18n::tr("Shape across"));
+            let profiles = [Profile::Round, Profile::Angular, Profile::Flat];
+            let at = profiles.iter().position(|p| *p == f.profile).unwrap_or(0);
+            if let Some(k) = pictured_pills(ui, &[(Some(Pic::ProfileRound), crate::i18n::tr("Round")), (Some(Pic::ProfileAngular), crate::i18n::tr("Angular")), (Some(Pic::ProfileFlat), crate::i18n::tr("Flat"))], at) {
+                f.profile = profiles[k];
+            }
+            labelled(ui, crate::i18n::tr("Height"), 0.0, &mut f.height, 54.0, unit);
+            labelled(ui, crate::i18n::tr("On a base of"), 0.0, &mut f.base, 54.0, unit);
         });
         card(ui, |ui| {
-            bold(ui, crate::i18n::tr("Combine with the model"));
-            ui.radio_value(&mut f.combine, Combine::Add, crate::i18n::tr("Add"));
-            ui.radio_value(&mut f.combine, Combine::Subtract, crate::i18n::tr("Subtract"));
-            ui.radio_value(&mut f.combine, Combine::Merge, crate::i18n::tr("Merge (keep highest)"));
-            ui.radio_value(&mut f.combine, Combine::Low, crate::i18n::tr("Low (keep lowest)"));
+            ui.spacing_mut().item_spacing.y = 4.0;
+            icon_caps(ui, Icon::Layer, crate::i18n::tr("Combine with the model"));
+            let ways = [Combine::Add, Combine::Subtract, Combine::Merge, Combine::Low];
+            let at = ways.iter().position(|c| *c == f.combine).unwrap_or(0);
+            if let Some(k) = pictured_pills(ui, &[(Some(Pic::CombineAdd), crate::i18n::tr("Add")), (Some(Pic::CombineSubtract), crate::i18n::tr("Subtract")), (Some(Pic::CombineHighest), crate::i18n::tr("Keep highest")), (Some(Pic::CombineLowest), crate::i18n::tr("Keep lowest"))], at) {
+                f.combine = ways[k];
+            }
+            explain(ui, [Pic::CombineAdd, Pic::CombineSubtract, Pic::CombineHighest, Pic::CombineLowest][at], match f.combine {
+                Combine::Add => crate::i18n::tr("Stacks on top of what's there."),
+                Combine::Subtract => crate::i18n::tr("Digs into what's there."),
+                Combine::Merge => crate::i18n::tr("Keeps whichever is higher at each point."),
+                Combine::Low => crate::i18n::tr("Keeps whichever is lower at each point."),
+            });
         });
         if f.editing.is_none() {
-            card(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                icons::paint(ui.painter(), r, Icon::Select, true);
                 ui.label(tf!("Selected shapes: {}", self.selected.len()));
             });
         }

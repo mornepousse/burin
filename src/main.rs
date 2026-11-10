@@ -1268,6 +1268,18 @@ fn open_state(app: &mut App, state: &str) {
             app.view3d = true;
             app.cam = view3d::Camera { yaw: 20f32.to_radians(), tilt: 50f32.to_radians(), zoom: 6.0, pan: egui::vec2(-900.0, 300.0) };
         }
+        // The 3D shape form open on a selected circle.
+        "shapeform" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            let disc = app.doc.add_vector(vec![geom::Path::closed(geom::circle([5.0, 5.0], 2.0))], Prim::Free);
+            app.selected = vec![disc];
+            app.open_shape_form(None);
+            if let LeftForm::Shape(mut f) = app.left.clone() {
+                f.base = 0.1;
+                app.left = LeftForm::Shape(f);
+            }
+        }
         "texture" => {
             app.new_file();
             app.left = LeftForm::None;

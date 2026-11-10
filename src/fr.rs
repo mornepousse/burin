@@ -4,6 +4,21 @@
 //! tab = attache, stepover = recouvrement, allowance = surcote, pass = passe, job = projet.
 
 pub const FR: &[(&str, &str)] = &[
+    // The 3D shape and lines forms, Burin's own wording.
+    ("Changing a 3D shape", "Modification d'une forme 3D"),
+    ("3D shape", "Forme 3D"),
+    ("Shape across", "Profil"),
+    ("On a base of", "Sur une base de"),
+    ("Keep highest", "Garder le plus haut"),
+    ("Keep lowest", "Garder le plus bas"),
+    ("Stacks on top of what's there.", "S'ajoute par-dessus ce qui existe."),
+    ("Digs into what's there.", "Se creuse dans ce qui existe."),
+    ("Keeps whichever is higher at each point.", "Garde le plus haut en chaque point."),
+    ("Keeps whichever is lower at each point.", "Garde le plus bas en chaque point."),
+    ("Next point", "Point suivant"),
+    ("At a place on the sheet", "À un endroit de la feuille"),
+    ("In a direction, this far", "Dans une direction, à cette distance"),
+    ("So far across and up from the last point", "Tant en largeur et en hauteur depuis le dernier point"),
     // The editing forms, Burin's own wording.
     ("What goes along the line", "Ce qui suit la ligne"),
     ("The shape picked", "La forme choisie"),
