@@ -1551,6 +1551,8 @@ pub const FR: &[(&str, &str)] = &[
     ("0 follows the zoom.", "0 suit le zoom."),
     ("The cutter never bites more than its stepover: gentler on small cutters. From other CAM programs, not in the original.", "L'outil ne mord jamais plus que sa passe latérale : plus doux pour les petits outils. Repris d'autres logiciels de FAO, absent de l'original."),
     ("Slow down in tight corners", "Ralentir dans les coins serrés"),
+    ("Clear the whole flat with this end mill", "Vider tout le fond plat avec cette fraise"),
+    ("The original only cuts one ring a radius inside; F-Engrave clears the flat bottom too. Here a ring every stepover, until nothing is left. Not in the original.", "L'original ne coupe qu'un anneau, à un rayon du bord ; F-Engrave vide aussi le fond plat. Ici, un anneau à chaque pas latéral, jusqu'à ce qu'il ne reste rien. Absent de l'original."),
     ("Near a sharp turn the cutter takes a wider bite; other CAM programs lower the rate there. Not in the original.", "Dans un virage serré, l'outil mord plus large ; d'autres logiciels de FAO baissent l'avance à cet endroit. Absent de l'original."),
     ("Overlap", "Chevauchement"),
     ("Mirror every other copy", "Retourner une copie sur deux"),

@@ -6985,3 +6985,93 @@ fn the_stock_panel_sets_faces_units_and_height_zero_from_its_picture() {
     click(&mut h, "OK");
     assert!(matches!(h.state().left, LeftForm::None));
 }
+
+/// V-Carve with an end mill against saved jobs: BURIN_JOBS=<folder> cargo test vcarve_flat_against -- --nocapture
+#[test]
+fn vcarve_flat_against_saved_jobs() {
+    let Ok(dir) = std::env::var("BURIN_JOBS") else { return };
+    let mut files = Vec::new();
+    let mut todo = vec![std::path::PathBuf::from(dir)];
+    while let Some(d) = todo.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() { todo.push(p) } else if p.extension().is_some_and(|x| x == "crv3d") { files.push(p) }
+        }
+    }
+    files.sort();
+    for file in files {
+        let mut app = App::default();
+        if app.open_project(&file).is_err() { continue }
+        for t in &app.doc.toolpaths {
+            if std::env::var("BURIN_WHERE").is_ok() { println!("  [{}] {:?} {} dia {:.2} angle {:.1} kept {}", file.file_name().unwrap().to_string_lossy(), t.op.kind, t.op.name, t.op.tool.dia, t.op.tool.angle, t.kept_moves.as_ref().map_or(0, |m| m.len())); }
+            if t.op.kind != crate::toolpath::OpKind::VCarve || t.op.tool.angle >= crate::toolpath::FLAT_TOOL_ANGLE { continue }
+            let Some(saved) = &t.kept_moves else { continue };
+            let mut op = t.op.clone();
+            op.clearance_tool = app.doc.toolpaths.iter().find(|o| o.op.kind == crate::toolpath::OpKind::Pocket && o.op.name == t.op.name).map(|o| o.op.tool.clone());
+            let mine = crate::toolpath::generate(&op, app.doc.machine_on_job(), &crate::toolpath::JobSize { width: app.doc.job.width, height: app.doc.job.height, thickness: app.doc.job.thickness }, None).unwrap_or_default();
+            let traces = |m: &[crate::toolpath::Move]| -> Vec<f64> {
+                let mut out = Vec::new();
+                let mut len = 0.0;
+                for w in m.windows(2) {
+                    if !w[1].rapid {
+                        len += (w[1].p[0] - w[0].p[0]).hypot(w[1].p[1] - w[0].p[1]);
+                    } else if !w[0].rapid {
+                        out.push(len);
+                        len = 0.0;
+                    }
+                }
+                if len > 0.0 { out.push(len) }
+                out
+            };
+            let (a, b) = (traces(saved), traces(&mine));
+            let sum = |v: &[f64]| v.iter().sum::<f64>();
+            let mut sa = a.clone();
+            sa.sort_by(f64::total_cmp);
+            let mut sb = b.clone();
+            sb.sort_by(f64::total_cmp);
+            println!("{} | {} | saved {} traces {:.1} | burin {} traces {:.1}", file.file_name().unwrap().to_string_lossy(), t.op.name, a.len(), sum(&a), b.len(), sum(&b));
+            println!("   saved short {:?}", sa.iter().filter(|v| **v < 20.0).map(|v| format!("{v:.1}")).collect::<Vec<_>>());
+            println!("   burin short {:?}", sb.iter().filter(|v| **v < 20.0).map(|v| format!("{v:.1}")).collect::<Vec<_>>());
+            if std::env::var("BURIN_WHERE").is_ok() {
+                let f = crate::geom::Field::build(&t.op.paths, t.op.tool.dia, 900).unwrap();
+                for k in 0..12 { let lv = 1.0 + 0.8 * k as f64; let c = f.contours(lv); let len: f64 = c.iter().map(|r| r.windows(2).map(|q| (q[1][0]-q[0][0]).hypot(q[1][1]-q[0][1])).sum::<f64>()).sum(); println!("   level {lv:.1}: {} rings {len:.1}", c.len()); }
+                let (lo, hi) = crate::geom::bbox(&t.op.paths).unwrap(); println!("   paths {} box {:?} {:?}", t.op.paths.len(), lo, hi);
+                for p in &t.op.paths { let (a, b) = crate::geom::bbox(std::slice::from_ref(p)).unwrap(); println!("     closed {} n {} area {:.1} box {:.1},{:.1} {:.1}x{:.1}", p.closed, p.pts.len(), crate::geom::signed_area(&p.pts), a[0], a[1], b[0]-a[0], b[1]-a[1]); }
+                let mut best = (0.0f32, 0usize); for (i, v) in f.d.iter().enumerate() { if *v > best.0 { best = (*v, i) } } println!("   max d {:.2} at {:.1},{:.1}", best.0, f.x0 + (best.1 % f.nx) as f64 * f.cell, f.y0 + (best.1 / f.nx) as f64 * f.cell);
+                println!("   clearance {:?}", t.op.clearance_tool.as_ref().map(|c| (c.name.clone(), c.dia, c.stepover)));
+            println!("   cell {:.3} reach {:.3} op step {:.3} tool step {:.3} flat {:.3} allow {:.3}", f.cell, t.op.tool.dia / 2.0, t.op.stepover, t.op.tool.stepover, t.op.flat_depth, t.op.allowance);
+                let mut cur: Vec<[f64; 3]> = Vec::new();
+                for w in saved.windows(2) {
+                    if !w[1].rapid { if cur.is_empty() { cur.push(w[0].p) } cur.push(w[1].p) }
+                    else if !cur.is_empty() {
+                        let len: f64 = cur.windows(2).map(|q| (q[1][0]-q[0][0]).hypot(q[1][1]-q[0][1])).sum();
+                        if len < 20.0 {
+                            let ds: Vec<String> = cur.iter().step_by((cur.len()/6).max(1)).map(|p| format!("({:.2},{:.2}) d{:.2}", p[0], p[1], f.sample(p[0], p[1]))).collect();
+                            println!("   piece {len:.1}: {}", ds.join(" "));
+                        }
+                        cur.clear();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The test drawing made for the person to run through the original reads back whole: 15 holes
+/// from 4.8 to 7.6 mm across, and 5 closed shapes for the V-Carve test. (The folder stays out of
+/// the repository, so the test passes quietly without it.)
+#[test]
+fn the_test_drawing_for_the_original_reads_back() {
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/essais-burin.dxf");
+    let Ok(text) = std::fs::read_to_string(file) else { return };
+    let paths = crate::geom::dxf_read(&text);
+    assert_eq!(paths.len(), 20);
+    assert!(paths.iter().all(|p| p.closed));
+    let mut holes: Vec<f64> = paths.iter().filter_map(|p| {
+        let (lo, hi) = crate::geom::bbox(std::slice::from_ref(p)).unwrap();
+        (hi[1] > 95.0).then_some(hi[0] - lo[0])
+    }).collect();
+    holes.sort_by(f64::total_cmp);
+    assert_eq!(holes.len(), 15);
+    assert!((holes[0] - 4.8).abs() < 0.02 && (holes[14] - 7.6).abs() < 0.02, "{holes:?}");
+}

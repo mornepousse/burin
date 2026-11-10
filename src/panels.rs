@@ -1449,11 +1449,12 @@ impl App {
                         }
                     }
                     ui.horizontal(|ui| {
-                        ui.add_space((ui.available_width() - 76.0).max(0.0));
-                        let active = self.envelope.is_some();
-                        if ui.add_enabled(check.is_ok() && !active, egui::Button::new(crate::i18n::tr("Apply")).min_size(vec2(74.0, 20.0))).clicked() {
-                            self.apply_envelope(f.envelope_kind);
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let active = self.envelope.is_some();
+                            if ui.add_enabled(check.is_ok() && !active, egui::Button::new(crate::i18n::tr("Apply")).min_size(vec2(74.0, 20.0))).clicked() {
+                                self.apply_envelope(f.envelope_kind);
+                            }
+                        });
                     });
                 });
                 card(ui, |ui| {
@@ -2419,6 +2420,13 @@ impl App {
                         ui.label("°");
                     });
                 }
+            });
+        }
+        if flat && op.clearance_tool.is_none() && op.tool.angle < toolpath::FLAT_TOOL_ANGLE {
+            card(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                crate::ui::icon_caps(ui, Icon::TpVCarve, crate::i18n::tr("Clearing the flats"));
+                ui.checkbox(&mut op.clear_flat, crate::i18n::tr("Clear the whole flat with this end mill")).on_hover_text(crate::i18n::tr("The original only cuts one ring a radius inside; F-Engrave clears the flat bottom too. Here a ring every stepover, until nothing is left. Not in the original."));
             });
         }
         let _ = unit;
