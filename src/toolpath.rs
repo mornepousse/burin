@@ -796,14 +796,20 @@ fn away_from_part(pts: &[P], closed: bool, side: Side) -> f64 {
 
 /// The points of a lead reaching `p`, whose direction of travel there is `t`. Coming in, they run
 /// from far to near; going out (`out`), they run from `p` away.
+#[cfg(test)]
 fn lead_points(p: P, t: P, side_sign: f64, op: &Op, out: bool) -> Vec<P> {
+    lead_points_for(p, t, side_sign, op, out, op.lead_distance)
+}
+
+/// The same as `lead_points`, `distance` long instead of the toolpath's lead distance.
+fn lead_points_for(p: P, t: P, side_sign: f64, op: &Op, out: bool, distance: f64) -> Vec<P> {
     // The right of travel, turned towards the side away from the part.
     let n = [t[1] * side_sign, -t[0] * side_sign];
     let along = if out { 1.0 } else { -1.0 };
     let mut points: Vec<P> = if op.lead_circular && op.lead_radius > 0.0 {
         let r = op.lead_radius;
         // Never more than a quarter of the way round.
-        let sweep = (op.lead_distance / r).min(std::f64::consts::FRAC_PI_2);
+        let sweep = (distance / r).min(std::f64::consts::FRAC_PI_2);
         let steps = ((sweep / 0.15).ceil() as usize).max(3);
         (1..=steps)
             .map(|i| {
@@ -815,13 +821,51 @@ fn lead_points(p: P, t: P, side_sign: f64, op: &Op, out: bool) -> Vec<P> {
     } else {
         // An angle outside this range comes in square to the cut.
         let a = if (0.0..90.0).contains(&op.lead_angle) { op.lead_angle } else { 90.0 }.to_radians();
-        let (forward, sideways) = (op.lead_distance * a.cos() * along, op.lead_distance * a.sin());
+        let (forward, sideways) = (distance * a.cos() * along, distance * a.sin());
         vec![[p[0] + t[0] * forward + n[0] * sideways, p[1] + t[1] * forward + n[1] * sideways]]
     };
     if !out {
         points.reverse();
     }
     points
+}
+
+/// How long a lead into a closed loop can be without the tool reaching into the part: the
+/// toolpath's lead distance, or a tenth of it less each time until the lead stays on the waste
+/// side of the loop, with its far end at least a tenth of the tool's radius clear of the loop;
+/// `None` when no length fits, and the cut then starts with no lead. The saved jobs show this
+/// in small holes: a straight 2.5 mm lead in a loop of radius 1.0125 comes in 1.75 mm, in one of
+/// 0.9125 it comes in 1.5 mm, and a circular lead of radius 5 into a loop of radius 1.21 is
+/// left out. The tenths and the clearance are estimates that fit those cases.
+fn fitted_lead(loop_pts: &[P], side: Side, side_sign: f64, op: &Op) -> Option<f64> {
+    if loop_pts.len() < 3 || side == Side::On {
+        return Some(op.lead_distance);
+    }
+    let start = loop_pts[0];
+    let next = loop_pts.iter().copied().find(|q| (q[0] - start[0]).hypot(q[1] - start[1]) > 1e-9)?;
+    let len = (next[0] - start[0]).hypot(next[1] - start[1]);
+    let t = [(next[0] - start[0]) / len, (next[1] - start[1]) / len];
+    let shape = [Path::closed(loop_pts.to_vec())];
+    let off_loop = |q: P| {
+        let n = loop_pts.len();
+        (0..n)
+            .map(|i| {
+                let (a, b) = (loop_pts[i], loop_pts[(i + 1) % n]);
+                let d = [b[0] - a[0], b[1] - a[1]];
+                let k = (((q[0] - a[0]) * d[0] + (q[1] - a[1]) * d[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-18)).clamp(0.0, 1.0);
+                (q[0] - a[0] - d[0] * k).hypot(q[1] - a[1] - d[1] * k)
+            })
+            .fold(f64::MAX, f64::min)
+    };
+    let clearance = op.tool.dia / 20.0;
+    let waste_inside = side == Side::Inside;
+    (0..10).map(|k| op.lead_distance * (10 - k) as f64 / 10.0).find(|&distance| {
+        let points = lead_points_for(start, t, side_sign, op, false, distance);
+        // Points about on the loop count as on the waste side: a loop of arcs drawn as short lines
+        // passes a little inside a lead coming in along it.
+        let on_waste_side = points.iter().all(|q| off_loop(*q) < op.tool.dia / 100.0 || crate::geom::inside_even_odd(&shape, *q) == waste_inside);
+        on_waste_side && off_loop(points[0]) >= clearance
+    })
 }
 
 /// Starts a closed loop at the one of its points nearest to where the tool is.
@@ -859,16 +903,79 @@ fn start_loop_near_point(pts: &mut Vec<P>, target: P) {
 
 /// Starts each worked-out loop level with the start of the shape it came from.
 fn start_from_shapes(items: &mut [(Vec<P>, bool)], paths: &[Path], reach: f64) {
-    let starts: Vec<P> = paths.iter().filter(|p| p.closed && !p.pts.is_empty()).map(|p| p.pts[0]).collect();
+    // Each closed shape's start, with the points before and after it.
+    let starts: Vec<(P, P, P)> = paths
+        .iter()
+        .filter(|p| p.closed && p.pts.len() >= 3)
+        .map(|p| (p.pts[0], p.pts[p.pts.len() - 1], p.pts[1]))
+        .collect();
     for (pts, closed) in items.iter_mut() {
         if !*closed || pts.len() < 2 {
             continue;
         }
         let Some((lo, hi)) = bbox([&Path::closed(pts.clone())]) else { continue };
         let line = Path::closed(pts.clone());
-        let near = starts.iter().filter(|s| s[0] >= lo[0] - reach && s[0] <= hi[0] + reach && s[1] >= lo[1] - reach && s[1] <= hi[1] + reach);
-        if let Some(start) = near.min_by(|a, b| distance_to_path(**a, &line).total_cmp(&distance_to_path(**b, &line))) {
+        let near = starts.iter().filter(|(s, _, _)| s[0] >= lo[0] - reach && s[0] <= hi[0] + reach && s[1] >= lo[1] - reach && s[1] <= hi[1] + reach);
+        if let Some((start, before, after)) = near.min_by(|a, b| distance_to_path(a.0, &line).total_cmp(&distance_to_path(b.0, &line))) {
             start_loop_near_point(pts, *start);
+            start_at_corner_arc(pts, *start, *before, *after);
+        }
+    }
+}
+
+/// Where a shape starts at a corner, its offset loop goes round that corner on an arc, and
+/// every point of the arc is as near the start. The original starts the loop where the arc
+/// begins, in the direction of travel, as the saved jobs show on a keyhole whose start is the
+/// corner where the round part meets the neck.
+fn start_at_corner_arc(pts: &mut Vec<P>, start: P, before: P, after: P) {
+    let unit = |a: P, b: P| {
+        let l = (b[0] - a[0]).hypot(b[1] - a[1]);
+        (l > 1e-9).then(|| [(b[0] - a[0]) / l, (b[1] - a[1]) / l])
+    };
+    let (Some(din), Some(dout)) = (unit(before, start), unit(start, after)) else { return };
+    let turn = (din[0] * dout[1] - din[1] * dout[0]).atan2(din[0] * dout[0] + din[1] * dout[1]);
+    if turn.abs() < 5f64.to_radians() || pts.len() < 3 {
+        return;
+    }
+    let d = (pts[0][0] - start[0]).hypot(pts[0][1] - start[1]);
+    if d < 1e-6 {
+        return;
+    }
+    let line = Path::closed(pts.clone());
+    // The ends of the arc: square off each side of the corner, on the side the loop is.
+    let end_of = |dir: P| {
+        let a = [start[0] - dir[1] * d, start[1] + dir[0] * d];
+        let b = [start[0] + dir[1] * d, start[1] - dir[0] * d];
+        if distance_to_path(a, &line) <= distance_to_path(b, &line) { a } else { b }
+    };
+    let (e1, e2) = (end_of(din), end_of(dout));
+    let arc = d * turn.abs();
+    if (e1[0] - e2[0]).hypot(e1[1] - e2[1]) < 1e-6 || distance_to_path(e1, &line) > d * 0.05 + 1e-3 || distance_to_path(e2, &line) > d * 0.05 + 1e-3 {
+        return;
+    }
+    // Along the loop from its start to the point nearest `q`.
+    let along_to = |pts: &[P], q: P| {
+        let n = pts.len();
+        let (mut run, mut best) = (0.0, (f64::MAX, 0.0));
+        for i in 0..n {
+            let (a, b) = (pts[i], pts[(i + 1) % n]);
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let len = dx.hypot(dy);
+            let t = (((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / (len * len).max(1e-18)).clamp(0.0, 1.0);
+            let off = (a[0] + dx * t - q[0]).hypot(a[1] + dy * t - q[1]);
+            if off < best.0 {
+                best = (off, run + len * t);
+            }
+            run += len;
+        }
+        best.1
+    };
+    for (first, second) in [(e1, e2), (e2, e1)] {
+        let mut trial = pts.clone();
+        start_loop_near_point(&mut trial, first);
+        if along_to(&trial, second) <= arc * 1.5 + d * 0.05 {
+            *pts = trial;
+            return;
         }
     }
 }
@@ -1630,8 +1737,32 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
             };
             let total: f64 = route.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum();
             let side_sign = away_from_part(&pts, closed, side);
-            let has_lead = op.lead && op.lead_distance > 0.0 && pts.len() >= 2;
-            let lead_in = if has_lead { lead_points(pts[0], unit_dir(route[0], route[1]), side_sign, op, false) } else { Vec::new() };
+            // A lead that would reach into the part is shortened, or left out.
+            let lead_length = if op.lead && op.lead_distance > 0.0 && pts.len() >= 2 {
+                if closed { fitted_lead(&pts, side, side_sign, op) } else { Some(op.lead_distance) }
+            } else {
+                None
+            };
+            let has_lead = lead_length.is_some();
+            let lead_length = lead_length.unwrap_or(0.0);
+            // The way the loop sets off, over a tenth of the tool's diameter: a worked-out loop's
+            // first step can be tiny and turned a little off its true direction.
+            // On a closed loop that runs smoothly through its start, the way across the start from
+            // a little before it to a little after, which is true on a small circle too.
+            let heading = (op.tool.dia * 0.1).min(total * 0.1);
+            let set_off = if heading > 1e-9 {
+                let ahead = unit_dir(route[0], along(&route, heading));
+                if closed {
+                    let behind = unit_dir(along(&route, total - heading), route[0]);
+                    let across = unit_dir(along(&route, total - heading), along(&route, heading));
+                    if ahead[0] * behind[0] + ahead[1] * behind[1] > 20f64.to_radians().cos() { across } else { ahead }
+                } else {
+                    ahead
+                }
+            } else {
+                unit_dir(route[0], route[1])
+            };
+            let lead_in = if has_lead { lead_points_for(pts[0], set_off, side_sign, op, false, lead_length) } else { Vec::new() };
             let mut previous = -op.start_depth;
             for (i, z) in pass_zs.iter().enumerate() {
                 // Back the way it came, from where the last pass ended.
@@ -1711,9 +1842,10 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                             let s = op.overcut.min(total).min(before_tab);
                             (along(&route, s), unit_dir(along(&route, s), along(&route, (s + total / 1000.0).min(total))))
                         } else {
-                            (route[route.len() - 1], unit_dir(route[route.len() - 2], route[route.len() - 1]))
+                            let last = route[route.len() - 1];
+                            (last, if closed { set_off } else { unit_dir(route[route.len() - 2], last) })
                         };
-                        for q in lead_points(end, dir, side_sign, op, true) {
+                        for q in lead_points_for(end, dir, side_sign, op, true, lead_length) {
                             e.feed(q[0], q[1], *z);
                         }
                     }
@@ -4840,6 +4972,43 @@ mod tests {
         o.lead_distance = 0.5;
         o.start_at = StartAt::Near(1);
         o
+    }
+
+    /// In a hole hardly wider than the tool, a lead is shortened until the tool stays inside
+    /// the hole, and left out when no length fits: the saved jobs' 5.2 mm hole with a 3.175 mm
+    /// tool takes 1.75 of a 2.5 lead, and a circular lead of radius 5 into a 5 mm hole none.
+    #[test]
+    fn a_lead_into_a_small_hole_is_shortened_or_left_out() {
+        let hole = |r: f64| {
+            let mut o = op(OpKind::Profile, vec![Path::closed(crate::geom::circle([20.0, 20.0], r))]);
+            o.tool.dia = 3.175;
+            o.tool.pass_depth = 10.0;
+            o.cut_depth = 1.0;
+            o.side = Side::Inside;
+            o.lead = true;
+            o.lead_distance = 2.5;
+            o.lead_angle = 90.0;
+            o.lead_circular = false;
+            o
+        };
+        let far_from_centre = |o: &Op| {
+            let moves = generate(o, M, &J, None).unwrap();
+            let c = cuts(&moves);
+            (c[0][0] - 20.0).hypot(c[0][1] - 20.0)
+        };
+        // A wide hole keeps the whole lead: it starts 2.5 in from the loop.
+        let wide = hole(6.0);
+        assert!((far_from_centre(&wide) - (6.0 - 1.5875 - 2.5)).abs() < 0.05, "{}", far_from_centre(&wide));
+        // In the 5.2 mm hole the loop has a radius of 1.0125, and the lead comes in 1.75 of it.
+        let small = hole(2.6);
+        assert!((far_from_centre(&small) - (1.75 - 1.0125)).abs() < 0.05, "{}", far_from_centre(&small));
+        // A circular lead too big for a 5 mm hole is left out: the cut starts on the loop.
+        let mut tiny = hole(2.5);
+        tiny.allowance = -0.3;
+        tiny.lead_circular = true;
+        tiny.lead_radius = 5.0;
+        tiny.lead_distance = 7.0;
+        assert!((far_from_centre(&tiny) - (2.5 - 1.5875 + 0.3)).abs() < 0.05, "{}", far_from_centre(&tiny));
     }
 
     #[test]
