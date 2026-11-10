@@ -12,3 +12,8 @@ for name, version, licence in sorted((p["name"], p["version"], p.get("license") 
 print("\nSingle-line fonts (assets/fonts/*.jhf): the Hershey fonts.\n")
 with open("assets/fonts/HERSHEY-NOTICE.txt", encoding="utf-8") as notice:
     print(notice.read())
+
+# The interface letter is Noto Sans, under the SIL Open Font License, whose text must go with it.
+print("\nInterface font (assets/fonts/NotoSans-Medium-latin.ttf): Noto Sans.\n")
+with open("assets/fonts/NOTO-OFL.txt", encoding="utf-8") as notice:
+    print(notice.read())

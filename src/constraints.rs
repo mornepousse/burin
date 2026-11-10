@@ -2300,7 +2300,13 @@ impl App {
                         ui.painter().rect(r, 6.0, fill, egui::Stroke::new(1.0, if chosen { theme::ACCENT } else { Color32::TRANSPARENT }), egui::StrokeKind::Inside);
                         icons::paint(ui.painter(), egui::Rect::from_min_size(r.min + vec2(5.0, 5.0), vec2(16.0, 16.0)), relation_icon(*kind), usable);
                         let colour = if usable { theme::TEXT() } else { theme::MUTED() };
-                        let text = ui.painter().layout(kind.name().to_string(), egui::FontId::proportional(11.5), colour, half - 28.0);
+                        // A long name gets a smaller letter rather than a second line.
+                        let mut size = 12.0;
+                        let mut text = ui.painter().layout_no_wrap(kind.name().to_string(), egui::FontId::proportional(size), colour);
+                        while text.size().x > half - 29.0 && size > 9.0 {
+                            size -= 0.5;
+                            text = ui.painter().layout_no_wrap(kind.name().to_string(), egui::FontId::proportional(size), colour);
+                        }
                         ui.painter().galley(egui::pos2(r.min.x + 25.0, r.center().y - text.size().y / 2.0), text, colour);
                         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, usable, chosen, kind.name()));
                         if response.clicked() {
