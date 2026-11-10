@@ -8,7 +8,7 @@ use crate::relief::ToolKind;
 use crate::theme;
 use crate::toolpath::{self, Boundary, Op, OpKind, ProfilePass, Tool, POSTS};
 use crate::keys::Action;
-use crate::ui::{bold, card, primary, count_box, icon_button, icon_button_saying, icon_row, label_widget, labelled, labelled_formula, labelled_from, number, number_from, title_card, wide, wood_block};
+use crate::ui::{bold, card, primary, count_box, icon_button, icon_button_saying, icon_row, label_widget, labelled, labelled_formula, labelled_from, number, number_from, wide, wood_block};
 use egui::{vec2, Rect, RichText, Sense, Stroke, StrokeKind, TextEdit, Ui};
 
 fn note(ui: &mut Ui, text: &str) {
@@ -1738,53 +1738,54 @@ impl App {
             egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
                 ui.set_width(width - 30.0);
                 ui.spacing_mut().item_spacing.y = 6.0;
-                title_card(ui, Icon::TpProfile, crate::i18n::tr("Material Setup"));
+                // Burin's own layout: the board seen from the side with every height drawn on it,
+                // then the settings under icon headings.
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
+                    crate::icons::paint(ui.painter(), r, Icon::JobSetup, true);
+                    crate::ui::bold_sized(ui, crate::i18n::tr("Board and heights"), 15.0, theme::TEXT());
+                });
+                self.heights_picture(ui);
                 card(ui, |ui| {
-                    labelled(ui, crate::i18n::tr("Thickness"), 60.0, &mut self.doc.job.thickness, 60.0, unit);
-                    if labelled(ui, crate::i18n::tr("Sacrificial board"), 96.0, &mut self.doc.job.spoil_board, 60.0, unit) {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    crate::ui::icon_caps(ui, Icon::Measure, crate::i18n::tr("Board"));
+                    labelled(ui, crate::i18n::tr("Thickness"), 0.0, &mut self.doc.job.thickness, 60.0, unit);
+                    if labelled(ui, crate::i18n::tr("Sacrificial board"), 0.0, &mut self.doc.job.spoil_board, 60.0, unit) {
                         self.doc.job.spoil_board = self.doc.job.spoil_board.max(0.0);
                     }
                     note(ui, crate::i18n::tr("Cutting into it brings no warning; going past it does."));
                 });
                 card(ui, |ui| {
-                    bold(ui, "XY");
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    crate::ui::icon_caps(ui, Icon::Move, crate::i18n::tr("Zero"));
                     ui.horizontal(|ui| {
                         anchor_grid(ui, &mut self.doc.job.datum, crate::i18n::tr("XY datum"));
                         ui.vertical(|ui| {
-                            ui.checkbox(&mut self.doc.job.use_offset, crate::i18n::tr("Use Offset"));
+                            ui.checkbox(&mut self.doc.job.use_offset, crate::i18n::tr("Move the origin by"));
                             ui.add_enabled_ui(self.doc.job.use_offset, |ui| {
-                                labelled(ui, "X:", 14.0, &mut self.doc.job.offset[0], 54.0, "");
-                                labelled(ui, "Y:", 14.0, &mut self.doc.job.offset[1], 54.0, "");
+                                labelled(ui, "X", 12.0, &mut self.doc.job.offset[0], 54.0, "");
+                                labelled(ui, "Y", 12.0, &mut self.doc.job.offset[1], 54.0, "");
                             });
                         });
                     });
-                });
-                card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Z-Zero"));
-                    if ui.radio(!self.doc.job.z_on_bed, crate::i18n::tr("Material Surface")).clicked() {
-                        self.doc.job.z_on_bed = false;
-                    }
-                    if ui.radio(self.doc.job.z_on_bed, crate::i18n::tr("Machine Bed")).clicked() {
-                        self.doc.job.z_on_bed = true;
+                    if let Some(k) = crate::ui::pictured_pills(ui, &[(Some(crate::ui::Pic::ZOnTop), crate::i18n::tr("Z on top")), (Some(crate::ui::Pic::ZOnBed), crate::i18n::tr("Z on the bed"))], usize::from(self.doc.job.z_on_bed)) {
+                        self.doc.job.z_on_bed = k == 1;
                     }
                 });
                 card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Model Position in Material"));
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    crate::ui::icon_caps(ui, Icon::Dome, crate::i18n::tr("The 3D model in the board"));
                     let mut changed = false;
                     let above = self.doc.machine.gap_below.is_none();
-                    if ui.radio(above, crate::i18n::tr("Gap Above Model")).clicked() {
-                        self.doc.machine.gap_below = None;
-                        changed = true;
+                    if let Some(k) = crate::ui::pictured_pills(ui, &[(Some(crate::ui::Pic::ModelGapAbove), crate::i18n::tr("Gap above")), (Some(crate::ui::Pic::ModelGapBelow), crate::i18n::tr("Gap below"))], if above { 0 } else { 1 }) {
+                        if (k == 0) != above {
+                            self.doc.machine.gap_below = if k == 0 { None } else { Some(0.0) };
+                            changed = true;
+                        }
                     }
-                    ui.add_enabled_ui(above, |ui| {
-                        changed |= labelled(ui, "", 14.0, &mut self.doc.machine.gap_above, 54.0, unit);
-                    });
-                    if ui.radio(!above, crate::i18n::tr("Gap Below Model")).clicked() {
-                        self.doc.machine.gap_below = Some(0.0);
-                        changed = true;
-                    }
-                    if let Some(g) = &mut self.doc.machine.gap_below {
-                        changed |= labelled(ui, "", 14.0, g, 54.0, unit);
+                    match &mut self.doc.machine.gap_below {
+                        None => changed |= labelled(ui, crate::i18n::tr("Gap"), 0.0, &mut self.doc.machine.gap_above, 54.0, unit),
+                        Some(g) => changed |= labelled(ui, crate::i18n::tr("Gap"), 0.0, g, 54.0, unit),
                     }
                     let high = self.model.as_ref().map_or(0.0, |m| m.max() as f64);
                     note(ui, &tf!("Model Thickness  {high:.3} {unit}"));
@@ -1793,17 +1794,17 @@ impl App {
                     }
                 });
                 card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Rapid Z Gaps above Material"));
-                    labelled(ui, crate::i18n::tr("Clearance (Z1)"), 84.0, &mut self.doc.machine.safe_z, 54.0, unit);
-                    labelled(ui, crate::i18n::tr("Plunge (Z2)"), 84.0, &mut self.doc.machine.plunge_gap, 54.0, unit);
-                });
-                card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Home / Start Position"));
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    crate::ui::icon_caps(ui, Icon::Clock, crate::i18n::tr("Fast moves"));
+                    labelled(ui, crate::i18n::tr("Travel at"), 70.0, &mut self.doc.machine.safe_z, 54.0, unit);
+                    labelled(ui, crate::i18n::tr("Slow from"), 70.0, &mut self.doc.machine.plunge_gap, 54.0, unit);
+                    note(ui, crate::i18n::tr("Heights above the board, drawn as dashed lines above."));
+                    crate::ui::icon_caps(ui, Icon::Pin, crate::i18n::tr("Start and end at"));
                     ui.horizontal(|ui| {
-                        labelled(ui, "X:", 14.0, &mut self.doc.machine.home[0], 54.0, "");
-                        labelled(ui, "Y:", 14.0, &mut self.doc.machine.home[1], 54.0, "");
+                        labelled(ui, "X", 12.0, &mut self.doc.machine.home[0], 54.0, "");
+                        labelled(ui, "Y", 12.0, &mut self.doc.machine.home[1], 54.0, "");
                     });
-                    labelled(ui, crate::i18n::tr("Z Gap above Material"), 118.0, &mut self.doc.machine.home[2], 54.0, "");
+                    labelled(ui, crate::i18n::tr("Height"), 70.0, &mut self.doc.machine.home[2], 54.0, unit);
                 });
                 ui.horizontal(|ui| {
                     if primary(ui, "OK", 74.0).clicked() {
@@ -1831,6 +1832,61 @@ impl App {
             }
             None => {}
         }
+    }
+
+    /// The board from the side, in proportion: the sacrificial board under it, the model inside,
+    /// the slow-down and travel heights above it as dashed lines, the start point and the zero.
+    fn heights_picture(&self, ui: &mut Ui) {
+        use egui::{pos2, Rect};
+        let unit = self.doc.job.unit();
+        let job = &self.doc.job;
+        let m = &self.doc.machine;
+        let w = ui.available_width();
+        let (area, _) = ui.allocate_exact_size(vec2(w, 120.0), Sense::hover());
+        let p = ui.painter_at(area);
+        p.rect_filled(area, 8.0, theme::CARD());
+        let t = job.thickness.max(1e-6);
+        let board = job.spoil_board.max(0.0);
+        let above = m.safe_z.max(m.plunge_gap).max(m.home[2]).max(0.0);
+        let total = board + t + above;
+        let room = Rect::from_min_max(area.min + vec2(40.0, 16.0), area.max - vec2(58.0, 12.0));
+        let k = room.height() as f64 / total.max(1e-6);
+        let y = |z: f64| room.bottom() - ((z + board) * k) as f32; // z counted from the board's foot
+        let (l, r) = (room.left(), room.right());
+        if board > 0.0 {
+            p.rect_filled(egui::Rect::from_min_max(pos2(l, y(0.0)), pos2(r, y(-board))), 1.0, theme::BUTTON());
+        }
+        p.rect(egui::Rect::from_min_max(pos2(l, y(t)), pos2(r, y(0.0))), 1.0, egui::Color32::from_rgb(255, 180, 0), egui::Stroke::new(1.0, egui::Color32::from_rgb(90, 28, 0)), egui::StrokeKind::Inside);
+        if let Some(model) = &self.model {
+            let high = (model.max() as f64).min(t);
+            let base = match m.gap_below {
+                Some(g) => g.min(t - high).max(0.0),
+                None => (t - m.gap_above - high).max(0.0),
+            };
+            let pts = vec![pos2(l + 10.0, y(base)), pos2(l + 30.0, y(base + high)), pos2(r - 30.0, y(base + high)), pos2(r - 10.0, y(base))];
+            p.add(egui::Shape::line(pts, egui::Stroke::new(1.6, egui::Color32::from_rgb(90, 28, 0))));
+        }
+        let dashed = |z: f64, text: String, colour: egui::Color32| {
+            let yy = y(t + z);
+            p.extend(egui::Shape::dashed_line(&[pos2(l, yy), pos2(r, yy)], egui::Stroke::new(1.0, colour), 4.0, 3.0));
+            p.text(pos2(r + 4.0, yy), egui::Align2::LEFT_CENTER, text, egui::FontId::proportional(10.5), colour);
+        };
+        // The two lines' words keep apart when the heights are close.
+        let close = ((m.safe_z - m.plunge_gap) * k).abs() < 12.0;
+        dashed(m.safe_z, tf!("travel {}", toolpath::trim(m.safe_z)), theme::ACCENT);
+        if close {
+            let yy = y(t + m.plunge_gap);
+            p.extend(egui::Shape::dashed_line(&[pos2(l, yy), pos2(r, yy)], egui::Stroke::new(1.0, theme::MUTED()), 4.0, 3.0));
+            p.text(pos2(r + 4.0, yy + 11.0), egui::Align2::LEFT_CENTER, tf!("slow {}", toolpath::trim(m.plunge_gap)), egui::FontId::proportional(10.5), theme::MUTED());
+        } else {
+            dashed(m.plunge_gap, tf!("slow {}", toolpath::trim(m.plunge_gap)), theme::MUTED());
+        }
+        let home = pos2(l + 12.0, y(t + m.home[2]));
+        p.circle_filled(home, 3.5, theme::ACCENT);
+        p.text(home + vec2(7.0, 0.0), egui::Align2::LEFT_CENTER, crate::i18n::tr("start"), egui::FontId::proportional(10.5), theme::MUTED());
+        let zero_y = if job.z_on_bed { y(0.0) } else { y(t) };
+        p.text(pos2(l - 6.0, zero_y), egui::Align2::RIGHT_CENTER, "Z0", egui::FontId::proportional(11.0), theme::TEXT());
+        p.text(pos2(r + 4.0, (y(t) + y(0.0)) / 2.0), egui::Align2::LEFT_CENTER, format!("{} {unit}", toolpath::trim(t)), egui::FontId::proportional(10.5), theme::TEXT());
     }
 
     pub fn save_form(&mut self, ui: &mut Ui) {
