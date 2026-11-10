@@ -4,6 +4,27 @@
 //! tab = attache, stepover = recouvrement, allowance = surcote, pass = passe, job = projet.
 
 pub const FR: &[(&str, &str)] = &[
+    // The simulation panel, Burin's own layout.
+    ("Simulation", "Simulation"),
+    ("Carve", "Usiner"),
+    ("Selected", "Sélection"),
+    ("Visible", "Visibles"),
+    ("All", "Tous"),
+    ("Both faces", "Deux faces"),
+    ("Carve it", "Lancer"),
+    ("Start over", "Recommencer"),
+    ("Back to the uncut board", "Revenir au brut non usiné"),
+    ("Undo last", "Annuler le dernier"),
+    ("Save picture...", "Enregistrer l'image..."),
+    ("Double-click a loose offcut in the 3D view to take it away.", "Double-cliquez sur une chute détachée dans la vue 3D pour l'enlever."),
+    ("Cut areas", "Zones usinées"),
+    ("as the board", "comme le brut"),
+    ("one colour", "une couleur"),
+    ("by toolpath", "par parcours"),
+    ("Give it to every toolpath", "La donner à tous les parcours"),
+    ("the selected toolpath's colour", "la couleur du parcours choisi"),
+    ("Animate", "Animer"),
+    ("Show the tool", "Montrer l'outil"),
     // The stock panel, Burin's own layout.
     ("Stock & origin", "Brut & origine"),
     ("Size", "Dimensions"),

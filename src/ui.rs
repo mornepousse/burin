@@ -2438,107 +2438,76 @@ impl App {
     }
 
     fn preview_panel(&mut self, ui: &mut Ui) {
+        // Burin's own layout: say what to carve, carve it, then a player bar; the looks of the
+        // carving come last.
         let width = ui.available_width();
-        Frame::new().inner_margin(Margin { left: 14, right: 14, top: 8, bottom: 6 }).show(ui, |ui| {
-            ui.set_width(width - 28.0);
+        Frame::new().inner_margin(Margin { left: 12, right: 12, top: 8, bottom: 6 }).show(ui, |ui| {
+            ui.set_width(width - 24.0);
             ui.spacing_mut().item_spacing.y = 6.0;
-            title_card(ui, Icon::Preview, crate::i18n::tr("Preview Toolpaths"));
-            card(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 3.0;
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(32.0, 28.0), Sense::hover());
-                    wood_block(ui.painter(), r);
-                    let name = self.doc.job.preview_material.map_or(crate::i18n::tr("Solid Material"), |m| tr(MATERIALS[m.min(4)].0));
-                    egui::ComboBox::from_id_salt("preview_material").selected_text(name).width(170.0).show_ui(ui, |ui| {
-                        for (i, m) in MATERIALS.iter().enumerate() {
-                            ui.selectable_value(&mut self.doc.job.preview_material, Some(i), tr(m.0));
-                        }
-                        ui.selectable_value(&mut self.doc.job.preview_material, None, crate::i18n::tr("Solid Material"));
-                    });
-                });
-                ui.add_enabled_ui(self.doc.job.preview_material.is_none(), |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add_space(38.0);
-                        ui.label(crate::i18n::tr("Solid Material"));
-                        ui.add_space(40.0);
-                        ui.color_edit_button_srgb(&mut self.doc.job.solid);
-                    });
-                });
-                ui.horizontal(|ui| {
-                    ui.add_space(38.0);
-                    bold(ui, crate::i18n::tr("Machined Area Color ...."));
-                });
-                ui.horizontal(|ui| {
-                    ui.add_space(38.0);
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 2.0;
-                        ui.radio_value(&mut self.machined, Machined::Material, crate::i18n::tr("Material Color"));
-                        ui.horizontal(|ui| {
-                            ui.radio_value(&mut self.machined, Machined::Global, crate::i18n::tr("Global Fill Color"));
-                            ui.color_edit_button_srgb(&mut self.global_fill);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.radio_value(&mut self.machined, Machined::Toolpath, crate::i18n::tr("Toolpath Color"));
-                            let mut chosen = self.selected_tp.and_then(|i| self.doc.toolpaths.get(i)).map(|t| t.color).unwrap_or(self.global_fill);
-                            if ui.color_edit_button_srgb(&mut chosen).changed() {
-                                if let Some(tp) = self.selected_tp.and_then(|i| self.doc.toolpaths.get_mut(i)) {
-                                    tp.color = chosen;
-                                }
-                            }
-                            if ui.button(crate::i18n::tr("Set All")).on_hover_text(crate::i18n::tr("Give every toolpath the global fill color")).clicked() {
-                                for t in &mut self.doc.toolpaths {
-                                    t.color = self.global_fill;
-                                }
-                            }
-                        });
-                    });
-                });
-                ui.horizontal(|ui| {
-                    ui.add_space(38.0);
-                    ui.checkbox(&mut self.animate, crate::i18n::tr("Animate preview"));
-                    ui.checkbox(&mut self.draw_tool, crate::i18n::tr("Draw tool"));
-                });
-                ui.horizontal(|ui| {
-                    ui.add_space(38.0);
-                    ui.label(crate::i18n::tr("3D quality"));
-                    egui::ComboBox::from_id_salt("quality3d").selected_text(tr(self.quality3d.name())).width(100.0).show_ui(ui, |ui| self.quality_list(ui));
-                });
-                if let Some(picture) = self.picture_seconds {
-                    let whole = self.preview_seconds.map_or(String::new(), |s| tf!(", whole preview {s:.1} s"));
-                    ui.horizontal(|ui| {
-                        ui.add_space(38.0);
-                        ui.label(RichText::new(tf!("Last picture {picture:.1} s{whole}")).size(11.5).color(MUTED()));
-                    });
-                }
-            });
-            card(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 5.0;
-                let w = ui.available_width() - 40.0;
-                let row = |ui: &mut Ui, icon: Icon, add: &mut dyn FnMut(&mut Ui)| {
-                    ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(vec2(32.0, 22.0), Sense::hover());
-                        icons::paint(ui.painter(), r, icon, true);
-                        add(ui);
-                    });
-                };
-                let has = self.selected_tp.is_some();
-                let mut do_selected = false;
-                row(ui, Icon::TpProfile, &mut |ui| {
-                    do_selected = ui.add_enabled(has, egui::Button::new(crate::i18n::tr("Preview Selected Toolpath")).min_size(vec2(w, 20.0))).clicked();
-                });
-                if do_selected {
-                    if let Some(i) = self.selected_tp {
-                        self.preview(vec![i]);
+            bold_sized(ui, crate::i18n::tr("Simulation"), 15.0, TEXT());
+            // In a two-sided job these are the active side's toolpaths, as the list shows.
+            let all: Vec<usize> = (0..self.doc.toolpaths.len()).filter(|i| self.doc.toolpath_on_side(&self.doc.toolpaths[*i])).collect();
+            let visible: Vec<usize> = all.iter().copied().filter(|i| self.doc.toolpaths[*i].visible).collect();
+            let two = self.doc.job.two_sided && !self.doc.toolpaths.is_empty();
+            let scope_id = ui.make_persistent_id("carve-scope");
+            let default_scope = if self.selected_tp.is_some() { 0 } else { 1 };
+            let mut scope: usize = ui.data(|d| d.get_temp(scope_id)).unwrap_or(default_scope);
+            if scope == 3 && !two {
+                scope = 2;
+            }
+            small_caps(ui, crate::i18n::tr("Carve"));
+            let mut options = vec![crate::i18n::tr("Selected"), crate::i18n::tr("Visible"), crate::i18n::tr("All")];
+            if two {
+                options.push(crate::i18n::tr("Both faces"));
+            }
+            if let Some(k) = pills(ui, &options, scope) {
+                scope = k;
+            }
+            ui.data_mut(|d| d.insert_temp(scope_id, scope));
+            let can = match scope {
+                0 => self.selected_tp.is_some(),
+                1 => !visible.is_empty(),
+                2 => !all.is_empty(),
+                _ => two,
+            };
+            let carve = ui.add_enabled(can, egui::Button::new(RichText::new(format!("        {}", crate::i18n::tr("Carve it"))).color(theme::ON_ACCENT).strong()).fill(ACCENT).min_size(vec2(ui.available_width(), 28.0)));
+            label_widget(&carve, crate::i18n::tr("Carve it"));
+            // A play mark before the words, drawn as the font has none.
+            {
+                let tip = pos2(carve.rect.left() + 20.0, carve.rect.center().y);
+                let colour = if can { theme::ON_ACCENT } else { MUTED() };
+                ui.painter().add(Shape::convex_polygon(vec![tip + vec2(-9.0, -6.0), tip + vec2(0.0, 0.0), tip + vec2(-9.0, 6.0)], colour, Stroke::NONE));
+            }
+            if carve.clicked() {
+                if scope < 3 {
+                    // One side at a time again: a carve that joined both is started afresh.
+                    if scope > 0 && self.sim_floor.take().is_some() {
+                        self.sim = None;
                     }
                 }
-                let running = !self.anim.queue.is_empty();
+                match scope {
+                    0 => {
+                        if let Some(i) = self.selected_tp {
+                            self.preview(vec![i]);
+                        }
+                    }
+                    1 => self.preview(visible.clone()),
+                    2 => self.preview(all.clone()),
+                    _ => self.preview_all_sides(),
+                }
+            }
+            // The player: one rounded bar, its speed beside it.
+            let running = !self.anim.queue.is_empty();
+            Frame::new().fill(theme::INPUT()).corner_radius(14).inner_margin(Margin::symmetric(6, 3)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    ui.add_space(38.0);
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    for (icon, tip) in [(Icon::Play, crate::i18n::tr("Play")), (Icon::Pause, crate::i18n::tr("Pause")), (Icon::Step, crate::i18n::tr("Step")), (Icon::End, crate::i18n::tr("Go to end")), (Icon::Rewind, crate::i18n::tr("Back to start"))] {
-                        let (rect, resp) = ui.allocate_exact_size(vec2(35.0, 20.0), if running { Sense::click() } else { Sense::hover() });
-                        ui.painter().rect_filled(rect, 4.0, theme::BUTTON());
-                        icons::paint(ui.painter(), Rect::from_center_size(rect.center(), vec2(16.0, 16.0)), icon, running);
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    for (icon, tip) in [(Icon::Rewind, crate::i18n::tr("Back to start")), (Icon::Play, crate::i18n::tr("Play")), (Icon::Pause, crate::i18n::tr("Pause")), (Icon::Step, crate::i18n::tr("Step")), (Icon::End, crate::i18n::tr("Go to end"))] {
+                        let (rect, resp) = ui.allocate_exact_size(vec2(24.0, 22.0), if running { Sense::click() } else { Sense::hover() });
+                        if resp.hovered() && running {
+                            ui.painter().circle_filled(rect.center(), 11.0, theme::BUTTON());
+                        }
+                        icons::paint(ui.painter(), Rect::from_center_size(rect.center(), vec2(15.0, 15.0)), icon, running);
                         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, running, tip));
                         if resp.on_hover_text(tip).clicked() {
                             match icon {
@@ -2559,78 +2528,91 @@ impl App {
                             }
                         }
                     }
-                });
-                ui.horizontal(|ui| {
-                    ui.add_space(52.0);
-                    ui.label(crate::i18n::tr("Speed"));
-                    ui.add_space(8.0);
-                    ui.spacing_mut().slider_width = 138.0;
+                    ui.add_space(6.0);
+                    ui.spacing_mut().slider_width = (ui.available_width() - 8.0).max(30.0);
                     ui.spacing_mut().slider_rail_height = 3.0;
                     let w = &mut ui.visuals_mut().widgets;
                     w.inactive.bg_fill = LINE();
                     w.hovered.bg_fill = LINE();
                     w.active.bg_fill = LINE();
-                    ui.add(egui::Slider::new(&mut self.speed, 0.0..=1.0).show_value(false).handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }));
-                });
-                ui.horizontal(|ui| {
-                    ui.add_space(38.0);
-                    let two = self.doc.job.two_sided && !self.doc.toolpaths.is_empty();
-                    let clicked = ui
-                        .add_enabled(two, egui::Button::new(crate::i18n::tr("Preview All Sides")).min_size(vec2(w, 20.0)))
-                        .on_hover_text(crate::i18n::tr("Both sides' toolpaths, each cutting its own side of one block"))
-                        .on_disabled_hover_text(crate::i18n::tr("For two-sided jobs"))
-                        .clicked();
-                    if clicked {
-                        self.preview_all_sides();
-                    }
-                });
-                // In a two-sided job these are the active side's toolpaths, as the list shows.
-                let all: Vec<usize> = (0..self.doc.toolpaths.len()).filter(|i| self.doc.toolpath_on_side(&self.doc.toolpaths[*i])).collect();
-                let visible: Vec<usize> = all.iter().copied().filter(|i| self.doc.toolpaths[*i].visible).collect();
-                let mut do_all = false;
-                let mut do_visible = false;
-                row(ui, Icon::TpPocket, &mut |ui| {
-                    do_all = ui.add_enabled(!all.is_empty(), egui::Button::new(crate::i18n::tr("Preview All Toolpaths")).min_size(vec2(w, 20.0))).clicked();
-                });
-                row(ui, Icon::TpDrill, &mut |ui| {
-                    do_visible = ui.add_enabled(!visible.is_empty(), egui::Button::new(crate::i18n::tr("Preview Visible Toolpaths")).min_size(vec2(w, 20.0))).clicked();
-                });
-                if do_all || do_visible {
-                    // One side at a time again: a carve that joined both is started afresh.
-                    if self.sim_floor.take().is_some() {
-                        self.sim = None;
-                    }
-                }
-                if do_all {
-                    self.preview(all);
-                }
-                if do_visible {
-                    self.preview(visible);
-                }
-                let has_sim = self.sim.is_some();
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(32.0, 22.0), Sense::hover());
-                    wood_block(ui.painter(), r);
-                    if ui.add_enabled(has_sim, egui::Button::new(crate::i18n::tr("Reset Preview")).min_size(vec2(w / 2.0 + 2.0, 20.0))).clicked() {
-                        self.reset_preview();
-                    }
-                    if ui.add_enabled(has_sim, egui::Button::new(crate::i18n::tr("Undo Last")).min_size(vec2(w / 2.0 - 8.0, 20.0))).clicked() {
-                        self.undo_preview();
-                    }
-                });
-                let mut do_save = false;
-                row(ui, Icon::Save, &mut |ui| {
-                    do_save = ui.add_sized([w, 20.0], egui::Button::new(crate::i18n::tr("Save Preview Image"))).clicked();
-                });
-                if do_save {
-                    self.save_preview = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png"]).set_file_name("preview.png").save_file();
-                }
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(32.0, 26.0), Sense::hover());
-                    icons::paint(ui.painter(), r, Icon::Select, true);
-                    ui.label(crate::i18n::tr("Double click on waste areas in 3D\nview to remove them."));
+                    ui.add(egui::Slider::new(&mut self.speed, 0.0..=1.0).show_value(false)).on_hover_text(crate::i18n::tr("Speed"));
                 });
             });
+            let has_sim = self.sim.is_some();
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if ui.add_enabled(has_sim, egui::Button::new(crate::i18n::tr("Start over")).small()).on_hover_text(crate::i18n::tr("Back to the uncut board")).clicked() {
+                    self.reset_preview();
+                }
+                if ui.add_enabled(has_sim, egui::Button::new(crate::i18n::tr("Undo last")).small()).clicked() {
+                    self.undo_preview();
+                }
+                if ui.add(egui::Button::new(crate::i18n::tr("Save picture...")).small()).clicked() {
+                    self.save_preview = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png"]).set_file_name("preview.png").save_file();
+                }
+            });
+            ui.add(egui::Label::new(RichText::new(crate::i18n::tr("Double-click a loose offcut in the 3D view to take it away.")).size(11.0).color(MUTED())).wrap());
+            if let Some(picture) = self.picture_seconds {
+                let whole = self.preview_seconds.map_or(String::new(), |s| tf!(", whole preview {s:.1} s"));
+                ui.label(RichText::new(tf!("Last picture {picture:.1} s{whole}")).size(11.0).color(MUTED()));
+            }
+            // How the carving looks.
+            ui.add_space(4.0);
+            small_caps(ui, crate::i18n::tr("Look"));
+            ui.horizontal(|ui| {
+                let name = self.doc.job.preview_material.map_or(crate::i18n::tr("Solid Material"), |m| tr(MATERIALS[m.min(4)].0));
+                egui::ComboBox::from_id_salt("preview_material").selected_text(name).width(130.0).show_ui(ui, |ui| {
+                    for (i, m) in MATERIALS.iter().enumerate() {
+                        ui.selectable_value(&mut self.doc.job.preview_material, Some(i), tr(m.0));
+                    }
+                    ui.selectable_value(&mut self.doc.job.preview_material, None, crate::i18n::tr("Solid Material"));
+                });
+                if self.doc.job.preview_material.is_none() {
+                    ui.color_edit_button_srgb(&mut self.doc.job.solid);
+                }
+            });
+            ui.label(RichText::new(crate::i18n::tr("Cut areas")).size(12.0).color(MUTED()));
+            let chosen = match self.machined {
+                Machined::Material => 0,
+                Machined::Global => 1,
+                Machined::Toolpath => 2,
+            };
+            if let Some(k) = pills(ui, &[crate::i18n::tr("as the board"), crate::i18n::tr("one colour"), crate::i18n::tr("by toolpath")], chosen) {
+                self.machined = [Machined::Material, Machined::Global, Machined::Toolpath][k];
+            }
+            match self.machined {
+                Machined::Global => {
+                    ui.horizontal(|ui| {
+                        ui.color_edit_button_srgb(&mut self.global_fill);
+                        if ui.small_button(crate::i18n::tr("Give it to every toolpath")).clicked() {
+                            for t in &mut self.doc.toolpaths {
+                                t.color = self.global_fill;
+                            }
+                        }
+                    });
+                }
+                Machined::Toolpath => {
+                    ui.horizontal(|ui| {
+                        let mut chosen = self.selected_tp.and_then(|i| self.doc.toolpaths.get(i)).map(|t| t.color).unwrap_or(self.global_fill);
+                        if ui.color_edit_button_srgb(&mut chosen).changed() {
+                            if let Some(tp) = self.selected_tp.and_then(|i| self.doc.toolpaths.get_mut(i)) {
+                                tp.color = chosen;
+                            }
+                        }
+                        ui.label(RichText::new(crate::i18n::tr("the selected toolpath's colour")).size(11.0).color(MUTED()));
+                    });
+                }
+                Machined::Material => {}
+            }
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.animate, crate::i18n::tr("Animate"));
+                ui.checkbox(&mut self.draw_tool, crate::i18n::tr("Show the tool"));
+            });
+            ui.horizontal(|ui| {
+                ui.label(crate::i18n::tr("3D quality"));
+                egui::ComboBox::from_id_salt("quality3d").selected_text(tr(self.quality3d.name())).width(100.0).show_ui(ui, |ui| self.quality_list(ui));
+            });
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.add_space((ui.available_width() - 80.0).max(0.0));
                 if wide(ui, crate::i18n::tr("Close"), 74.0).clicked() {
@@ -2639,8 +2621,6 @@ impl App {
             });
         });
     }
-
-    // ----- Centre -----
 
     fn centre(&mut self, ui: &mut Ui) {
         let whole = ui.max_rect();
