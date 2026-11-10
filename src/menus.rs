@@ -743,7 +743,7 @@ impl App {
             self.start_constraint_form();
         }
         ui.separator();
-        if entry(ui, "Job Setup...", true, None) {
+        if entry(ui, "Stock & origin...", true, None) {
             self.open_job_setup();
         }
         if entry(ui, "Move X/Y Zero...", true, None) {

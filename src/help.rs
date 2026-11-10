@@ -30,13 +30,13 @@ pub const PAGES: [Page; 9] = [
         title: "Getting Started",
         text: "Start with File > New, or Start a new project on the start screen. Give the size and thickness of the material, \
                where its zero is (a corner or the middle) and whether that zero is on the top of the material or on the table.\n\n\
-               You can change all of this later in Edit > Job Setup. Open a file from another program with File > Open: its \
+               You can change all of this later in Edit > Stock & origin. Open a file from another program with File > Open: its \
                drawing, layers, toolpaths and notes come in.",
         titre: "Pour commencer",
         texte: "Commencez par Fichier > Nouveau, ou par « Commencer un projet » sur l'écran d'accueil. Donnez la taille et \
                 l'épaisseur de la matière, où se trouve son zéro (un coin ou le milieu), et si ce zéro est sur le dessus de la \
                 matière ou sur la table.\n\n\
-                Tout cela se change ensuite dans Édition > Configuration du projet. Un fichier d'un autre logiciel s'ouvre avec \
+                Tout cela se change ensuite dans Édition > Brut & origine. Un fichier d'un autre logiciel s'ouvre avec \
                 Fichier > Ouvrir : son dessin, ses couches, ses parcours et ses notes sont repris.",
     },
     Page {
