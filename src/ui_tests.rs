@@ -790,7 +790,7 @@ fn job_with_square(at: [f64; 2]) -> Harness<'static, App> {
 fn the_job_can_be_changed_from_the_drawing_tab_and_undone() {
     let mut h = job_with_square([5.0, 5.0]);
     let steps = h.state().undo.len();
-    click(&mut h, "Job Setup...");
+    click(&mut h, "Stock & origin...");
     assert!(matches!(h.state().left, LeftForm::Job { first: false, .. }));
     h.state_mut().doc.job.width = 20.0;
     h.run();
@@ -811,7 +811,7 @@ fn the_job_can_be_changed_from_the_drawing_tab_and_undone() {
 fn the_job_icon_opens_the_same_form_and_cancel_goes_all_the_way_back() {
     let mut h = job_with_square([5.0, 5.0]);
     let steps = h.state().undo.len();
-    click(&mut h, "Job Setup...");
+    click(&mut h, "Stock & origin...");
     h.state_mut().doc.job.width = 30.0;
     // Asking again while it is open must not forget where it started.
     h.state_mut().open_job_setup();
@@ -819,7 +819,7 @@ fn the_job_icon_opens_the_same_form_and_cancel_goes_all_the_way_back() {
     click(&mut h, "Cancel");
     assert_eq!(h.state().doc.job.width, 10.0);
     assert_eq!(h.state().undo.len(), steps, "nothing changed, nothing to undo");
-    click(&mut h, "Job Setup...");
+    click(&mut h, "Stock & origin...");
     click(&mut h, "OK");
     assert_eq!(h.state().undo.len(), steps, "OK with no change adds no undo step");
 }
@@ -6962,4 +6962,25 @@ fn the_selection_card_shows_what_is_selected() {
     h.state_mut().set_persona(crate::app::Persona::Machining);
     h.run();
     assert!(h.query_by_label_contains("Selected shape").is_none(), "not in Machining");
+}
+
+/// The stock panel, Burin's own layout: pills choose the faces and the units, and the height zero
+/// is clicked on the board's front edge; the sizes are written on the picture of the board.
+#[test]
+fn the_stock_panel_sets_faces_units_and_height_zero_from_its_picture() {
+    let mut h = job_with_square([5.0, 5.0]);
+    click(&mut h, "Stock & origin...");
+    h.run();
+    click(&mut h, "Two faces");
+    assert!(h.state().doc.job.two_sided);
+    click(&mut h, "Z zero on the machine bed");
+    assert!(h.state().doc.job.z_on_bed);
+    click(&mut h, "Z zero on the material surface");
+    assert!(!h.state().doc.job.z_on_bed);
+    click(&mut h, "mm");
+    assert_eq!(h.state().doc.job.units, Units::Mm);
+    click(&mut h, "Datum TopRight");
+    assert_eq!(h.state().doc.job.datum, Datum::TopRight);
+    click(&mut h, "OK");
+    assert!(matches!(h.state().left, LeftForm::None));
 }

@@ -277,6 +277,37 @@ pub(crate) fn wide(ui: &mut Ui, label: &str, width: f32) -> egui::Response {
     ui.add_sized([width, 22.0], egui::Button::new(label))
 }
 
+/// A small muted heading in capitals, for a row of controls.
+pub(crate) fn small_caps(ui: &mut Ui, text: &str) {
+    ui.label(RichText::new(text.to_uppercase()).size(10.5).color(MUTED()).strong());
+}
+
+/// A row of joined pill buttons, one chosen; returns the one clicked, if any.
+pub(crate) fn pills(ui: &mut Ui, options: &[&str], chosen: usize) -> Option<usize> {
+    let font = FontId::proportional(12.0);
+    let widths: Vec<f32> = options.iter().map(|o| ui.painter().layout_no_wrap(o.to_string(), font.clone(), TEXT()).size().x + 20.0).collect();
+    let (whole, _) = ui.allocate_exact_size(vec2(widths.iter().sum(), 22.0), Sense::hover());
+    ui.painter().rect(whole, 11.0, INPUT(), Stroke::new(1.0, LINE()), StrokeKind::Inside);
+    let mut x = whole.left();
+    let mut clicked = None;
+    for (k, (o, w)) in options.iter().zip(&widths).enumerate() {
+        let r = Rect::from_min_size(pos2(x, whole.top()), vec2(*w, whole.height()));
+        let resp = ui.interact(r, ui.scope_id().with(("pill", *o)), Sense::click());
+        if k == chosen {
+            ui.painter().rect(r.shrink(2.0), 9.0, theme::ACCENT_SOFT(), Stroke::new(1.0, ACCENT), StrokeKind::Inside);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(r.shrink(2.0), 9.0, theme::BUTTON());
+        }
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, *o, font.clone(), if k == chosen { TEXT() } else { MUTED() });
+        label_widget(&resp, o);
+        if resp.clicked() {
+            clicked = Some(k);
+        }
+        x += w;
+    }
+    clicked
+}
+
 impl App {
     // ----- File dialogs -----
 
@@ -1071,8 +1102,8 @@ impl App {
             ui.painter().rect(rect, 12.0, if lit { theme::BUTTON_HOVER() } else { theme::CARD() }, Stroke::NONE, StrokeKind::Inside);
             icons::paint(ui.painter(), Rect::from_center_size(rect.left_center() + vec2(15.0, 0.0), vec2(20.0, 20.0)), Icon::JobSetup, true);
             ui.painter().galley(pos2(rect.left() + 29.0, rect.center().y - galley.size().y / 2.0), galley.clone(), TEXT());
-            label_widget(&resp, crate::i18n::tr("Job Setup..."));
-            let tip = tf!("Job setup: change the size, thickness, units and origin.\nOrigin: {}", job.datum.label());
+            label_widget(&resp, crate::i18n::tr("Stock & origin..."));
+            let tip = tf!("Stock & origin: change the size, thickness, units and origin.\nOrigin: {}", job.datum.label());
             if resp.on_hover_text(tip).clicked() {
                 self.open_job_setup();
             }
@@ -1587,153 +1618,89 @@ impl App {
     }
 
     fn job_setup_body(&mut self, ui: &mut Ui) {
-        Frame::new().fill(PANEL()).corner_radius(6).inner_margin(Margin::same(4)).show(ui, |ui| {
+        // Burin's own layout: the board drawn large, with its sizes along its edges and the zero
+        // picked on it, then a few rows of pills and boxes, the rarer settings last.
+        Frame::new().fill(PANEL()).corner_radius(6).inner_margin(Margin::same(6)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 8.0;
-            ui.horizontal(|ui| {
-                ui.add_space(8.0);
-                let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
-                wood_block(ui.painter(), r);
-                ui.add_space(8.0);
-                bold(ui, crate::i18n::tr("Material and Zero"));
-            });
-            card(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        bold(ui, crate::i18n::tr("Sides to Cut"));
-                        let (r, _) = ui.allocate_exact_size(vec2(58.0, 32.0), Sense::hover());
-                        wood_block(ui.painter(), r);
-                    });
-                    ui.add_space(14.0);
-                    ui.vertical(|ui| {
-                        if ui.radio(!self.doc.job.two_sided, crate::i18n::tr("Single Sided")).clicked() {
-                            self.doc.job.two_sided = false;
-                        }
-                        if ui.radio(self.doc.job.two_sided, crate::i18n::tr("Double Sided")).clicked() {
-                            self.doc.job.two_sided = true;
-                        }
-                        ui.add_enabled(false, egui::RadioButton::new(false, crate::i18n::tr("Rotary"))).on_disabled_hover_text(crate::i18n::tr("Not in this version"));
-                    });
-                });
-            });
-            let mut size_changed = false;
+            ui.spacing_mut().item_spacing.y = 6.0;
+            bold_sized(ui, crate::i18n::tr("Stock & origin"), 15.0, TEXT());
             let unit = self.doc.job.unit();
-            card(ui, |ui| {
-                ui.horizontal(|ui| {
+            let mut size_changed = false;
+            self.stock_picture(ui);
+            // Size, in one row, with the units beside it.
+            small_caps(ui, crate::i18n::tr("Size"));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for (k, caption) in [(0, crate::i18n::tr("width")), (1, crate::i18n::tr("depth")), (2, crate::i18n::tr("thickness"))] {
                     ui.vertical(|ui| {
-                        ui.set_width(56.0);
-                        bold(ui, crate::i18n::tr("Material Size"));
-                        let (r, _) = ui.allocate_exact_size(vec2(58.0, 44.0), Sense::hover());
-                        wood_block(ui.painter(), r);
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        let value = match k {
+                            0 => &mut self.doc.job.width,
+                            1 => &mut self.doc.job.height,
+                            _ => &mut self.doc.job.thickness,
+                        };
+                        size_changed |= number(ui, value, 50.0);
+                        ui.label(RichText::new(caption).size(10.5).color(MUTED()));
                     });
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 3.0;
-                        size_changed |= labelled(ui, crate::i18n::tr("Width (X):"), 54.0, &mut self.doc.job.width, 40.0, unit);
-                        size_changed |= labelled(ui, crate::i18n::tr("Height (Y):"), 54.0, &mut self.doc.job.height, 40.0, unit);
-                        size_changed |= labelled(ui, crate::i18n::tr("Thickness"), 54.0, &mut self.doc.job.thickness, 40.0, unit);
-                    });
-                });
-                if labelled(ui, crate::i18n::tr("Sacrificial board"), 96.0, &mut self.doc.job.spoil_board, 40.0, unit) {
-                    self.doc.job.spoil_board = self.doc.job.spoil_board.max(0.0);
-                }
-                ui.label(RichText::new(crate::i18n::tr("Cutting into it brings no warning; going past it does.")).size(11.5).color(MUTED()));
-                ui.horizontal(|ui| {
-                    bold(ui, crate::i18n::tr("Units"));
-                    ui.add_space(14.0);
-                    let inches = self.doc.job.units == Units::Inches;
-                    if ui.radio(inches, crate::i18n::tr("inches")).clicked() {
-                        self.doc.set_units(Units::Inches);
-                        size_changed = true;
+                    if k < 2 {
+                        ui.label(RichText::new("×").color(MUTED()));
                     }
-                    ui.add_space(12.0);
-                    if ui.radio(!inches, "mm").clicked() {
+                }
+            });
+            // What the board lies on stays in sight: it decides when a cut too deep is warned about.
+            if labelled(ui, crate::i18n::tr("Sacrificial board"), 0.0, &mut self.doc.job.spoil_board, 44.0, unit) {
+                self.doc.job.spoil_board = self.doc.job.spoil_board.max(0.0);
+            }
+            ui.label(RichText::new(crate::i18n::tr("Cutting into it brings no warning; going past it does.")).size(11.0).color(MUTED()));
+            ui.horizontal(|ui| {
+                small_caps(ui, crate::i18n::tr("Units"));
+                ui.add_space(8.0);
+                let inches = self.doc.job.units == Units::Inches;
+                match pills(ui, &["mm", crate::i18n::tr("inches")], if inches { 1 } else { 0 }) {
+                    Some(0) if inches => {
                         self.doc.set_units(Units::Mm);
                         size_changed = true;
                     }
-                });
-            });
-            card(ui, |ui| {
-                bold(ui, crate::i18n::tr("Height Zero (Z)"));
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(60.0, 40.0), Sense::hover());
-                    wood_block(ui.painter(), r);
-                    let datum_y = if self.doc.job.z_on_bed { r.bottom() - 4.0 } else { r.top() + 16.0 };
-                    zero_marker(ui.painter(), pos2(r.left() + 4.0, datum_y));
-                    ui.add_space(26.0);
-                    ui.vertical(|ui| {
-                        if ui.radio(!self.doc.job.z_on_bed, crate::i18n::tr("Material Surface")).clicked() {
-                            self.doc.job.z_on_bed = false;
-                        }
-                        if ui.radio(self.doc.job.z_on_bed, crate::i18n::tr("Machine Bed")).clicked() {
-                            self.doc.job.z_on_bed = true;
-                        }
-                    });
-                });
-            });
-            card(ui, |ui| {
-                bold(ui, crate::i18n::tr("Zero on the Sheet (X, Y)"));
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(52.0, 56.0), Sense::hover());
-                    let slab = Rect::from_center_size(r.center(), vec2(52.0, 30.0));
-                    wood_block(ui.painter(), slab);
-                    let (job, zero) = (&self.doc.job, self.doc.job.origin());
-                    let (u, v) = (((zero[0] / job.width) as f32).clamp(0.0, 1.0), ((zero[1] / job.height) as f32).clamp(0.0, 1.0));
-                    zero_marker(ui.painter(), wood_top_point(slab, u, v));
-                    let (square, _) = ui.allocate_exact_size(vec2(58.0, 58.0), Sense::hover());
-                    let inner = square.shrink(7.0);
-                    ui.painter().rect_stroke(inner, 0.0, Stroke::new(1.0, LINE()), StrokeKind::Inside);
-                    for (spot, datum) in [
-                        (inner.left_top(), Datum::TopLeft),
-                        (inner.right_top(), Datum::TopRight),
-                        (inner.center(), Datum::Centre),
-                        (inner.left_bottom(), Datum::BottomLeft),
-                        (inner.right_bottom(), Datum::BottomRight),
-                    ] {
-                        let hit = Rect::from_center_size(spot, vec2(14.0, 14.0));
-                        let resp = ui.interact(hit, ui.scope_id().with(("datum", format!("{datum:?}"))), Sense::click());
-                        ui.painter().circle(spot, 5.5, INPUT(), Stroke::new(1.0, MUTED()));
-                        if self.doc.job.datum == datum {
-                            ui.painter().circle_filled(spot, 3.0, ACCENT);
-                        }
-                        label_widget(&resp, &format!("Datum {datum:?}"));
-                        if resp.clicked() {
-                            self.doc.job.datum = datum;
-                        }
+                    Some(1) if !inches => {
+                        self.doc.set_units(Units::Inches);
+                        size_changed = true;
                     }
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 3.0;
-                        ui.checkbox(&mut self.doc.job.use_offset, crate::i18n::tr("Use Offset"));
-                        let on = self.doc.job.use_offset;
-                        ui.add_enabled_ui(on, |ui| {
-                            labelled(ui, "X:", 14.0, &mut self.doc.job.offset[0], 46.0, "");
-                            labelled(ui, "Y:", 14.0, &mut self.doc.job.offset[1], 46.0, "");
-                        });
-                    });
-                });
+                    _ => {}
+                }
+            });
+            ui.horizontal(|ui| {
+                small_caps(ui, crate::i18n::tr("Faces"));
+                ui.add_space(8.0);
+                if let Some(k) = pills(ui, &[crate::i18n::tr("One face"), crate::i18n::tr("Two faces")], usize::from(self.doc.job.two_sided)) {
+                    self.doc.job.two_sided = k == 1;
+                }
             });
             if self.doc.job.two_sided {
-                card(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 3.0;
-                    bold(ui, crate::i18n::tr("Flip Direction Between Sides"));
-                    // The original keeps "Around X" or "Around Y"; its form says how the block is turned.
-                    let mut around_y = self.doc.job.flip_around_y;
-                    ui.horizontal(|ui| {
-                        ui.radio_value(&mut around_y, true, crate::i18n::tr("Horizontal (around Y)"));
-                        ui.radio_value(&mut around_y, false, crate::i18n::tr("Vertical (around X)"));
-                    });
-                    if around_y != self.doc.job.flip_around_y {
-                        self.change_flip_direction();
+                ui.horizontal(|ui| {
+                    small_caps(ui, crate::i18n::tr("Turned"));
+                    ui.add_space(8.0);
+                    let around_y = self.doc.job.flip_around_y;
+                    if let Some(k) = pills(ui, &[crate::i18n::tr("left to right"), crate::i18n::tr("top to bottom")], if around_y { 0 } else { 1 }) {
+                        if (k == 0) != around_y {
+                            self.change_flip_direction();
+                        }
                     }
                 });
             }
-            card(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 3.0;
-                bold(ui, crate::i18n::tr("3D Detail"));
+            // The rarer settings, folded away at first.
+            egui::CollapsingHeader::new(RichText::new(crate::i18n::tr("More settings")).size(12.0).color(MUTED())).id_salt("stock-more").default_open(false).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.checkbox(&mut self.doc.job.use_offset, crate::i18n::tr("Move the origin by"));
+                ui.add_enabled_ui(self.doc.job.use_offset, |ui| {
+                    ui.horizontal(|ui| {
+                        labelled(ui, "X", 14.0, &mut self.doc.job.offset[0], 46.0, "");
+                        labelled(ui, "Y", 14.0, &mut self.doc.job.offset[1], 46.0, "");
+                    });
+                });
                 ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(26.0, 22.0), Sense::hover());
-                    icons::paint(ui.painter(), r, Icon::BlockCopy, true);
+                    ui.label(crate::i18n::tr("3D detail"));
                     let before = self.doc.job.resolution;
-                    egui::ComboBox::from_id_salt("res").selected_text(tr(RESOLUTIONS[before.min(3)].0)).width(160.0).show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt("res").selected_text(tr(RESOLUTIONS[before.min(3)].0)).width(150.0).show_ui(ui, |ui| {
                         for (i, r) in RESOLUTIONS.iter().enumerate() {
                             ui.selectable_value(&mut self.doc.job.resolution, i, tr(r.0));
                         }
@@ -1742,40 +1709,29 @@ impl App {
                         self.model_dirty = true;
                     }
                 });
+                ui.label(RichText::new(tr(RESOLUTIONS[self.doc.job.resolution.min(3)].1)).size(11.0).color(MUTED()));
                 ui.horizontal(|ui| {
-                    ui.add_space(32.0);
-                    ui.label(RichText::new(tr(RESOLUTIONS[self.doc.job.resolution.min(3)].1)).size(11.5).color(MUTED()));
-                });
-                bold(ui, crate::i18n::tr("Appearance"));
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(26.0, 22.0), Sense::hover());
-                    ui.painter().circle_filled(r.center(), 10.0, Color32::from_rgb(240, 236, 220));
-                    for (o, c) in [(vec2(-5.0, -2.0), Color32::RED), (vec2(0.0, -5.0), Color32::from_rgb(240, 190, 30)), (vec2(5.0, -2.0), Color32::from_rgb(40, 150, 60)), (vec2(3.0, 4.0), Color32::from_rgb(40, 90, 220))] {
-                        ui.painter().circle_filled(r.center() + o, 2.0, c);
-                    }
+                    ui.label(crate::i18n::tr("Looks like"));
                     let name = self.doc.job.material.map_or(crate::i18n::tr("Solid Color"), |m| tr(MATERIALS[m.min(4)].0));
-                    egui::ComboBox::from_id_salt("appearance").selected_text(name).width(160.0).show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt("appearance").selected_text(name).width(130.0).show_ui(ui, |ui| {
                         ui.selectable_value(&mut self.doc.job.material, None, crate::i18n::tr("Solid Color"));
                         for (i, m) in MATERIALS.iter().enumerate() {
                             ui.selectable_value(&mut self.doc.job.material, Some(i), tr(m.0));
                         }
                     });
-                });
-                if self.doc.job.material.is_none() {
-                    ui.horizontal(|ui| {
-                        ui.add_space(52.0);
-                        ui.label(crate::i18n::tr("Solid Color:"));
+                    if self.doc.job.material.is_none() {
                         ui.color_edit_button_srgb(&mut self.doc.job.solid);
-                    });
-                }
+                    }
+                });
             });
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if primary(ui, "OK", 74.0).clicked() {
-                    self.confirm_job();
-                }
-                ui.add_space(ui.available_width() - 76.0);
                 if wide(ui, crate::i18n::tr("Cancel"), 74.0).clicked() {
                     self.cancel_job();
+                }
+                ui.add_space((ui.available_width() - 76.0).max(0.0));
+                if primary(ui, "OK", 74.0).clicked() {
+                    self.confirm_job();
                 }
             });
             if size_changed {
@@ -1785,6 +1741,92 @@ impl App {
                 self.model_dirty = true;
             }
         });
+    }
+
+    /// The board drawn large in the logo's colours, its sizes written along its edges. The zero
+    /// on the sheet is picked by clicking a corner or the middle of its top, and the height zero
+    /// by clicking the top or the foot of its front edge.
+    fn stock_picture(&mut self, ui: &mut Ui) {
+        let w = ui.available_width();
+        let job = &self.doc.job;
+        // The board in proportion, a thin one drawn thin (but never thinner than the two height
+        // spots need): its depth goes back at an angle, shortened, as on a drawing of a part.
+        let big = job.width.max(job.height).max(1e-9);
+        let (a, b) = ((job.width / big) as f32, (job.height / big) as f32);
+        let (dx, dy) = (0.7 * 40f32.to_radians().cos(), -0.7 * 40f32.to_radians().sin());
+        let (left, right, top, bottom) = (30.0, 64.0, 16.0, 38.0);
+        let s = (w - left - right) / (a + b * dx);
+        let t = ((job.thickness / big) as f32).clamp(12.0 / s, 0.3);
+        let raw = |x: f32, y: f32, z: f32| vec2(x + y * dx, y * dy - z);
+        let tall = (b * -dy + t) * s;
+        let (area, _) = ui.allocate_exact_size(vec2(w, tall + top + bottom), Sense::hover());
+        let p = ui.painter_at(area);
+        p.rect_filled(area, 8.0, theme::CARD());
+        let offset = pos2(area.left() + left, area.top() + top + b * -dy * s + t * s);
+        let at = |x: f32, y: f32, z: f32| offset + raw(x, y, z) * s;
+        let edge = Stroke::new(1.0, Color32::from_rgb(90, 28, 0));
+        let face = |pts: [egui::Pos2; 4], fill: Color32| {
+            p.add(Shape::convex_polygon(pts.to_vec(), fill, edge));
+        };
+        face([at(0.0, 0.0, 0.0), at(a, 0.0, 0.0), at(a, 0.0, t), at(0.0, 0.0, t)], Color32::from_rgb(255, 122, 0));
+        face([at(a, 0.0, 0.0), at(a, b, 0.0), at(a, b, t), at(a, 0.0, t)], Color32::from_rgb(224, 74, 0));
+        face([at(0.0, 0.0, t), at(a, 0.0, t), at(a, b, t), at(0.0, b, t)], Color32::from_rgb(255, 180, 0));
+        let unit = job.unit();
+        let size = |v: f64| format!("{} {unit}", crate::toolpath::trim(v));
+        let caption = |pos: egui::Pos2, text: String, align: Align2| {
+            p.text(pos, align, text, FontId::proportional(11.5), TEXT());
+        };
+        // Width under the front, depth beside the receding right side, thickness right of the
+        // front right edge.
+        caption(at(a / 2.0, 0.0, 0.0) + vec2(0.0, 3.0), size(job.width), Align2::CENTER_TOP);
+        let x_label = area.right() - right + 8.0;
+        for (edge_mid, y, text) in [(at(a, b * 0.5, t), at(a, b * 0.75, t).y - 6.0, size(job.height)), (at(a + b * dx * 0.5, b * 0.5, t * 0.5) - vec2(b * dx * 0.5 * s, 0.0), at(a, b * 0.15, 0.0).y + 6.0, size(job.thickness))] {
+            let label_at = pos2(x_label, y);
+            p.line_segment([edge_mid, label_at - vec2(3.0, 0.0)], Stroke::new(1.0, MUTED()));
+            caption(label_at, text, Align2::LEFT_CENTER);
+        }
+        let (edge_top, edge_foot) = (at(0.0, 0.0, t), at(0.0, 0.0, 0.0));
+        // The height zero: level with the top or the foot of the front edge, just left of it.
+        let z_on_bed = job.z_on_bed;
+        let rail = edge_top.x - 16.0;
+        p.line_segment([pos2(rail, edge_top.y), pos2(rail, edge_foot.y)], Stroke::new(1.0, MUTED()));
+        for (spot, on_bed, name) in [(edge_top, false, "Z zero on the material surface"), (edge_foot, true, "Z zero on the machine bed")] {
+            let dot = pos2(rail, spot.y);
+            p.line_segment([dot, spot], Stroke::new(1.0, MUTED()));
+            let resp = ui.interact(Rect::from_center_size(dot, vec2(16.0, 16.0)), ui.scope_id().with(name), Sense::click());
+            let chosen = z_on_bed == on_bed;
+            p.circle(dot, if chosen { 5.0 } else { 4.0 }, if chosen { ACCENT } else { INPUT() }, Stroke::new(1.0, if resp.hovered() { TEXT() } else { MUTED() }));
+            label_widget(&resp, crate::i18n::tr(name));
+            if resp.on_hover_text(crate::i18n::tr(name)).clicked() {
+                self.doc.job.z_on_bed = on_bed;
+            }
+        }
+        // The zero on the sheet: four corners and the middle of the top.
+        let datum = self.doc.job.datum;
+        for (u, v, d) in [(0.0, 0.0, Datum::BottomLeft), (1.0, 0.0, Datum::BottomRight), (0.0, 1.0, Datum::TopLeft), (1.0, 1.0, Datum::TopRight), (0.5, 0.5, Datum::Centre)] {
+            let spot = at(u * a, v * b, t);
+            let resp = ui.interact(Rect::from_center_size(spot, vec2(18.0, 18.0)), ui.scope_id().with(("datum", format!("{d:?}"))), Sense::click());
+            if datum == d {
+                p.circle_filled(spot, 7.0, theme::ON_ACCENT);
+                p.circle_stroke(spot, 7.0, Stroke::new(2.0, Color32::WHITE));
+                p.circle_filled(spot, 3.0, Color32::WHITE);
+            } else {
+                p.circle(spot, 4.5, Color32::from_white_alpha(if resp.hovered() { 230 } else { 150 }), Stroke::new(1.0, theme::ON_ACCENT));
+            }
+            label_widget(&resp, &format!("Datum {d:?}"));
+            if resp.on_hover_text(crate::i18n::tr("Put the origin here")).clicked() {
+                self.doc.job.datum = d;
+            }
+        }
+        let where_ = match self.doc.job.datum {
+            Datum::BottomLeft => crate::i18n::tr("front left"),
+            Datum::BottomRight => crate::i18n::tr("front right"),
+            Datum::TopLeft => crate::i18n::tr("back left"),
+            Datum::TopRight => crate::i18n::tr("back right"),
+            Datum::Centre => crate::i18n::tr("middle"),
+        };
+        let height = if self.doc.job.z_on_bed { crate::i18n::tr("on the bed") } else { crate::i18n::tr("on top") };
+        p.text(area.left_bottom() + vec2(8.0, -6.0), Align2::LEFT_BOTTOM, crate::i18n::tr("Origin: {where}, Z {height}").replace("{where}", where_).replace("{height}", height), FontId::proportional(11.0), MUTED());
     }
 
     pub fn confirm_job(&mut self) {
