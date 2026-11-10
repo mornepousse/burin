@@ -4,6 +4,28 @@
 //! tab = attache, stepover = recouvrement, allowance = surcote, pass = passe, job = projet.
 
 pub const FR: &[(&str, &str)] = &[
+    // The editing forms, Burin's own wording.
+    ("What goes along the line", "Ce qui suit la ligne"),
+    ("The shape picked", "La forme choisie"),
+    ("Circles", "Des cercles"),
+    ("How they're spaced", "Leur espacement"),
+    ("A set distance apart", "À distance fixe"),
+    ("A set number", "En nombre fixe"),
+    ("Turn them to follow the line", "Les tourner pour suivre la ligne"),
+    ("Start from the other end", "Partir de l'autre bout"),
+    ("Ends closer than the gap below are joined into one line or a closed shape.", "Les bouts plus proches que l'écart ci-dessous sont joints en une ligne ou une forme fermée."),
+    ("now", "maintenant"),
+    ("closed", "fermées"),
+    ("open", "ouvertes"),
+    ("Rounded", "Arrondi"),
+    ("Dog-bone", "Os de chien"),
+    ("T-bone", "En T"),
+    ("Radius or tool", "Rayon ou outil"),
+    ("Join what's left when closing", "Joindre ce qui reste à la fermeture"),
+    ("Gaps around the parts", "Écarts autour des pièces"),
+    ("On the sheet", "Sur la feuille"),
+    ("Packing", "Rangement"),
+    ("Letters", "Lettres"),
     // The move, size and copy forms, Burin's own wording.
     ("Line up", "Aligner"),
     ("Copies in a grid", "Copies en grille"),
