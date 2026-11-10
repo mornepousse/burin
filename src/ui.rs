@@ -351,6 +351,31 @@ pub(crate) fn pills(ui: &mut Ui, options: &[&str], chosen: usize) -> Option<usiz
     clicked
 }
 
+/// The shape the form will make, drawn small from its numbers as they're typed.
+pub(crate) fn shape_preview(ui: &mut Ui, f: &DrawForm) {
+    let w = ui.available_width();
+    let (area, _) = ui.allocate_exact_size(vec2(w, 84.0), Sense::hover());
+    let p = ui.painter_at(area);
+    p.rect_filled(area, 8.0, CARD());
+    let Some(prim) = f.prim() else { return };
+    let paths = prim.paths();
+    let Some((lo, hi)) = geom::bbox(&paths) else { return };
+    let size = [(hi[0] - lo[0]).max(1e-9), (hi[1] - lo[1]).max(1e-9)];
+    let room = area.shrink(12.0);
+    let k = (room.width() as f64 / size[0]).min(room.height() as f64 / size[1]);
+    let mid = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+    let at = |q: [f64; 2]| pos2(room.center().x + ((q[0] - mid[0]) * k) as f32, room.center().y - ((q[1] - mid[1]) * k) as f32);
+    for path in &paths {
+        let mut pts: Vec<egui::Pos2> = path.pts.iter().map(|q| at(*q)).collect();
+        if path.closed {
+            if let Some(first) = pts.first().copied() {
+                pts.push(first);
+            }
+        }
+        p.add(Shape::line(pts, Stroke::new(1.6, ACCENT)));
+    }
+}
+
 /// Where the tool runs against a shape's line: outside it, inside it, or on it. A square for the
 /// shape, its line in the logo's orange, and the tool as a circle.
 pub(crate) fn side_picture(ui: &mut Ui, side: Side) {
@@ -2007,11 +2032,27 @@ impl App {
             DrawKind::Text => Icon::Text,
         };
         let editing = f.editing.is_some_and(|id| self.doc.vectors.iter().any(|v| v.id == id));
-        if editing {
-            title_card(ui, icon, &f.kind.title().replacen(crate::i18n::tr("Draw"), crate::i18n::tr("Edit"), 1));
-        } else {
-            title_card(ui, icon, f.kind.title());
-        }
+        // Burin's own head: the shape's icon and its name, and whether a shape is being changed.
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::hover());
+            icons::paint(ui.painter(), r, icon, true);
+            let name = match f.kind {
+                DrawKind::Circle => crate::i18n::tr("Circle"),
+                DrawKind::Ellipse => crate::i18n::tr("Ellipse"),
+                DrawKind::Rect => crate::i18n::tr("Rectangle"),
+                DrawKind::Polygon => crate::i18n::tr("Polygon"),
+                DrawKind::Star => crate::i18n::tr("Star"),
+                DrawKind::Polyline => crate::i18n::tr("Lines"),
+                DrawKind::Arc => crate::i18n::tr("Arc"),
+                DrawKind::Curve => crate::i18n::tr("Curve"),
+                DrawKind::Spiral => crate::i18n::tr("Spiral"),
+                DrawKind::Text => crate::i18n::tr("Text"),
+            };
+            bold_sized(ui, name, 15.0, TEXT());
+            if editing {
+                ui.label(RichText::new(crate::i18n::tr("changing it")).size(11.0).color(ACCENT));
+            }
+        });
         let unit = self.doc.job.unit();
         let line_tool = matches!(f.kind, DrawKind::Polyline | DrawKind::Curve);
         if line_tool {
@@ -2023,30 +2064,30 @@ impl App {
                 ui.label(tf!("Points: {}", f.points.len()));
             });
         } else {
+            shape_preview(ui, &f);
             card(ui, |ui| {
-                bold(ui, if f.kind == DrawKind::Text { crate::i18n::tr("Start Point") } else { crate::i18n::tr("Center Point") });
+                ui.spacing_mut().item_spacing.y = 4.0;
+                icon_caps(ui, Icon::Move, if f.kind == DrawKind::Text { crate::i18n::tr("Starts at") } else { crate::i18n::tr("Middle at") });
                 let zero = self.doc.job.origin();
                 ui.horizontal(|ui| {
-                    ui.label("X:");
+                    ui.label("X");
                     number_from(ui, &mut f.c[0], zero[0], 54.0);
                     ui.add_space(4.0);
-                    ui.label("Y:");
+                    ui.label("Y");
                     number_from(ui, &mut f.c[1], zero[1], 54.0);
                 });
-                ui.add_space(6.0);
+                ui.add_space(4.0);
+                if f.kind == DrawKind::Text {
+                    icon_caps(ui, Icon::Text, crate::i18n::tr("Text"));
+                } else {
+                    icon_caps(ui, Icon::Measure, crate::i18n::tr("Size"));
+                }
                 match f.kind {
                     DrawKind::Circle => {
+                        if let Some(k) = pills(ui, &[crate::i18n::tr("Radius"), crate::i18n::tr("Diameter")], usize::from(f.use_dia)) {
+                            f.use_dia = k == 1;
+                        }
                         ui.horizontal(|ui| {
-                            if ui.radio(!f.use_dia, crate::i18n::tr("Radius")).clicked() {
-                                f.use_dia = false;
-                            }
-                            ui.add_space(12.0);
-                            if ui.radio(f.use_dia, crate::i18n::tr("Diameter")).clicked() {
-                                f.use_dia = true;
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label(if f.use_dia { "D:" } else { "R:" });
                             let mut shown = if f.use_dia { f.r * 2.0 } else { f.r };
                             if number(ui, &mut shown, 54.0) {
                                 f.r = if f.use_dia { shown / 2.0 } else { shown };
@@ -2055,42 +2096,42 @@ impl App {
                         });
                     }
                     DrawKind::Ellipse => {
-                        labelled(ui, crate::i18n::tr("Radius X:"), 54.0, &mut f.rx, 54.0, unit);
-                        labelled(ui, crate::i18n::tr("Radius Y:"), 54.0, &mut f.ry, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Across"), 54.0, &mut f.rx, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Up"), 54.0, &mut f.ry, 54.0, unit);
                     }
                     DrawKind::Rect => {
-                        labelled(ui, crate::i18n::tr("Width:"), 54.0, &mut f.w, 54.0, unit);
-                        labelled(ui, crate::i18n::tr("Height:"), 54.0, &mut f.h, 54.0, unit);
-                        labelled(ui, crate::i18n::tr("Corners:"), 54.0, &mut f.corner, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Width"), 54.0, &mut f.w, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Height"), 54.0, &mut f.h, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Rounded corners"), 54.0, &mut f.corner, 54.0, unit);
                     }
                     DrawKind::Polygon => {
-                        labelled(ui, crate::i18n::tr("Radius:"), 54.0, &mut f.r, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Radius"), 54.0, &mut f.r, 54.0, unit);
                         ui.horizontal(|ui| {
-                            ui.label(crate::i18n::tr("Sides:"));
+                            ui.label(crate::i18n::tr("Sides"));
                             count_box(ui, &mut f.sides, 54.0);
                         });
                     }
                     DrawKind::Star => {
-                        labelled(ui, crate::i18n::tr("Outer:"), 54.0, &mut f.r, 54.0, unit);
-                        labelled(ui, crate::i18n::tr("Inner:"), 54.0, &mut f.inner, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Tips at"), 54.0, &mut f.r, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Hollows at"), 54.0, &mut f.inner, 54.0, unit);
                         ui.horizontal(|ui| {
-                            ui.label(crate::i18n::tr("Points:"));
+                            ui.label(crate::i18n::tr("Points"));
                             count_box(ui, &mut f.sides, 54.0);
                         });
                     }
                     DrawKind::Spiral => {
-                        labelled(ui, crate::i18n::tr("Radius:"), 54.0, &mut f.r, 54.0, unit);
-                        labelled(ui, crate::i18n::tr("Turns:"), 54.0, &mut f.turns, 54.0, "");
+                        labelled(ui, crate::i18n::tr("Radius"), 54.0, &mut f.r, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Turns"), 54.0, &mut f.turns, 54.0, "");
                     }
                     DrawKind::Arc => {
-                        labelled(ui, crate::i18n::tr("Radius:"), 54.0, &mut f.r, 54.0, unit);
-                        labelled(ui, crate::i18n::tr("Start:"), 54.0, &mut f.start, 54.0, crate::i18n::tr("degrees"));
-                        labelled(ui, crate::i18n::tr("Sweep:"), 54.0, &mut f.sweep, 54.0, crate::i18n::tr("degrees"));
+                        labelled(ui, crate::i18n::tr("Radius"), 54.0, &mut f.r, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Starts at angle"), 54.0, &mut f.start, 54.0, crate::i18n::tr("degrees"));
+                        labelled(ui, crate::i18n::tr("Goes round"), 54.0, &mut f.sweep, 54.0, crate::i18n::tr("degrees"));
                     }
                     DrawKind::Text => {
                         ui.add(TextEdit::multiline(&mut f.text).desired_rows(2).desired_width(f32::INFINITY));
                         crate::fonts::style_picker(ui, &mut f.text_style);
-                        labelled(ui, crate::i18n::tr("Height:"), 54.0, &mut f.text_height, 54.0, unit);
+                        labelled(ui, crate::i18n::tr("Height"), 54.0, &mut f.text_height, 54.0, unit);
                         // Filling a shape: the selected shapes that aren't this text.
                         let target = geom::bbox(self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id) && Some(v.id) != f.editing && !matches!(v.prim, Prim::Text { .. })).flat_map(|v| v.paths.iter()));
                         ui.horizontal(|ui| {
@@ -2107,27 +2148,24 @@ impl App {
                             }
                         });
                         ui.label(crate::i18n::tr("Margin Size"));
-                        ui.horizontal(|ui| {
+                        {
                             use crate::fonts::Margin;
-                            for (m, name) in [(Margin::None, "None"), (Margin::Normal, "Normal"), (Margin::Wide, "Wide")] {
-                                ui.radio_value(&mut f.text_margin, m, crate::i18n::tr(name));
+                            let margins = [Margin::None, Margin::Normal, Margin::Wide];
+                            let at = margins.iter().position(|m| *m == f.text_margin).unwrap_or(1);
+                            if let Some(k) = pills(ui, &[crate::i18n::tr("None"), crate::i18n::tr("Normal"), crate::i18n::tr("Wide")], at) {
+                                f.text_margin = margins[k];
                             }
-                        });
+                        }
                         ui.checkbox(&mut f.spread_letters, crate::i18n::tr("Spread the letters to the width"));
                     }
                     _ => {}
                 }
             });
-            card(ui, |ui| {
-                ui.vertical_centered(|ui| {
-                    if editing {
-                        ui.label(crate::i18n::tr("Apply changes this shape."));
-                        ui.label(crate::i18n::tr("Draw on the sheet to make a new one."));
-                    } else {
-                        ui.label(crate::i18n::tr("To edit an existing shape"));
-                        ui.label(crate::i18n::tr("hold shift while selecting"));
-                    }
-                });
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                icons::paint(ui.painter(), r, Icon::Select, true);
+                let hint = if editing { crate::i18n::tr("Changes go to the selected shape. Draw on the sheet for a new one.") } else { crate::i18n::tr("Shift-click a shape to change it here.") };
+                ui.add(egui::Label::new(RichText::new(hint).size(11.5).color(MUTED())).wrap());
             });
         }
         // Keep typed values, then apply them.
@@ -2155,7 +2193,7 @@ impl App {
                 ui.radio_value(&mut f.profile, Profile::Flat, crate::i18n::tr("Flat"));
             });
             ui.add_space(4.0);
-            labelled(ui, crate::i18n::tr("Height:"), 66.0, &mut f.height, 54.0, unit);
+            labelled(ui, crate::i18n::tr("Height"), 66.0, &mut f.height, 54.0, unit);
             labelled(ui, crate::i18n::tr("Base Height:"), 66.0, &mut f.base, 54.0, unit);
         });
         card(ui, |ui| {
