@@ -227,9 +227,15 @@ fn open_state(app: &mut App, state: &str) {
     app.background_recalc = false;
     app.surface_in_background = false;
     // A real job carved in the preview, for looking at it closely: BURIN_CAM is zoom,yaw,tilt,pan x,pan y.
-    if let Some(path) = state.strip_prefix("file:") {
-        if let Err(why) = app.open_path(path.into()) {
-            eprintln!("{why}");
+    // `sample3d`: the same with the sample project, for the website's picture of the 3D preview.
+    if state == "sample3d" || state.starts_with("file:") {
+        if let Some(path) = state.strip_prefix("file:") {
+            if let Err(why) = app.open_path(path.into()) {
+                eprintln!("{why}");
+            }
+        } else {
+            app.load_sample();
+            app.set_persona(app::Persona::Machining);
         }
         app.right_open = true;
         app.right = RightMode::Preview;
