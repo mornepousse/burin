@@ -22,6 +22,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Start and end at", "Partir et revenir à"),
     ("this high above the board", "à cette hauteur au-dessus du brut"),
     ("travel {}", "rapide {}"),
+    ("spoil {}", "martyr {}"),
     ("slow {}", "lent {}"),
     ("start", "départ"),
     // The tool list, Burin's own wording.
