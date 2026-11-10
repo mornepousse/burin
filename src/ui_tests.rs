@@ -242,7 +242,7 @@ fn texture_needs_no_selection_and_save_form_lists_it() {
     assert_eq!(h.state().doc.toolpaths[0].op.name, "Texture 1");
     h.state_mut().right = RightMode::Save;
     h.run();
-    h.get_by_label("Save Toolpath(s) ...");
+    h.get_by_label("Save the file...");
     assert!(h.state().gcode_text(None).unwrap().contains("Toolpath: Texture 1"));
 }
 
@@ -559,12 +559,12 @@ fn a_loaded_post_processor_shows_in_the_save_form_with_its_limits() {
     h.state_mut().right_open = true;
     h.state_mut().right = RightMode::Save;
     h.run();
-    h.get_by_label("Load .pp Files ...");
-    h.get_by_label("Load a Folder ...");
+    h.get_by_label("Add .pp files...");
+    h.get_by_label("Add a folder...");
     h.get_by_label("Writes .tap files in the job's unit (inches).");
     h.get_by_label("Arcs are written as short straight lines.");
     assert!(h.query_by_label("SUBSTITUTE is not applied.").is_none());
-    click(&mut h, "Remove This One");
+    click(&mut h, "Remove this machine");
     assert!(h.state().loaded_posts.is_empty());
     assert_eq!(h.state().post_index, 0);
 }

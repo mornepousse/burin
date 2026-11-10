@@ -4,6 +4,16 @@
 //! tab = attache, stepover = recouvrement, allowance = surcote, pass = passe, job = projet.
 
 pub const FR: &[(&str, &str)] = &[
+    // The machine file panel, Burin's own layout.
+    ("What goes in", "Ce qu'il contient"),
+    ("Selected toolpath", "Parcours choisi"),
+    ("All visible", "Tous les visibles"),
+    ("Nothing to save yet", "Rien à enregistrer pour l'instant"),
+    ("For which machine", "Pour quelle machine"),
+    ("Add .pp files...", "Ajouter des fichiers .pp..."),
+    ("Add a folder...", "Ajouter un dossier..."),
+    ("Remove this machine", "Retirer cette machine"),
+    ("Save the file...", "Enregistrer le fichier..."),
     // The simulation panel, Burin's own layout.
     ("Simulation", "Simulation"),
     ("Carve", "Usiner"),
