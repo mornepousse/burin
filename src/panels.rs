@@ -20,6 +20,52 @@ pub fn anchor_grid(ui: &mut Ui, value: &mut Datum, name: &str) {
     anchor_grid_with(ui, value, name, true);
 }
 
+/// How the grid of copies will look: one square per copy, the rows and columns shifted as asked.
+fn copies_grid_preview(ui: &mut Ui, rows: usize, cols: usize, shift: [f64; 2]) {
+    let w = ui.available_width();
+    let (area, _) = ui.allocate_exact_size(vec2(w, 74.0), Sense::hover());
+    let p = ui.painter_at(area);
+    p.rect_filled(area, 8.0, theme::CARD());
+    let (r, c) = (rows.min(8), cols.min(12));
+    let cell = ((area.width() - 24.0) / c as f32).min((area.height() - 16.0) / r as f32).min(18.0);
+    let lean = [if shift[0] != 0.0 { cell * 0.3 } else { 0.0 }, if shift[1] != 0.0 { cell * 0.3 } else { 0.0 }];
+    let start = area.center() - vec2(cell * c as f32 / 2.0, -cell * r as f32 / 2.0);
+    for i in 0..r {
+        for j in 0..c {
+            let at = start + vec2(j as f32 * cell + i as f32 * lean[0], -(i as f32 * cell + j as f32 * lean[1]) - cell);
+            let sq = Rect::from_min_size(at, vec2(cell * 0.72, cell * 0.72));
+            let first = i == 0 && j == 0;
+            p.rect(sq, 2.0, if first { theme::ACCENT } else { theme::ACCENT_SOFT() }, egui::Stroke::new(1.0, theme::ACCENT), egui::StrokeKind::Inside);
+        }
+    }
+}
+
+/// How the copies round a point will look: one square per copy on a circle, turned or not.
+fn copies_round_preview(ui: &mut Ui, count: usize, turned: bool) {
+    let w = ui.available_width();
+    let (area, _) = ui.allocate_exact_size(vec2(w, 84.0), Sense::hover());
+    let p = ui.painter_at(area);
+    p.rect_filled(area, 8.0, theme::CARD());
+    let n = count.min(36);
+    let rad = 28.0;
+    p.circle_filled(area.center(), 2.0, theme::MUTED());
+    for k in 0..n {
+        let a = std::f32::consts::TAU * k as f32 / n as f32;
+        let at = area.center() + vec2(a.cos(), -a.sin()) * rad;
+        let side = 7.0;
+        let pts: Vec<egui::Pos2> = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .iter()
+            .map(|(x, y)| {
+                let (x, y) = (x * side / 2.0, y * side / 2.0);
+                let t = if turned { -a } else { 0.0 };
+                at + vec2(x * t.cos() - y * t.sin(), x * t.sin() + y * t.cos())
+            })
+            .collect();
+        let fill = if k == 0 { theme::ACCENT } else { theme::ACCENT_SOFT() };
+        p.add(egui::Shape::convex_polygon(pts, fill, egui::Stroke::new(1.0, theme::ACCENT)));
+    }
+}
+
 /// The same, with or without the middle: nesting starts from one of the four corners only, as
 /// the original's form has four buttons for it (`0x5aa` to `0x5ad`, `CornerToNestFrom`).
 pub fn anchor_grid_with(ui: &mut Ui, value: &mut Datum, name: &str, centre: bool) {
@@ -855,14 +901,14 @@ impl App {
         let some = !self.selected.is_empty();
         let unit = self.doc.job.unit();
         let (icon, title) = match f.kind {
-            Xform::Move => (Icon::Move, crate::i18n::tr("Move Selection")),
-            Xform::Scale => (Icon::Scale, crate::i18n::tr("Set Size")),
+            Xform::Move => (Icon::Move, crate::i18n::tr("Move")),
+            Xform::Scale => (Icon::Scale, crate::i18n::tr("Size")),
             Xform::Rotate => (Icon::Rotate, crate::i18n::tr("Rotate")),
             Xform::Mirror => (Icon::Mirror, crate::i18n::tr("Mirror")),
-            Xform::Align => (Icon::Align, crate::i18n::tr("Alignment Tools")),
+            Xform::Align => (Icon::Align, crate::i18n::tr("Line up")),
             Xform::Offset => (Icon::Offset, crate::i18n::tr("Offset")),
-            Xform::BlockCopy => (Icon::BlockCopy, crate::i18n::tr("Array Copy")),
-            Xform::CircularCopy => (Icon::CircularCopy, crate::i18n::tr("Circular Copy")),
+            Xform::BlockCopy => (Icon::BlockCopy, crate::i18n::tr("Copies in a grid")),
+            Xform::CircularCopy => (Icon::CircularCopy, crate::i18n::tr("Copies round a point")),
             Xform::CopyAlong => (Icon::CopyAlong, crate::i18n::tr("Copy Along Vectors")),
             Xform::Join => (Icon::Join, crate::i18n::tr("Join Vectors")),
             Xform::Fillet => (Icon::Fillet, crate::i18n::tr("Create Fillets")),
@@ -875,70 +921,87 @@ impl App {
             Xform::Constraints => (Icon::Constraint, crate::i18n::tr("Dimensions and Rules")),
             Xform::Distort => (Icon::Distort, crate::i18n::tr("Distort Object")),
         };
-        title_card(ui, icon, title);
+        // Burin's own head: the tool's icon, large, and its name.
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
+            crate::icons::paint(ui.painter(), r, icon, true);
+            crate::ui::bold_sized(ui, title, 15.0, theme::TEXT());
+        });
         let mut apply_label = Some(crate::i18n::tr("Apply"));
         match f.kind {
             Xform::Move => {
+                use crate::ui::{explain, icon_caps, pictured_pills, Pic};
                 self.zero_card(ui, f.anchor, unit);
                 card(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
                     ui.horizontal(|ui| {
-                        bold(ui, crate::i18n::tr("Anchor"));
-                        ui.add_space(30.0);
+                        icon_caps(ui, Icon::Select, crate::i18n::tr("Held by"));
+                        ui.add_space(12.0);
                         anchor_grid(ui, &mut f.anchor, crate::i18n::tr("Anchor"));
                     });
-                    bold(ui, crate::i18n::tr("Type of Move"));
-                    ui.horizontal(|ui| {
-                        let before = f.absolute;
-                        ui.radio_value(&mut f.absolute, true, crate::i18n::tr("Absolute"));
-                        ui.radio_value(&mut f.absolute, false, crate::i18n::tr("Relative"));
-                        if before != f.absolute {
-                            if f.absolute {
-                                if let Some((lo, hi)) = self.selected_bbox() {
-                                    let at = crate::edit::anchor_point(lo, hi, f.anchor);
-                                    (f.dx, f.dy) = (at[0], at[1]);
-                                }
-                            } else {
-                                (f.dx, f.dy) = (0.0, 0.0);
+                    let before = f.absolute;
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::MoveTo), crate::i18n::tr("To a place")), (Some(Pic::MoveBy), crate::i18n::tr("By a distance"))], if f.absolute { 0 } else { 1 }) {
+                        f.absolute = k == 0;
+                    }
+                    if before != f.absolute {
+                        if f.absolute {
+                            if let Some((lo, hi)) = self.selected_bbox() {
+                                let at = crate::edit::anchor_point(lo, hi, f.anchor);
+                                (f.dx, f.dy) = (at[0], at[1]);
                             }
+                        } else {
+                            (f.dx, f.dy) = (0.0, 0.0);
                         }
-                    });
+                    }
+                    explain(ui, if f.absolute { Pic::MoveTo } else { Pic::MoveBy }, if f.absolute { crate::i18n::tr("The point it's held by goes to X, Y, counted from the job's zero.") } else { crate::i18n::tr("Everything moves X across and Y up from where it is.") });
                     // An absolute position counts from the job's origin; a relative one is only a distance.
                     let zero = if f.absolute { self.doc.job.origin() } else { [0.0, 0.0] };
-                    labelled_from(ui, crate::i18n::tr("X Position"), 66.0, &mut f.dx, zero[0], 60.0, unit);
-                    labelled_from(ui, crate::i18n::tr("Y Position"), 66.0, &mut f.dy, zero[1], 60.0, unit);
+                    ui.horizontal(|ui| {
+                        labelled_from(ui, "X", 12.0, &mut f.dx, zero[0], 60.0, "");
+                        labelled_from(ui, "Y", 12.0, &mut f.dy, zero[1], 60.0, unit);
+                    });
                 });
             }
             Xform::Scale => {
+                use crate::ui::icon_caps;
                 let size = self.selected_bbox().map_or([0.0, 0.0], |(lo, hi)| [hi[0] - lo[0], hi[1] - lo[1]]);
                 card(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
                     ui.horizontal(|ui| {
-                        bold(ui, crate::i18n::tr("Anchor"));
-                        ui.add_space(30.0);
+                        icon_caps(ui, Icon::Select, crate::i18n::tr("Grows from"));
+                        ui.add_space(12.0);
                         anchor_grid(ui, &mut f.anchor, crate::i18n::tr("Anchor"));
                     });
+                    icon_caps(ui, Icon::Measure, crate::i18n::tr("Size"));
                     let mut w = size[0] * f.sx / 100.0;
-                    if labelled(ui, crate::i18n::tr("Width (X)"), 62.0, &mut w, 60.0, unit) && size[0] > 0.0 {
-                        f.sx = w / size[0] * 100.0;
-                    }
-                    labelled(ui, "", 62.0, &mut f.sx, 60.0, "%");
-                    ui.checkbox(&mut f.keep_ratio, crate::i18n::tr("Link XY"));
-                    ui.checkbox(&mut f.each, crate::i18n::tr("Each shape on its own"));
+                    ui.horizontal(|ui| {
+                        if labelled(ui, crate::i18n::tr("Width"), 44.0, &mut w, 56.0, unit) && size[0] > 0.0 {
+                            f.sx = w / size[0] * 100.0;
+                        }
+                        labelled(ui, "", 2.0, &mut f.sx, 44.0, "%");
+                    });
                     if f.keep_ratio {
                         f.sy = f.sx;
                     }
                     let mut h = size[1] * f.sy / 100.0;
-                    if labelled(ui, crate::i18n::tr("Height"), 62.0, &mut h, 60.0, unit) && size[1] > 0.0 {
-                        f.sy = h / size[1] * 100.0;
-                        if f.keep_ratio {
-                            f.sx = f.sy;
+                    ui.horizontal(|ui| {
+                        if labelled(ui, crate::i18n::tr("Height"), 44.0, &mut h, 56.0, unit) && size[1] > 0.0 {
+                            f.sy = h / size[1] * 100.0;
+                            if f.keep_ratio {
+                                f.sx = f.sy;
+                            }
                         }
-                    }
-                    labelled(ui, "", 62.0, &mut f.sy, 60.0, "%");
+                        labelled(ui, "", 2.0, &mut f.sy, 44.0, "%");
+                    });
+                    ui.checkbox(&mut f.keep_ratio, crate::i18n::tr("Keep the proportions"));
+                    ui.checkbox(&mut f.each, crate::i18n::tr("Each shape on its own"));
                 });
             }
             Xform::Rotate => {
+                use crate::ui::{icon_caps, pills};
                 card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Pivot Point"));
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    icon_caps(ui, Icon::Select, crate::i18n::tr("Turns around"));
                     ui.horizontal(|ui| {
                         let before = f.anchor;
                         ui.vertical(|ui| anchor_grid(ui, &mut f.anchor, crate::i18n::tr("Pivot")));
@@ -949,96 +1012,94 @@ impl App {
                         }
                         ui.vertical(|ui| {
                             let zero = self.doc.job.origin();
-                            labelled_from(ui, "X:", 18.0, &mut f.pivot[0], zero[0], 62.0, "");
-                            labelled_from(ui, "Y:", 18.0, &mut f.pivot[1], zero[1], 62.0, "");
+                            labelled_from(ui, "X", 12.0, &mut f.pivot[0], zero[0], 62.0, "");
+                            labelled_from(ui, "Y", 12.0, &mut f.pivot[1], zero[1], 62.0, "");
                         });
                     });
-                    ui.add_space(4.0);
-                    labelled(ui, crate::i18n::tr("Angle"), 40.0, &mut f.angle, 60.0, crate::i18n::tr("degrees"));
+                    icon_caps(ui, Icon::Rotate, crate::i18n::tr("By"));
+                    ui.horizontal(|ui| {
+                        crate::ui::number(ui, &mut f.angle, 56.0);
+                        ui.label("°");
+                        let quick = [-90.0, 90.0, 180.0];
+                        let at = quick.iter().position(|a| (f.angle - *a).abs() < 1e-9).unwrap_or(9);
+                        if let Some(k) = pills(ui, &["-90°", "90°", "180°"], at) {
+                            f.angle = quick[k];
+                        }
+                    });
                     ui.checkbox(&mut f.each, crate::i18n::tr("Each shape on its own, around the anchor"));
                 });
             }
             Xform::Mirror => {
+                use crate::ui::{icon_caps, pic_button, Pic};
                 apply_label = None;
                 let mut go: Option<(bool, Option<Edge>, bool)> = None;
                 card(ui, |ui| {
-                    ui.vertical_centered(|ui| {
-                        if wide(ui, crate::i18n::tr("Top"), 60.0).clicked() {
-                            go = Some((false, Some(Edge::Top), false));
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    icon_caps(ui, Icon::Mirror, crate::i18n::tr("Flip in place"));
+                    ui.horizontal_wrapped(|ui| {
+                        if pic_button(ui, Pic::FlipLeftRight, crate::i18n::tr("Left to right")).clicked() {
+                            go = Some((true, None, f.about_job));
+                        }
+                        if pic_button(ui, Pic::FlipTopBottom, crate::i18n::tr("Top to bottom")).clicked() {
+                            go = Some((false, None, f.about_job));
                         }
                     });
-                    ui.horizontal(|ui| {
-                        ui.add_space((ui.available_width() - 130.0).max(0.0) / 2.0);
-                        if wide(ui, crate::i18n::tr("Left"), 60.0).clicked() {
-                            go = Some((true, Some(Edge::Left), false));
-                        }
-                        if wide(ui, crate::i18n::tr("Right"), 60.0).clicked() {
-                            go = Some((true, Some(Edge::Right), false));
-                        }
-                    });
-                    ui.vertical_centered(|ui| {
-                        if wide(ui, crate::i18n::tr("Bottom"), 60.0).clicked() {
-                            go = Some((false, Some(Edge::Bottom), false));
+                    ui.checkbox(&mut f.about_job, crate::i18n::tr("Around the middle of the job"));
+                    icon_caps(ui, Icon::Mirror, crate::i18n::tr("Flip over an edge"));
+                    ui.horizontal_wrapped(|ui| {
+                        for (pic, name, h, edge) in [(Pic::FlipEdgeLeft, crate::i18n::tr("Left"), true, Edge::Left), (Pic::FlipEdgeRight, crate::i18n::tr("Right"), true, Edge::Right), (Pic::FlipEdgeTop, crate::i18n::tr("Top"), false, Edge::Top), (Pic::FlipEdgeBottom, crate::i18n::tr("Bottom"), false, Edge::Bottom)] {
+                            if pic_button(ui, pic, name).clicked() {
+                                go = Some((h, Some(edge), false));
+                            }
                         }
                     });
-                    ui.separator();
-                    if wide(ui, crate::i18n::tr("Flip Horizontal"), 130.0).clicked() {
-                        go = Some((true, None, f.about_job));
-                    }
-                    if wide(ui, crate::i18n::tr("Flip Vertical"), 130.0).clicked() {
-                        go = Some((false, None, f.about_job));
-                    }
-                    ui.checkbox(&mut f.about_job, crate::i18n::tr("Flip about job center"));
-                    ui.separator();
-                    ui.checkbox(&mut f.copy, crate::i18n::tr("Create a mirrored copy"));
+                    ui.checkbox(&mut f.copy, crate::i18n::tr("Keep the original and flip a copy"));
                 });
                 if let Some((h, edge, job)) = go {
                     self.mirror(h, edge, job, f.copy);
                 }
             }
             Xform::Align => {
+                use crate::ui::{icon_caps, pic_button, Pic};
                 apply_label = None;
                 card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Align to Material"));
-                    ui.horizontal(|ui| {
-                        if ui.button(crate::i18n::tr("Center X")).clicked() {
-                            self.align_selected(Some(0), None);
-                        }
-                        if ui.button(crate::i18n::tr("Center")).clicked() {
-                            self.align_selected(Some(0), Some(0));
-                        }
-                        if ui.button(crate::i18n::tr("Center Y")).clicked() {
-                            self.align_selected(None, Some(0));
-                        }
-                    });
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    icon_caps(ui, Icon::JobSetup, crate::i18n::tr("On the board"));
                     ui.horizontal_wrapped(|ui| {
-                        for (label, x, y) in [(crate::i18n::tr("Left"), Some(-1), None), (crate::i18n::tr("Right"), Some(1), None), (crate::i18n::tr("Top"), None, Some(1)), (crate::i18n::tr("Bottom"), None, Some(-1))] {
-                            if ui.button(label).clicked() {
+                        for (pic, label, x, y) in [
+                            (Pic::AlignLeft, crate::i18n::tr("Left"), Some(-1), None),
+                            (Pic::AlignCentreX, crate::i18n::tr("Center X"), Some(0), None),
+                            (Pic::AlignRight, crate::i18n::tr("Right"), Some(1), None),
+                            (Pic::AlignTop, crate::i18n::tr("Top"), None, Some(1)),
+                            (Pic::AlignCentreY, crate::i18n::tr("Center Y"), None, Some(0)),
+                            (Pic::AlignBottom, crate::i18n::tr("Bottom"), None, Some(-1)),
+                            (Pic::AlignCentre, crate::i18n::tr("Center"), Some(0), Some(0)),
+                        ] {
+                            if pic_button(ui, pic, label).clicked() {
                                 self.align_selected(x, y);
                             }
                         }
                     });
                 });
                 card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Align to Selection"));
-                    note(ui, crate::i18n::tr("Aligns selected objects to the LAST item in the selection."));
-                    ui.label(crate::i18n::tr("Center"));
-                    ui.horizontal(|ui| {
-                        if ui.button("X").clicked() {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    icon_caps(ui, Icon::Select, crate::i18n::tr("On the last shape picked"));
+                    ui.horizontal_wrapped(|ui| {
+                        if pic_button(ui, Pic::AlignCentreX, "X").clicked() {
                             self.align_to_last_center(true, false);
                         }
-                        if ui.button(crate::i18n::tr("Both")).clicked() {
+                        if pic_button(ui, Pic::AlignCentre, crate::i18n::tr("Both")).clicked() {
                             self.align_to_last_center(true, true);
                         }
-                        if ui.button("Y").clicked() {
+                        if pic_button(ui, Pic::AlignCentreY, "Y").clicked() {
                             self.align_to_last_center(false, true);
                         }
                     });
                     for (label, inside) in [(crate::i18n::tr("Inside Edge"), true), (crate::i18n::tr("Outside Edge"), false)] {
-                        ui.label(label);
-                        ui.horizontal(|ui| {
-                            for (name, edge) in [(crate::i18n::tr("Left"), Edge::Left), (crate::i18n::tr("Right"), Edge::Right), (crate::i18n::tr("Top"), Edge::Top), (crate::i18n::tr("Bottom"), Edge::Bottom)] {
-                                let response = ui.button(name);
+                        ui.label(RichText::new(label).size(12.0).color(theme::MUTED()));
+                        ui.horizontal_wrapped(|ui| {
+                            for (pic, name, edge) in [(Pic::AlignLeft, crate::i18n::tr("Left"), Edge::Left), (Pic::AlignRight, crate::i18n::tr("Right"), Edge::Right), (Pic::AlignTop, crate::i18n::tr("Top"), Edge::Top), (Pic::AlignBottom, crate::i18n::tr("Bottom"), Edge::Bottom)] {
+                                let response = pic_button(ui, pic, name);
                                 label_widget(&response, &format!("{label} {name}"));
                                 if response.clicked() {
                                     self.align_to_last_edge(edge, inside);
@@ -1048,79 +1109,89 @@ impl App {
                     }
                 });
                 card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Space Selection"));
-                    ui.horizontal(|ui| {
-                        if ui.button(crate::i18n::tr("Across")).clicked() {
+                    icon_caps(ui, Icon::BlockCopy, crate::i18n::tr("Even gaps between them"));
+                    ui.horizontal_wrapped(|ui| {
+                        if pic_button(ui, Pic::SpaceAcross, crate::i18n::tr("Across")).clicked() {
                             self.space_selection(true);
                         }
-                        if ui.button(crate::i18n::tr("Up and Down")).clicked() {
+                        if pic_button(ui, Pic::SpaceUpDown, crate::i18n::tr("Up and Down")).clicked() {
                             self.space_selection(false);
                         }
                     });
                 });
             }
             Xform::Offset => {
+                use crate::ui::{explain, pictured_pills, Pic};
                 card(ui, |ui| {
-                    labelled(ui, crate::i18n::tr("Distance:"), 56.0, &mut f.distance, 56.0, unit);
-                    ui.horizontal(|ui| {
-                        ui.radio_value(&mut f.outward, true, crate::i18n::tr("Outward"));
-                        ui.radio_value(&mut f.outward, false, crate::i18n::tr("Inward"));
-                    });
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::OffsetOut), crate::i18n::tr("Outward")), (Some(Pic::OffsetIn), crate::i18n::tr("Inward"))], if f.outward { 0 } else { 1 }) {
+                        f.outward = k == 0;
+                    }
+                    explain(ui, if f.outward { Pic::OffsetOut } else { Pic::OffsetIn }, if f.outward { crate::i18n::tr("A new outline around the shape, this far out.") } else { crate::i18n::tr("A new outline inside the shape, this far in.") });
+                    labelled(ui, crate::i18n::tr("Distance"), 0.0, &mut f.distance, 56.0, unit);
                 });
             }
             Xform::BlockCopy => {
+                use crate::ui::{icon_caps, pictured_pills, Pic};
                 apply_label = Some(crate::i18n::tr("Copy"));
                 let size = self.selected_bbox().map_or([0.0, 0.0], |(lo, hi)| [hi[0] - lo[0], hi[1] - lo[1]]);
+                copies_grid_preview(ui, f.rows.max(1), f.cols.max(1), f.shift);
                 card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Selected Objects Size"));
-                    ui.label(format!("X: {:.4}   Y: {:.4}", size[0], size[1]));
-                    ui.add_space(4.0);
-                    row_with(ui, crate::i18n::tr("Rows (Y)"), |ui| {
-                        count_box(ui, &mut f.rows, 54.0);
-                    });
-                    row_with(ui, crate::i18n::tr("Columns"), |ui| {
-                        count_box(ui, &mut f.cols, 54.0);
-                    });
-                    bold(ui, crate::i18n::tr("Spacing ..."));
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    note(ui, &tf!("Each one is {} × {} {unit}.", toolpath::trim(size[0]), toolpath::trim(size[1])));
+                    icon_caps(ui, Icon::BlockCopy, crate::i18n::tr("How many"));
                     ui.horizontal(|ui| {
-                        ui.radio_value(&mut f.use_offset, false, crate::i18n::tr("Gap"));
-                        ui.radio_value(&mut f.use_offset, true, crate::i18n::tr("Offset"));
+                        ui.label(crate::i18n::tr("Rows (Y)"));
+                        count_box(ui, &mut f.rows, 44.0);
+                        ui.label(crate::i18n::tr("Columns"));
+                        count_box(ui, &mut f.cols, 44.0);
                     });
+                    icon_caps(ui, Icon::Measure, crate::i18n::tr("Spacing"));
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::GridGap), crate::i18n::tr("Gap")), (Some(Pic::GridOffset), crate::i18n::tr("Offset"))], usize::from(f.use_offset)) {
+                        f.use_offset = k == 1;
+                    }
                     ui.horizontal(|ui| {
-                        labelled(ui, "X:", 14.0, &mut f.dx, 54.0, "");
-                        labelled(ui, "Y:", 14.0, &mut f.dy, 54.0, "");
+                        labelled(ui, "X", 12.0, &mut f.dx, 54.0, "");
+                        labelled(ui, "Y", 12.0, &mut f.dy, 54.0, unit);
                     });
-                    bold(ui, crate::i18n::tr("Row/Column Displacement ..."));
+                    ui.label(RichText::new(crate::i18n::tr("Each row or column shifted by")).size(12.0).color(theme::MUTED()));
                     ui.horizontal(|ui| {
-                        labelled(ui, "X:", 14.0, &mut f.shift[0], 54.0, "");
-                        labelled(ui, "Y:", 14.0, &mut f.shift[1], 54.0, "");
+                        labelled(ui, "X", 12.0, &mut f.shift[0], 54.0, "");
+                        labelled(ui, "Y", 12.0, &mut f.shift[1], 54.0, unit);
                     });
                     ui.checkbox(&mut f.group, crate::i18n::tr("Group Copies"));
                 });
             }
             Xform::CircularCopy => {
+                use crate::ui::{explain, icon_caps, pictured_pills, Pic};
                 apply_label = Some(crate::i18n::tr("Copy"));
+                copies_round_preview(ui, f.count.max(1), f.rotate_copies);
                 card(ui, |ui| {
-                    bold(ui, crate::i18n::tr("Rotation Center"));
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    icon_caps(ui, Icon::CircularCopy, crate::i18n::tr("Round the point at"));
                     ui.horizontal(|ui| {
-                        labelled(ui, "X:", 14.0, &mut f.dx, 54.0, "");
-                        labelled(ui, "Y:", 14.0, &mut f.dy, 54.0, "");
+                        labelled(ui, "X", 12.0, &mut f.dx, 54.0, "");
+                        labelled(ui, "Y", 12.0, &mut f.dy, 54.0, unit);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(crate::i18n::tr("Number of items"));
+                        count_box(ui, &mut f.count, 44.0);
                     });
                     ui.checkbox(&mut f.rotate_copies, crate::i18n::tr("Rotate Copies"));
-                    row_with(ui, crate::i18n::tr("Number of items"), |ui| {
-                        count_box(ui, &mut f.count, 54.0);
-                    });
-                    bold(ui, crate::i18n::tr("Angle ..."));
+                    icon_caps(ui, Icon::Rotate, crate::i18n::tr("Angle"));
+                    let before = f.total_angle;
+                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::TotalAngle), crate::i18n::tr("Total Angle")), (Some(Pic::StepAngle), crate::i18n::tr("Step Angle"))], if f.total_angle { 0 } else { 1 }) {
+                        f.total_angle = k == 0;
+                    }
+                    if before != f.total_angle {
+                        let n = f.count.max(1) as f64;
+                        f.angle = if f.total_angle { f.angle * n } else { f.angle / n };
+                    }
+                    explain(ui, if f.total_angle { Pic::TotalAngle } else { Pic::StepAngle }, if f.total_angle { crate::i18n::tr("The copies share this angle between them.") } else { crate::i18n::tr("Each copy turns this much from the one before.") });
                     ui.horizontal(|ui| {
-                        let before = f.total_angle;
-                        ui.radio_value(&mut f.total_angle, true, crate::i18n::tr("Total Angle"));
-                        ui.radio_value(&mut f.total_angle, false, crate::i18n::tr("Step Angle"));
-                        if before != f.total_angle {
-                            let n = f.count.max(1) as f64;
-                            f.angle = if f.total_angle { f.angle * n } else { f.angle / n };
-                        }
+                        crate::ui::number(ui, &mut f.angle, 60.0);
+                        ui.label("°");
                     });
-                    labelled(ui, "", 2.0, &mut f.angle, 60.0, crate::i18n::tr("degrees"));
                     ui.checkbox(&mut f.group, crate::i18n::tr("Group Copies"));
                 });
             }
