@@ -4,6 +4,26 @@
 //! tab = attache, stepover = recouvrement, allowance = surcote, pass = passe, job = projet.
 
 pub const FR: &[(&str, &str)] = &[
+    ("Travel at", "Rapide à"),
+    ("Slow from", "Lent dès"),
+    ("Heights above the board, drawn as dashed lines above.", "Hauteurs au-dessus du brut, en pointillés sur le dessin."),
+    // The machining board form, Burin's own wording.
+    ("Board and heights", "Brut et hauteurs"),
+    ("Board", "Brut"),
+    ("Zero", "Zéro"),
+    ("Z on top", "Z sur le dessus"),
+    ("Z on the bed", "Z sur la table"),
+    ("The 3D model in the board", "Le modèle 3D dans le brut"),
+    ("Gap above", "Écart au-dessus"),
+    ("Gap below", "Écart en dessous"),
+    ("Fast moves", "Déplacements rapides"),
+    ("Travel this high above the board", "Se déplacer à cette hauteur au-dessus du brut"),
+    ("Slow down from this high", "Ralentir à partir de cette hauteur"),
+    ("Start and end at", "Partir et revenir à"),
+    ("this high above the board", "à cette hauteur au-dessus du brut"),
+    ("travel {}", "rapide {}"),
+    ("slow {}", "lent {}"),
+    ("start", "départ"),
     // The tool list, Burin's own wording.
     ("The tool", "L'outil"),
     ("Its size", "Sa taille"),

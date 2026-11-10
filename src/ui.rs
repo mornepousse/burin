@@ -414,6 +414,10 @@ pub(crate) enum Pic {
     BitV,
     BitEngraving,
     BitDrill,
+    ZOnTop,
+    ZOnBed,
+    ModelGapAbove,
+    ModelGapBelow,
 }
 
 /// Draws a choice's picture into a square, in the given colour.
@@ -902,6 +906,18 @@ pub(crate) fn draw_pic(p: &egui::Painter, r: Rect, pic: Pic, c: Color32) {
                 Pic::BitEngraving => line(&[(0.3, 0.35), (0.3, 0.6), (0.48, 0.95), (0.52, 0.95), (0.7, 0.6), (0.7, 0.35)], s),
                 _ => line(&[(0.32, 0.35), (0.32, 0.8), (0.5, 0.97), (0.68, 0.8), (0.68, 0.35)], s),
             }
+        }
+        Pic::ZOnTop | Pic::ZOnBed => {
+            rect(0.1, 0.4, 0.9, 0.75, faint);
+            line(&[(0.0, 0.9), (1.0, 0.9)], faint);
+            let y = if pic == Pic::ZOnTop { 0.4 } else { 0.9 };
+            line(&[(0.02, y), (0.98, y)], Stroke::new(2.0, c));
+            p.circle_filled(at(0.1, y), 2.4, c);
+        }
+        Pic::ModelGapAbove | Pic::ModelGapBelow => {
+            rect(0.05, 0.15, 0.95, 0.9, faint);
+            let (base, top) = if pic == Pic::ModelGapAbove { (0.9, 0.45) } else { (0.6, 0.15) };
+            line(&[(0.15, base), (0.3, top), (0.7, top), (0.85, base)], s);
         }
         Pic::Icon(_) => {}
     }
