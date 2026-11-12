@@ -32,6 +32,10 @@ pub struct Project {
     pub shapes: Vec<(usize, Path)>,
     /// The mark each shape goes by, which toolpaths refer to it with.
     pub marks: Vec<[u8; 16]>,
+    /// The tabs put on each shape, as points on its outline (none for most).
+    pub tabs: Vec<Vec<P>>,
+    /// The marks of text blocks: their letters, one shape each, make one object.
+    pub texts: Vec<[u8; 16]>,
     /// The groups on the sheet, with what is inside each.
     pub groups: Vec<SavedGroup>,
     pub toolpaths: Vec<SavedToolpath>,
@@ -155,10 +159,20 @@ pub enum SavedItem {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedTool {
     pub name: String,
+    /// The tool's kind as the file writes it, just after the class name: 0 ball nose, 1 end
+    /// mill, 3 V-bit (seen in saved jobs; the classes are `mcBallNoseTool`, `mcEndMillTool`,
+    /// `mcVBitTool`).
+    pub kind: u32,
+    /// The radius and the height of the tip, as two floats after the kind: 0 for an end mill, the
+    /// radius again for a ball nose, the cone's height for a V-bit, whose angle is
+    /// 2 × atan(radius / height).
+    pub tip: (f32, f32),
     pub number: u32,
     pub dia: f64,
     pub pass_depth: f64,
     pub stepover: f64,
+    /// The stepover V-carve passes clear with, written just after the name.
+    pub clear_step: f64,
     pub feed: f64,
     pub plunge: f64,
     pub rpm: u32,
@@ -347,6 +361,9 @@ struct Stored {
 
 /// Follows the moves stored from `at` on, the first without its size in front of it.
 /// Returns them and where they end.
+/// The marker of a curve cut while going down, on a ramp.
+const RAMP_ARC_KIND: u32 = 20;
+
 fn read_moves(d: &[u8], at: usize, total: usize) -> Option<(Stored, usize)> {
     let end = at.checked_add(total)?;
     let mut out = Stored { moves: Vec::new(), steps: Vec::new(), dwell: 0.0 };
@@ -365,7 +382,10 @@ fn read_moves(d: &[u8], at: usize, total: usize) -> Option<(Stored, usize)> {
             return Some(());
         }
         let (from, to) = (corner(q)?, corner(q + 12)?);
-        if kind == 4 {
+        // 20 marks the same on a ramp: a corner turned while going down (a helical arc), its end
+        // lower than its start (seen in the person's ramp test job; 21 of 21 kind-20 records come
+        // right before an arc's head).
+        if kind == 4 || kind == RAMP_ARC_KIND {
             *arc_end = Some(to);
             return Some(());
         }
@@ -487,14 +507,28 @@ fn read_settings(d: &[u8]) -> Vec<(String, Setting)> {
 
 const SMALLEST_TOOL: f64 = 1e-3;
 
+/// How many kinds of tool the original has (0 ball nose ... 10 radiused flat engraving), from its
+/// list of tool type names (0x1404d8760).
+const TOOL_KINDS: u8 = 11;
+
 /// The tool's record just before a toolpath's moves, the last if there are several.
 fn read_tool(d: &[u8]) -> Option<SavedTool> {
     let mut found = None;
     let mut i = 0;
     while i + 80 < d.len() {
-        if d[i..i + 8] == [2, 0, 0, 0, 1, 0, 0, 0] && d[i + 12..i + 16] == [0, 0, 0, 0] && d[i + 17..i + 20] == [0, 0, 0] {
+        // Version 2, the kind (0 ball nose, 1 end mill, 3 V-bit...), the radius and tip height as
+        // floats, then the rest. Only end mills were read before: a V-bit's tip height isn't 0.
+        let kind = d[i + 4];
+        let tip_ok = || {
+            let (r, h) = (f32::from_le_bytes(d[i + 8..i + 12].try_into().unwrap()), f32::from_le_bytes(d[i + 12..i + 16].try_into().unwrap()));
+            r.is_finite() && h.is_finite() && (0.0..1000.0).contains(&r) && (0.0..1000.0).contains(&h)
+        };
+        if d[i..i + 4] == [2, 0, 0, 0] && kind < TOOL_KINDS && d[i + 5..i + 8] == [0, 0, 0] && d[i + 17..i + 20] == [0, 0, 0] && tip_ok() {
             let at = i + 21;
-            let (dia, pass, step, feed, plunge) = (f64_at(d, at)?, f64_at(d, at + 8)?, f64_at(d, at + 16)?, f64_at(d, at + 24)?, f64_at(d, at + 32)?);
+            // The byte before the diameter gives the tool's units: 1 millimetres, 0 inches (an
+            // inch tool keeps its sizes, rates and tip in inches; the person's flat V-Carve test).
+            let k = if d[i + 20] == 0 { crate::formula::MM_PER_INCH } else { 1.0 };
+            let (dia, pass, step, feed, plunge) = (f64_at(d, at)? * k, f64_at(d, at + 8)? * k, f64_at(d, at + 16)? * k, f64_at(d, at + 24)? * k, f64_at(d, at + 32)? * k);
             let number = u32_at(d, at + 40)?;
             let rpm = u32_at(d, at + 44)?;
             let len = u32_at(d, at + 52)? as usize;
@@ -503,7 +537,11 @@ fn read_tool(d: &[u8]) -> Option<SavedTool> {
                 if let Some(raw) = d.get(at + 56..at + 56 + len) {
                     // The file's own text ends in a zero, which must not reach a machine file.
                     let name: String = raw.iter().take_while(|b| **b != 0).map(|b| *b as char).collect();
-                    found = Some(SavedTool { name, number, dia, pass_depth: pass, stepover: step, feed, plunge, rpm });
+                    let tip = (f32::from_le_bytes(d[i + 8..i + 12].try_into().unwrap()) * k as f32, f32::from_le_bytes(d[i + 12..i + 16].try_into().unwrap()) * k as f32);
+                    // Just after the name, the stepover the original clears with between V-carve
+                    // passes (every saved tool has one: 0.794 for a 3.175 mm V-bit).
+                    let clear_step = f64_at(d, at + 56 + len).filter(|v| v.is_finite() && (0.0..1000.0).contains(v)).unwrap_or(0.0) * k;
+                    found = Some(SavedTool { name, kind: kind as u32, tip, number, dia, pass_depth: pass, stepover: step, feed, plunge, rpm, clear_step });
                     i = at + 56 + len;
                     continue;
                 }
@@ -863,6 +901,187 @@ impl<'a> Compound<'a> {
     }
 }
 
+/// How far apart lines of text are, in font sizes (estimated: on an 18-line text job of the person's the
+/// last line then sits on the text box's bottom margin to within 0.3 of 320).
+const LINE_PITCH: f64 = 1.5;
+
+/// The letters of each text block (`txtBlock`), placed as the original places them, with the
+/// block's own mark and its layer's mark. The block holds lines (`txtLine`, `0x1408e7ea0`: version
+/// 1, its words, then the font and sizes, no position), lines words (version 1, letters), words
+/// letters (`txtChar`, version 4, read by `0x1408e2180`): the character, the font, the letter's
+/// advance (+0x28), its outlines centred on 0, then where its middle stands past the pen (+0x18),
+/// a value that isn't a shift along the line (+0x40: applied that way it breaks the spacing of
+/// the 18-line text job), the font size three times, its width (+0x20) and 1.0. The pen moves on
+/// by each advance along the base line (`txtBaseCurve`), the first letter's left edge at its
+/// start: on the person's test the line is exactly as long as the letters reach. The base line is
+/// the first line's; the others go down `LINE_PITCH` times the font size apart (the original lays
+/// them out as it draws). The whole block then goes through the 2 × 3 matrix written after the
+/// base line.
+fn text_blocks(d: &[u8]) -> Vec<([u8; 16], [u8; 16], Vec<Path>)> {
+    let mut out = Vec::new();
+    let tag = b"txtBlock";
+    let starts: Vec<usize> = d.windows(tag.len()).enumerate().filter(|(_, w)| *w == tag.as_slice()).map(|(i, _)| i).collect();
+    for (k, &t) in starts.iter().enumerate() {
+        let end = starts.get(k + 1).copied().unwrap_or(d.len());
+        let (Some(mark), Some(layer)) = (d.get(t + 12..t + 28), d.get(t + 28..t + 44)) else { continue };
+        let (mark, layer): ([u8; 16], [u8; 16]) = (mark.try_into().unwrap(), layer.try_into().unwrap());
+        let region = &d[t..end];
+        let find = |name: &[u8]| region.windows(name.len()).position(|w| w == name).map(|p| p + t);
+        // Where each line starts: a line's version 1 and word count, then its first word's tag,
+        // version 1 and letter count, then the first letter's tag and version 4.
+        let tag_len = |at: usize, name: &[u8]| -> Option<usize> {
+            let t = u16_at(d, at)?;
+            if t == 0xFFFF {
+                (u16_at(d, at + 4)? as usize == name.len() && d.get(at + 6..at + 6 + name.len())? == name).then_some(6 + name.len())
+            } else {
+                (t & 0x8000 != 0).then_some(2)
+            }
+        };
+        let line_starts: Vec<usize> = (t..end.saturating_sub(40))
+            .filter(|&p| {
+                u32_at(d, p) == Some(1)
+                    && u32_at(d, p + 4).is_some_and(|n| (1..=1000).contains(&n))
+                    && tag_len(p + 8, b"txtWord").is_some_and(|w| {
+                        let q = p + 8 + w;
+                        u32_at(d, q) == Some(1) && u32_at(d, q + 4).is_some_and(|n| (1..=1000).contains(&n)) && tag_len(q + 8, b"txtChar").is_some_and(|c| u32_at(d, q + 8 + c) == Some(4))
+                    })
+            })
+            .collect();
+        if line_starts.is_empty() {
+            continue;
+        }
+        let Some(base_tag) = find(b"txtBaseCurve") else { continue };
+        let Some((base, base_end)) = (base_tag + 12..(base_tag + 80).min(end)).find_map(|p| outline_at(d, p)) else { continue };
+        let m: Vec<f64> = (0..6).filter_map(|i| f64_at(d, base_end + 31 + 8 * i)).collect();
+        if m.len() != 6 || f64_at(d, base_end + 95) != Some(1.0) || base.pts.len() < 2 {
+            continue;
+        }
+        // The letters, in order.
+        let mut letters: Vec<(usize, f64)> = Vec::new();
+        let mut q = t;
+        while q + 12 < base_tag {
+            let header = u32_at(d, q) == Some(4) && d[q + 8..q + 11] == [0xff, 0xfe, 0xff] && u32_at(d, q + 4).is_some_and(|c| (1..0x11_0000).contains(&c));
+            let tagged = q >= 7 && (&d[q - 7..q] == b"txtChar" || u16_at(d, q - 2).is_some_and(|v| v & 0x8000 != 0));
+            let n = d[q + 11] as usize;
+            if header && tagged && n < 255 {
+                if let Some(adv) = f64_at(d, q + 12 + 2 * n).filter(|v| v.is_finite() && (0.0..1e4).contains(v)) {
+                    letters.push((q + 20 + 2 * n, adv));
+                    q += 20 + 2 * n;
+                    continue;
+                }
+            }
+            q += 1;
+        }
+        // Distance along the base line, and the way it runs there.
+        let along = |s: f64| -> (P, P) {
+            let mut left = s;
+            for w in base.pts.windows(2) {
+                let (dx, dy) = (w[1][0] - w[0][0], w[1][1] - w[0][1]);
+                let len = dx.hypot(dy);
+                if len > 1e-12 && (left <= len || std::ptr::eq(w.as_ptr(), base.pts[base.pts.len() - 2..].as_ptr())) {
+                    let u = [dx / len, dy / len];
+                    return ([w[0][0] + u[0] * left, w[0][1] + u[1] * left], u);
+                }
+                left -= len;
+            }
+            (base.pts[0], [1.0, 0.0])
+        };
+        let mut paths = Vec::new();
+        let mut s = 0.0;
+        // Lines go down from the base line, which is the first one's, 1.5 times the font size
+        // apart (estimated: on an 18-line text job of the person's that puts the last line on the box's
+        // bottom margin to within 0.05 of 320). Each line sits along the base line as the text is
+        // aligned (`_txtAL_text_justify`; the anchor `0x1408d7fb0` picks by the same values): 0
+        // from its start (the person's test, exact), 2 in its middle (a word on one of the
+        // person's plates: 3.81 each side against 3.82 in its saved moves), 1 against its end
+        // (the anchor at the point list's +0x48 index: estimated).
+        let justify = {
+            let name: Vec<u8> = "_txtAL_text_justify".encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+            region.windows(name.len()).position(|w| w == name.as_slice()).and_then(|p| {
+                let at = t + p + name.len();
+                (u32_at(d, at) == Some(1)).then(|| u32_at(d, at + 4)).flatten()
+            })
+        }
+        .unwrap_or(0);
+        let base_len: f64 = base.pts.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum();
+        // The letters of the line being laid: where each middle stands, its outlines and how far
+        // down; and how far the line reaches.
+        let mut placed: Vec<(f64, Vec<Path>, f64)> = Vec::new();
+        let mut reach = 0.0f64;
+        let flush = |placed: &mut Vec<(f64, Vec<Path>, f64)>, reach: f64, paths: &mut Vec<Path>| {
+            let offset = match justify {
+                1 => base_len - reach,
+                2 => (base_len - reach) / 2.0,
+                _ => 0.0,
+            };
+            for (centre, outlines, drop) in placed.drain(..) {
+                let (at, u) = along(centre + offset);
+                for mut path in outlines {
+                    for pt in &mut path.pts {
+                        let py = pt[1] - drop;
+                        let (x, y) = (at[0] + u[0] * pt[0] - u[1] * py, at[1] + u[1] * pt[0] + u[0] * py);
+                        *pt = [m[0] * x + m[1] * y + m[2], m[3] * x + m[4] * y + m[5]];
+                    }
+                    paths.push(path);
+                }
+            }
+        };
+        let mut line = 0;
+        let mut drop = 0.0;
+        let mut size = 0.0;
+        let mut fresh_line = true;
+        for (i, &(from, adv)) in letters.iter().enumerate() {
+            let in_line = line_starts.partition_point(|l| *l < from).saturating_sub(1);
+            if in_line != line {
+                flush(&mut placed, reach, &mut paths);
+                reach = 0.0;
+                drop += (in_line - line) as f64 * LINE_PITCH * size;
+                line = in_line;
+                s = 0.0;
+                fresh_line = true;
+            }
+            let to = letters.get(i + 1).map_or(base_tag, |l| l.0);
+            let mut outlines = Vec::new();
+            let mut p = from;
+            let mut last = from;
+            while p + 40 < to {
+                match outline_at(d, p) {
+                    Some((path, e)) if e <= to => {
+                        outlines.push(path);
+                        p = e;
+                        last = e;
+                    }
+                    _ => p += 1,
+                }
+            }
+            if !outlines.is_empty() {
+                let e = last;
+                let (lo, hi) = crate::geom::bbox(&outlines).unwrap_or(([0.0; 2], [0.0; 2]));
+                let ok = f64_at(d, e + 87) == Some(1.0);
+                if ok {
+                    size = f64_at(d, e + 55).filter(|v| v.is_finite() && *v > 0.0).unwrap_or(size);
+                }
+                let width = if ok { f64_at(d, e + 79).unwrap_or(hi[0] - lo[0]) } else { hi[0] - lo[0] };
+                // The letter's middle stands +0x18 past the pen; the line starts at the first
+                // letter's left edge.
+                let middle = if ok { f64_at(d, e + 39).filter(|v| v.is_finite()).unwrap_or(width / 2.0) } else { width / 2.0 };
+                if fresh_line {
+                    s -= middle - width / 2.0;
+                    fresh_line = false;
+                }
+                reach = reach.max(s + middle + width / 2.0);
+                placed.push((s + middle, outlines, drop));
+            }
+            s += adv;
+        }
+        flush(&mut placed, reach, &mut paths);
+        if !paths.is_empty() {
+            out.push((mark, layer, paths));
+        }
+    }
+    out
+}
+
 /// Where an outline's own data starts after its archive class tag at `at`: a class already met is
 /// `0x8000` and its number; a new one is `0xFFFF`, its version, the name's length and the name, which must be
 /// `vdContour`. The original writes a contour this way after the object's own header (`vcCadContour::Serialize`,
@@ -883,6 +1102,12 @@ fn contour_body(d: &[u8], at: usize) -> Option<usize> {
 /// Reads one outline at `at`, returning it and where it ends.
 /// Everything is checked, so that bytes that only look like an outline are turned down.
 fn outline_at(d: &[u8], at: usize) -> Option<(Path, usize)> {
+    outline_spans_at(d, at).map(|(path, end, _)| (path, end))
+}
+
+/// An outline as `outline_at` reads it, with where each of its pieces starts and ends among its
+/// points (counted before a closed outline's last point, its first again, is dropped).
+fn outline_spans_at(d: &[u8], at: usize) -> Option<(Path, usize, Vec<(usize, usize)>)> {
     let version = u32_at(d, at)?;
     if !(4..=12).contains(&version) {
         return None;
@@ -896,6 +1121,7 @@ fn outline_at(d: &[u8], at: usize) -> Option<(Path, usize)> {
     }
     let mut q = at + 30;
     let mut pts: Vec<P> = Vec::new();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
     let point = |q: usize| -> Option<P> {
         let (x, y) = (f64_at(d, q)?, f64_at(d, q + 8)?);
         (x.is_finite() && y.is_finite() && x.abs() < 1e8 && y.abs() < 1e8).then_some([x, y])
@@ -925,6 +1151,7 @@ fn outline_at(d: &[u8], at: usize) -> Option<(Path, usize)> {
             Some(l) if (l[0] - a[0]).hypot(l[1] - a[1]) > 0.05 => return None,
             _ => {}
         }
+        let first = pts.len() - 1;
         // Old files say straight or curved by the flag instead.
         let arc = if version >= 5 { kind == 1 } else { flag == 0 };
         match (kind, arc) {
@@ -954,13 +1181,67 @@ fn outline_at(d: &[u8], at: usize) -> Option<(Path, usize)> {
             _ => return None,
         }
         pts.push(b);
+        spans.push((first, pts.len() - 1));
     }
     let meets = (pts[0][0] - pts[pts.len() - 1][0]).hypot(pts[0][1] - pts[pts.len() - 1][1]) < 1e-3;
     if meets && pts.len() > 3 {
         pts.pop();
-        return Some((Path::closed(pts), q));
+        return Some((Path::closed(pts), q, spans));
     }
-    Some((Path::open(pts), q))
+    Some((Path::open(pts), q, spans))
+}
+
+/// The tabs put on a shape, read after its outline: the outline ends at `end`, then come a mark
+/// of 16 bytes, `FF FF FF FF 00 00`, the number of tabs and each tab (`vcToolpathTab`: its place
+/// on the outline, a `vdContourCarriage` of version 1 with the piece it is on and how far along
+/// that piece from 0 to 1, then the tab's own version, 1). Each
+/// comes back as a point on the outline, found on its points `spans` mark out. Nothing when the
+/// bytes there are anything else.
+fn tabs_after(d: &[u8], end: usize, pts: &[P], spans: &[(usize, usize)], closed: bool) -> Vec<P> {
+    let mut out = Vec::new();
+    if d.get(end + 16..end + 22) != Some(&[0xFF, 0xFF, 0xFF, 0xFF, 0, 0][..]) {
+        return out;
+    }
+    let Some(count) = u32_at(d, end + 22) else { return out };
+    if count > 10_000 {
+        return out;
+    }
+    let mut q = end + 26;
+    let n = pts.len();
+    let at = |i: usize| if closed && i == n { pts[0] } else { pts[i.min(n - 1)] };
+    for _ in 0..count {
+        let Some(tag) = u16_at(d, q) else { return Vec::new() };
+        if tag == 0xFFFF {
+            let Some(len) = u16_at(d, q + 4) else { return Vec::new() };
+            if d.get(q + 6..q + 6 + len as usize) != Some(b"vcToolpathTab".as_slice()) {
+                return Vec::new();
+            }
+            q += 6 + len as usize;
+        } else if tag & 0x8000 != 0 {
+            q += 2;
+        } else {
+            return Vec::new();
+        }
+        // The place on the outline (`vdContourCarriage::Serialize`, `0x1407aa650`: version, piece,
+        // parameter), then the tab's own version (`vcToolpathTab::Serialize`, `0x140a82cc0`); both
+        // refuse a version over 1.
+        let (Some(place_version), Some(span), Some(t), Some(tab_version)) = (u32_at(d, q), u32_at(d, q + 4), f64_at(d, q + 8), u32_at(d, q + 16)) else { return Vec::new() };
+        if place_version > 1 || tab_version > 1 {
+            return Vec::new();
+        }
+        q += 20;
+        let Some(&(a, b)) = spans.get(span as usize) else { continue };
+        if !(0.0..=1.0).contains(&t) || b <= a {
+            continue;
+        }
+        // The piece's points are spaced evenly along its arc or curve, so t counts them.
+        let place = a as f64 + t * (b - a) as f64;
+        let k = (place.floor() as usize).min(b - 1);
+        let f = place - k as f64;
+        let (p0, p1) = (at(k), at(k + 1));
+        out.push([p0[0] + (p1[0] - p0[0]) * f, p0[1] + (p1[1] - p0[1]) * f]);
+    }
+    out
 }
 
 /// Finds the layers: each one's place in the stream, its mark, its name and colour.
@@ -1019,8 +1300,50 @@ fn is_object(d: &[u8], at: usize, layers: &[[u8; 16]]) -> bool {
         && d.get(at + 20..at + 36).and_then(|m| <[u8; 16]>::try_from(m).ok()).is_some_and(|m| layers.contains(&m))
 }
 
+/// A head the original writes for a shape kept in a group: where the layer's mark goes there is
+/// another mark, no layer's (the 60 plate's two groups of 12 holes all carry the same one), and
+/// the usual numbers follow (0x82, 0x2a). The record's class tag comes just before. Taken only
+/// right after a group's count (`find_objects`).
+fn in_group_head(d: &[u8], at: usize) -> bool {
+    at >= 2 && u16_at(d, at - 2).is_some_and(|t| t & 0x8000 != 0 && t != 0xFFFF) && u32_at(d, at + 44) == Some(0x82) && u32_at(d, at + 48) == Some(0x2a)
+}
+
 /// Every drawing object in the stream. A group is told by another object starting right after its head.
 fn find_objects(d: &[u8], layers: &[[u8; 16]]) -> Vec<Object> {
+    // A group's first shape may carry, where the layer's mark goes, a mark that is no layer's
+    // (`in_group_head`): those marks count as layers too, then everything is read again.
+    let mut extra: Vec<[u8; 16]> = Vec::new();
+    for o in objects_with(d, layers) {
+        let Some(after) = group_count_at(d, o.at) else { continue };
+        let Some(r) = record_after(d, after.1) else { continue };
+        if !is_object(d, r, layers) && matches!(u32_at(d, r), Some(7 | 8)) && d.get(r + 36..r + 44) == Some(&[0u8; 8][..]) && in_group_head(d, r) {
+            if let Some(m) = d.get(r + 20..r + 36).and_then(|m| <[u8; 16]>::try_from(m).ok()) {
+                if !extra.contains(&m) {
+                    extra.push(m);
+                }
+            }
+        }
+    }
+    if extra.is_empty() {
+        return objects_with(d, layers);
+    }
+    let all: Vec<[u8; 16]> = layers.iter().copied().chain(extra).collect();
+    objects_with(d, &all)
+}
+
+/// Where a group head at `at` gives its count of shapes, and where they start.
+fn group_count_at(d: &[u8], at: usize) -> Option<(usize, usize)> {
+    let after_head = if u32_at(d, at) == Some(8) {
+        let marker = b"Vectric__Version";
+        let window = &d[at + 44..(at + 340).min(d.len())];
+        window.windows(marker.len()).position(|w| w == marker).map(|p| at + 44 + p + marker.len() + 8 + 36 + 4)
+    } else {
+        Some(at + 90 + 4)
+    };
+    after_head.and_then(|p| Some((u32_at(d, p)? as usize, p + 4))).filter(|(n, _)| (1..1_000_000).contains(n))
+}
+
+fn objects_with(d: &[u8], layers: &[[u8; 16]]) -> Vec<Object> {
     let mut out = Vec::new();
     let mut at = 0;
     while at + 44 <= d.len() {
@@ -1030,14 +1353,7 @@ fn find_objects(d: &[u8], layers: &[[u8; 16]]) -> Vec<Object> {
         }
         let mark: [u8; 16] = d[at + 4..at + 20].try_into().unwrap_or([0; 16]);
         // Newer records have a version string with an identifier before the count.
-        let after_head = if u32_at(d, at) == Some(8) {
-            let marker = b"Vectric__Version";
-            let window = &d[at + 44..(at + 340).min(d.len())];
-            window.windows(marker.len()).position(|w| w == marker).map(|p| at + 44 + p + marker.len() + 8 + 36 + 4)
-        } else {
-            Some(at + 90 + 4)
-        };
-        let count = after_head.and_then(|p| Some((u32_at(d, p)? as usize, p + 4))).filter(|(n, _)| (1..1_000_000).contains(n));
+        let count = group_count_at(d, at);
         let children = count.filter(|(_, next)| record_after(d, *next).is_some_and(|r| is_object(d, r, layers))).map(|(n, _)| n);
         let layer: [u8; 16] = d[at + 20..at + 36].try_into().unwrap_or([0; 16]);
         out.push(Object { at, mark, layer, children });
@@ -1127,6 +1443,7 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
     let found = read_layers(&d);
     let mut shapes: Vec<(usize, Path)> = Vec::new();
     let mut marks: Vec<[u8; 16]> = Vec::new();
+    let mut tabs: Vec<Vec<P>> = Vec::new();
     // Toolpath previews keep their own outlines in the same stream. Newer files mark each real
     // shape with a version string just before it; older ones have no previews to confuse it with.
     let marker = b"Vectric__Version";
@@ -1160,8 +1477,9 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
             i += 1;
             continue;
         };
-        match outline_at(&d, body) {
-            Some((path, end)) => {
+        match outline_spans_at(&d, body) {
+            Some((path, end, spans)) => {
+                tabs.push(tabs_after(&d, end, &path.pts, &spans, path.closed));
                 let layer = layer_for(i);
                 // A shape's own mark comes just before the mark of its layer.
                 let window = &d[i.saturating_sub(220)..i];
@@ -1174,6 +1492,17 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
                 i = end;
             }
             None => i += 1,
+        }
+    }
+    // Text, kept as text blocks: each letter's outlines are placed along the block's base line.
+    let mut texts = Vec::new();
+    for (mark, layer_mark, paths) in text_blocks(&d) {
+        texts.push(mark);
+        let layer = found.iter().position(|(_, m, _)| *m == layer_mark).unwrap_or(0);
+        for path in paths {
+            shapes.push((layer, path));
+            marks.push(mark);
+            tabs.push(Vec::new());
         }
     }
     // Only the layers that hold something; the file always has one for toolpath previews.
@@ -1213,18 +1542,20 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
                 }
                 shapes.push((map.get(layer).copied().filter(|l| *l != usize::MAX).unwrap_or(0), path));
                 marks.push(mark);
+                tabs.push(Vec::new());
                 break;
             }
         }
     }
     let layer_of = |mark: &[u8; 16]| found.iter().position(|(_, m, _)| m == mark).map(|p| map[p]).filter(|l| *l != usize::MAX);
     let tree = group_tree(&objects, &layer_of);
-    Ok(Project { min: [a, b, c], max: [e, f, g], datum, job_type, side_flip, layers, shapes, marks, groups: tree, toolpaths, guides, guides_shown, snap_grid, look, notes })
+    Ok(Project { min: [a, b, c], max: [e, f, g], datum, job_type, side_flip, layers, shapes, marks, tabs, texts, groups: tree, toolpaths, guides, guides_shown, snap_grid, look, notes })
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
 
     /// Toolpaths naming shapes the reading didn't find: BURIN_JOB=<file> cargo test unfound_sources -- --nocapture
     #[test]
@@ -1236,6 +1567,7 @@ pub(crate) mod tests {
         let d = c.stream("VectorData", "2dDataV2").unwrap();
         let layer_marks: Vec<[u8; 16]> = read_layers(&d).iter().map(|(_, m, _)| *m).collect();
         let objects = find_objects(&d, &layer_marks);
+        if std::env::var("BURIN_LAYERS").is_ok() { for (at, m, info) in read_layers(&d) { println!("  layer at {at} {:02x?} {}", &m[..4], info.name); } }
         if std::env::var("BURIN_NORMAL").is_ok() {
             let marker = b"Vectric__Version";
             if let Some(a) = d.windows(marker.len()).position(|w| w == marker) {
@@ -1247,11 +1579,17 @@ pub(crate) mod tests {
                 }
             }
         }
+        if let Ok(h) = std::env::var("BURIN_MARK") {
+            let want: Vec<u8> = (0..16).map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap()).collect();
+            for (k, m) in p.marks.iter().enumerate() { if m.as_slice() == want.as_slice() { let (lo, hi) = crate::geom::bbox(std::slice::from_ref(&p.shapes[k].1)).unwrap(); println!("  mark is shape {k}: n {} closed {} box {lo:?} {hi:?}", p.shapes[k].1.pts.len(), p.shapes[k].1.closed); } }
+            for (g, members) in group_members(&objects) { if members.iter().any(|m| m.as_slice() == want.as_slice()) { println!("  in group {:02x?}", &g[..4]); } }
+        }
         for t in &p.toolpaths {
             let missing: Vec<&[u8; 16]> = t.sources.iter().filter(|s| !p.marks.contains(s)).collect();
             if missing.is_empty() { continue }
             println!("{} ({}): {} sources, {} not found", t.name, t.kind, t.sources.len(), missing.len());
             for m in missing.iter().take(4) {
+                println!("   missing {:02x?}", m);
                 let at = d.windows(16).position(|w| w == m.as_slice());
                 let obj = objects.iter().find(|o| &o.mark == *m);
                 let context = at.map(|a| {
@@ -1732,6 +2070,152 @@ pub(crate) mod tests {
         assert_eq!(pass_list("6.9;3.45;13.8;", 13.8), None, "out of order");
         assert_eq!(pass_list("Profile;Inside;", 13.8), None);
         assert_eq!(pass_list("13.8", 13.8), None);
+    }
+
+    /// A V-bit's record has its kind (3) and the cone's height where an end mill has 1 and 0: it
+    /// is read, and its angle comes from the radius and the height (bytes from a saved job).
+    /// The tabs kept after a shape's outline, as the person's tab job has them: each on a piece of
+    /// the outline, part way along it.
+    #[test]
+    fn tabs_put_on_a_shape_are_read_as_points_on_its_outline() {
+        let square = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        let spans = vec![(0, 1), (1, 2), (2, 3), (3, 4)];
+        let mut d = vec![0u8; 16];
+        d.extend([0xFF, 0xFF, 0xFF, 0xFF, 0, 0]);
+        d.extend(2u32.to_le_bytes());
+        let tab = |d: &mut Vec<u8>, first: bool, span: u32, t: f64| {
+            if first {
+                d.extend([0xFF, 0xFF, 1, 0, 13, 0]);
+                d.extend(b"vcToolpathTab");
+            } else {
+                d.extend([0x15, 0x80]);
+            }
+            d.extend(1u32.to_le_bytes());
+            d.extend(span.to_le_bytes());
+            d.extend(t.to_le_bytes());
+            d.extend(1u32.to_le_bytes());
+        };
+        tab(&mut d, true, 0, 0.5);
+        tab(&mut d, false, 3, 0.25);
+        let tabs = tabs_after(&d, 0, &square, &spans, true);
+        assert_eq!(tabs, vec![[5.0, 0.0], [0.0, 7.5]], "the last piece runs back to the first point");
+        // Anything else after the outline: no tabs.
+        assert!(tabs_after(&[0u8; 40], 0, &square, &spans, true).is_empty());
+        // A version the original wouldn't read either.
+        let mut newer = d.clone();
+        let last = newer.len() - 4;
+        newer[last..].copy_from_slice(&2u32.to_le_bytes());
+        assert!(tabs_after(&newer, 0, &square, &spans, true).is_empty());
+    }
+
+    #[test]
+    fn a_v_bit_record_is_read_with_its_kind_and_tip() {
+        let hex = "02000000030000003333cb3ff3f92f40060000000166666666666609400000000000000040a01a2fdd2406c13f0000000000002e40000000000000144000000000803e0000010000001900000056 2d4269742028363020646567203 32e313735206d6d292000";
+        let hex: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
+        let bytes: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect();
+        let mut d = vec![0u8; 8];
+        d.extend_from_slice(&bytes);
+        d.extend_from_slice(&[0u8; 96]);
+        let t = read_tool(&d).expect("the V-bit is read");
+        assert_eq!(t.kind, 3);
+        assert!((t.dia - 3.175).abs() < 1e-9);
+        assert_eq!(t.name.trim(), "V-Bit (60 deg 3.175 mm)");
+        let angle = (2.0 * (t.tip.0 as f64).atan2(t.tip.1 as f64)).to_degrees();
+        assert!((angle - 60.0).abs() < 0.01, "{angle}");
+    }
+
+    #[test]
+    fn an_inch_tool_record_is_read_in_millimetres() {
+        // The V-bit record above with its units byte (just before the diameter) at 0: inches.
+        let hex = "02000000030000003333cb3ff3f92f40060000000066666666666609400000000000000040a01a2fdd2406c13f0000000000002e40000000000000144000000000803e0000010000001900000056 2d4269742028363020646567203 32e313735206d6d292000";
+        let hex: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
+        let bytes: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect();
+        let mut d = vec![0u8; 8];
+        d.extend_from_slice(&bytes);
+        d.extend_from_slice(&[0u8; 96]);
+        let t = read_tool(&d).expect("the V-bit is read");
+        assert!((t.dia - 3.175 * 25.4).abs() < 1e-9, "{}", t.dia);
+        assert!((t.feed - 15.0 * 25.4).abs() < 1e-9, "{}", t.feed);
+        assert!((t.pass_depth - 2.0 * 25.4).abs() < 1e-9);
+        // The angle doesn't change with the units.
+        let angle = (2.0 * (t.tip.0 as f64).atan2(t.tip.1 as f64)).to_degrees();
+        assert!((angle - 60.0).abs() < 0.01, "{angle}");
+    }
+
+    /// The person's flat V-Carve test: the word "test" typed in Times New Roman, kept as a text
+    /// block. Its letters land where the original's moves reach: from 71.051 to 344.405 across and
+    /// up to 275.273 (the file stays out of the repository; the test passes quietly without it).
+    #[test]
+    fn a_text_block_is_read_as_its_letters_where_the_original_put_them() {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/vcarve-plat.crv3d");
+        let Ok(bytes) = std::fs::read(file) else { return };
+        let p = read(&bytes).unwrap();
+        assert_eq!(p.texts.len(), 1);
+        // t, e (outside and its hole), s, t.
+        assert_eq!(p.shapes.len(), 5);
+        assert!(p.shapes.iter().all(|(_, s)| s.closed));
+        let paths: Vec<Path> = p.shapes.iter().map(|(_, s)| s.clone()).collect();
+        let (lo, hi) = crate::geom::bbox(&paths).unwrap();
+        assert!((lo[0] - 71.051).abs() < 0.01 && (hi[0] - 344.405).abs() < 0.01 && (hi[1] - 275.273).abs() < 0.01, "{lo:?} {hi:?}");
+        // The tool is an inch one: 1.25 inch.
+        let tool = p.toolpaths.iter().find_map(|t| t.tool.clone()).unwrap();
+        assert!((tool.dia - 31.75).abs() < 1e-9, "{}", tool.dia);
+    }
+
+    /// A text block of 18 lines (an 18-line text job of the person's, a single-line font): the lines go
+    /// down from the first, 1.5 font sizes apart, each starting at the box's left margin.
+    #[test]
+    fn a_text_block_of_several_lines_is_read_line_under_line() {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/texte-18-lignes.crv3d");
+        let Ok(bytes) = std::fs::read(file) else { return };
+        let p = read(&bytes).unwrap();
+        assert_eq!(p.texts.len(), 1);
+        let paths: Vec<Path> = p.shapes.iter().zip(&p.marks).filter(|(_, m)| p.texts.contains(m)).map(|((_, s), _)| s.clone()).collect();
+        assert_eq!(paths.len(), 260);
+        let (lo, hi) = crate::geom::bbox(&paths).unwrap();
+        // The left margin (40 of the 400 box, through the block's ×0.3311 and +134.05), and 18
+        // lines: 17 pitches of 1.5 × 12.066 plus a digit's height, through the same scale.
+        assert!((lo[0] - (134.0501 + 40.0 * 0.33113)).abs() < 0.05, "{lo:?}");
+        let tall = (17.0 * 1.5 * 12.066365 + 12.066365) * 0.33113;
+        assert!(((hi[1] - lo[1]) - tall).abs() < 1.0, "{} against {tall}", hi[1] - lo[1]);
+    }
+
+    /// The same job with its text set to the right (1), then centred (2): each line sits against
+    /// the base line's end (40 to 360 of the box), then in its middle.
+    #[test]
+    fn lines_of_text_are_aligned_as_the_block_says() {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/texte-18-lignes.crv3d");
+        let Ok(mut bytes) = std::fs::read(file) else { return };
+        let name: Vec<u8> = "_txtAL_text_justify".encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let at = bytes.windows(name.len()).position(|w| w == name.as_slice()).unwrap() + name.len();
+        assert_eq!(u32_at(&bytes, at), Some(1));
+        let (scale, shift) = (0.331133, 134.0501);
+        for (value, check) in [(2u32, "centre"), (1, "right")] {
+            bytes[at + 4..at + 8].copy_from_slice(&value.to_le_bytes());
+            let p = read(&bytes).unwrap();
+            let paths: Vec<Path> = p.shapes.iter().zip(&p.marks).filter(|(_, m)| p.texts.contains(m)).map(|((_, s), _)| s.clone()).collect();
+            assert_eq!(paths.len(), 260);
+            let (lo, hi) = crate::geom::bbox(&paths).unwrap();
+            match check {
+                "centre" => assert!(((lo[0] + hi[0]) / 2.0 - (shift + 200.0 * scale)).abs() < 0.3, "{lo:?} {hi:?}"),
+                _ => assert!((hi[0] - (shift + 360.0 * scale)).abs() < 0.3, "{lo:?} {hi:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_drill_record_is_read_with_its_kind() {
+        // The same V-bit record with the kind set to 6 (a through drill) and no tip.
+        let hex = "02000000060000003333cb3f00000000060000000166666666666609400000000000000040a01a2fdd2406c13f0000000000002e40000000000000144000000000803e0000010000001900000056 2d4269742028363020646567203 32e313735206d6d292000";
+        let hex: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
+        let bytes: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect();
+        let mut d = vec![0u8; 8];
+        d.extend_from_slice(&bytes);
+        d.extend_from_slice(&[0u8; 96]);
+        assert_eq!(read_tool(&d).expect("the drill is read").kind, 6);
+        // Kind 11 is past the original's list of tool kinds.
+        d[8 + 4] = 11;
+        assert!(read_tool(&d).is_none());
     }
 
     #[test]

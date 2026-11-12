@@ -2715,7 +2715,21 @@ impl App {
                     close = Some(false);
                 }
                 let label = if self.tool_target.is_some() { crate::i18n::tr("Use This Tool") } else { "OK" };
-                if wide(ui, label, 92.0).clicked() {
+                // A V-Carve's carving tool can't be an end mill or a drill, as in the original,
+                // where they can't be picked for it (seen by the person). Its clearing tool can.
+                let vcarve = matches!(&self.right, RightMode::Op { op, .. } if op.kind == OpKind::VCarve);
+                let kind = tools.get(self.tool_index).map(|t| t.kind);
+                let refused = match (vcarve, self.tool_target, kind) {
+                    (true, Some(0), Some(k)) => !vcarve_can_use(k),
+                    (true, Some(_), Some(k)) => !vcarve_clearing_can_use(k),
+                    _ => false,
+                };
+                let r = ui.add_enabled_ui(!refused, |ui| wide(ui, label, 92.0)).inner;
+                if refused && self.tool_target == Some(0) {
+                    r.on_disabled_hover_text(crate::i18n::tr("A V-Carve carves with a V-bit, a ball nose or an engraving tool: an end mill or a drill can't be its carving tool."));
+                } else if refused {
+                    r.on_disabled_hover_text(crate::i18n::tr("A V-Carve clears its flat areas with an end mill, a ball nose or an engraving tool: a V-bit or a drill can't be its clearing tool."));
+                } else if r.clicked() {
                     close = Some(true);
                 }
             });
@@ -2740,6 +2754,18 @@ impl App {
             None => self.tool_edit = Some(tools),
         }
     }
+}
+
+/// The kinds of tool a V-Carve can carve with: not an end mill or a drill (the original doesn't
+/// offer them for it).
+pub(crate) fn vcarve_can_use(kind: ToolKind) -> bool {
+    !matches!(kind, ToolKind::EndMill | ToolKind::Drill)
+}
+
+/// The kinds of tool a V-Carve can clear its flat areas with: an end mill, a ball nose or an
+/// engraving tool, as the original's help for the form says (not a V-bit, not a drill).
+pub(crate) fn vcarve_clearing_can_use(kind: ToolKind) -> bool {
+    matches!(kind, ToolKind::EndMill | ToolKind::BallNose | ToolKind::Engraving)
 }
 
 /// The bit seen from the side, as big as the room allows, with its diameter across the cutting

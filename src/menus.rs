@@ -513,6 +513,180 @@ impl App {
         }
     }
 
+    /// The parts the toolpaths cut out, each with what is cut into it, from the drawing's own
+    /// lines: a part is a shape cut right through on its outside (or along it); what is cut
+    /// through on the inside, pocketed or drilled through is a hole in it; a pocket is cut flat to
+    /// its depth, a drilling is a round hole of the drill's size, a shallower profile a groove of
+    /// the tool's width. V-carves, 3D and textures aren't shapes a CAD program models this way and
+    /// are left out.
+    pub fn machined_parts(&self) -> Vec<(crate::solid::Shapes, Vec<crate::solid::Removal>)> {
+        use crate::solid::{band, loops_of, overlay, Removal};
+        use crate::toolpath::{OpKind, Side};
+        use i_overlay::core::overlay_rule::OverlayRule;
+        let thickness = self.doc.job.thickness;
+        let through = |d: f64| d >= thickness - 1e-6;
+        let closed = |paths: &[Path]| -> Vec<Vec<[f64; 2]>> { paths.iter().filter(|p| p.closed && p.pts.len() >= 3).map(|p| p.pts.clone()).collect() };
+        let mut parts: crate::solid::Shapes = Vec::new();
+        let mut removals: Vec<Removal> = Vec::new();
+        for tp in &self.doc.toolpaths {
+            let op = &tp.op;
+            let depth = op.cut_depth;
+            let area = loops_of(&overlay(&closed(&op.paths), &[], OverlayRule::Subject));
+            match op.kind {
+                OpKind::Profile if through(depth) && op.side != Side::Inside => parts.extend(overlay(&area, &[], OverlayRule::Subject)),
+                OpKind::Profile if through(depth) => removals.push(Removal { region: area, depth }),
+                OpKind::Profile | OpKind::Engrave => {
+                    let lines: Vec<Vec<[f64; 2]>> = op.paths.iter().filter(|p| p.pts.len() >= 2).flat_map(|p| band(&p.pts, p.closed, op.tool.dia)).collect();
+                    let region = match (op.kind, op.side) {
+                        (OpKind::Profile, Side::Inside) => loops_of(&overlay(&lines, &area, OverlayRule::Intersect)),
+                        (OpKind::Profile, Side::Outside) => loops_of(&overlay(&lines, &area, OverlayRule::Difference)),
+                        _ => lines,
+                    };
+                    removals.push(Removal { region, depth });
+                }
+                OpKind::Pocket => removals.push(Removal { region: area, depth }),
+                OpKind::Drill => {
+                    let r = op.tool.dia / 2.0;
+                    let holes: Vec<Vec<[f64; 2]>> = op
+                        .paths
+                        .iter()
+                        .filter_map(|p| crate::geom::bbox([p]))
+                        .map(|(lo, hi)| crate::geom::circle([(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0], r))
+                        .collect();
+                    removals.push(Removal { region: holes, depth });
+                }
+                _ => {}
+            }
+        }
+        // A part lying inside another one is cut out of it.
+        let inside_point = |shape: &Vec<Vec<[f64; 2]>>| {
+            let (a, b) = (shape[0][0], shape[0][1]);
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let len = dx.hypot(dy).max(1e-12);
+            [(a[0] + b[0]) / 2.0 - dy / len * 1e-3, (a[1] + b[1]) / 2.0 + dx / len * 1e-3]
+        };
+        let contains = |shape: &Vec<Vec<[f64; 2]>>, q: [f64; 2]| crate::geom::inside_even_odd(shape.iter().map(|l| Path::closed(l.clone())).collect::<Vec<_>>().iter(), q);
+        let mut out = Vec::new();
+        for (i, part) in parts.iter().enumerate() {
+            let inner: Vec<Vec<[f64; 2]>> = parts.iter().enumerate().filter(|(k, other)| *k != i && contains(part, inside_point(other)) && crate::geom::signed_area(&other[0]) < crate::geom::signed_area(&part[0])).flat_map(|(_, o)| o.clone()).collect();
+            let shape = if inner.is_empty() { vec![part.clone()] } else { overlay(&part.clone(), &inner, OverlayRule::Difference) };
+            let Some((lo, hi)) = crate::geom::bbox(part.iter().map(|l| Path::closed(l.clone())).collect::<Vec<_>>().iter()) else { continue };
+            for s in shape {
+                // Only what reaches into this part's box is cut into it.
+                let mine: Vec<Removal> = removals
+                    .iter()
+                    .filter(|r| r.region.iter().flatten().any(|q| q[0] >= lo[0] - 1.0 && q[0] <= hi[0] + 1.0 && q[1] >= lo[1] - 1.0 && q[1] <= hi[1] + 1.0))
+                    .map(|r| Removal { region: loops_of(&overlay(&r.region, &s, OverlayRule::Intersect)), depth: r.depth })
+                    .filter(|r| !r.region.is_empty())
+                    .collect();
+                out.push((vec![s], mine));
+            }
+        }
+        out
+    }
+
+    /// Each machined part as a solid in millimetres, named after the drawing's piece it lies in
+    /// (`stem-name`), or numbered: (file stem, bytes), as STEP (`step`) or STL.
+    pub fn carved_piece_files_as(&self, stem: &str, step: bool) -> Vec<(String, Vec<u8>)> {
+        self.carved_part_solids(stem)
+            .into_iter()
+            .map(|(file, solid)| {
+                let bytes = if step { crate::solid::step_text(&solid, &file).into_bytes() } else { crate::solid::stl_bytes(&solid) };
+                (file, bytes)
+            })
+            .collect()
+    }
+
+    /// Every machined part in one STEP assembly, each a component where it lies on the sheet, to
+    /// open at once in a CAD program and put together. Burin's own: the original exports no parts.
+    pub fn carved_assembly_step(&self, stem: &str) -> Option<Vec<u8>> {
+        let parts = self.carved_part_solids(stem);
+        (!parts.is_empty()).then(|| crate::solid::step_assembly(&parts, stem).into_bytes())
+    }
+
+    /// Each machined part as a solid in millimetres, with its file stem.
+    fn carved_part_solids(&self, stem: &str) -> Vec<(String, crate::solid::Solid)> {
+        let scale = if self.doc.job.units == crate::app::Units::Mm { 1.0 } else { 25.4 };
+        let shapes = self.doc.current_paths();
+        let named: Vec<(String, Vec<Path>)> = self
+            .doc
+            .pieces()
+            .into_iter()
+            .map(|row| (row.name, row.shapes.iter().filter_map(|id| shapes.get(id)).flatten().filter(|p| p.closed).cloned().collect()))
+            .collect();
+        let mut parts = self.machined_parts();
+        // Biggest first, as a person lists them.
+        parts.sort_by(|a, b| crate::geom::signed_area(&b.0[0][0]).total_cmp(&crate::geom::signed_area(&a.0[0][0])));
+        let count = parts.len();
+        let mut out: Vec<(String, crate::solid::Solid)> = Vec::new();
+        for (k, (outline, removals)) in parts.iter().enumerate() {
+            let ring = &outline[0][0];
+            let (a, b) = (ring[0], ring[1]);
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let len = dx.hypot(dy).max(1e-12);
+            let at = [(a[0] + b[0]) / 2.0 - dy / len * 1e-3, (a[1] + b[1]) / 2.0 + dx / len * 1e-3];
+            let name = named.iter().find(|(_, paths)| crate::geom::inside_even_odd(paths.iter(), at)).map(|(name, _)| crate::pieces::file_stem_of(name));
+            let mut file = match (&name, count) {
+                (Some(n), _) => format!("{stem}-{n}"),
+                (None, 1) => stem.to_string(),
+                (None, _) => format!("{stem}-{}", k + 1),
+            };
+            if out.iter().any(|(f, _)| *f == file) {
+                file = format!("{file}-{}", k + 1);
+            }
+            let Some(solid) = crate::solid::part_solid(outline, removals, self.doc.job.thickness, scale) else { continue };
+            out.push((file, solid));
+        }
+        out
+    }
+
+    /// Asks where, then writes `carved_piece_files` there, one file per piece.
+    /// Asks for a name, then makes a new folder of that name beside it holding every part, each as
+    /// a STEP solid and an STL. A name already taken gets a number (-2, -3...): nothing is written
+    /// over. In a browser, where there are no folders, the files are downloaded one by one.
+    pub fn export_carved_pieces(&mut self) {
+        let Some(path) = crate::platform::FileDialog::new().add_filter(tr("STEP solid"), &["step", "stp"]).add_filter(tr("3D model"), &["stl"]).set_file_name("pieces").save_file() else {
+            return;
+        };
+        let stem = path.file_stem().map_or("pieces".to_string(), |s| s.to_string_lossy().to_string());
+        let parent = path.parent().map(FilePath::to_path_buf).unwrap_or_default();
+        let steps = self.carved_piece_files_as(&stem, true);
+        if steps.is_empty() {
+            self.message = Some(crate::i18n::tr("No part to export: a part is a shape cut right through by a profile.").into());
+            return;
+        }
+        let meshes = self.carved_piece_files_as(&stem, false);
+        #[cfg(not(target_arch = "wasm32"))]
+        let folder = {
+            let folder = crate::pieces::unused_path(parent.join(&stem));
+            if let Err(e) = std::fs::create_dir_all(&folder) {
+                self.message = Some(tf!("Could not write {}: {e}", folder.display()));
+                return;
+            }
+            folder
+        };
+        #[cfg(target_arch = "wasm32")]
+        let folder = parent;
+        for (files, extension) in [(&steps, "step"), (&meshes, "stl")] {
+            for (file, bytes) in files {
+                let target = crate::pieces::unused_path(folder.join(format!("{file}.{extension}")));
+                if let Err(e) = crate::platform::write(&target, bytes) {
+                    self.message = Some(tf!("Could not write {}: {e}", target.display()));
+                    return;
+                }
+            }
+        }
+        // And all of them in one assembly, to open at once in a CAD program.
+        if let Some(bytes) = self.carved_assembly_step(&stem) {
+            let target = crate::pieces::unused_path(folder.join(format!("{stem}-{}.step", tr("assembly"))));
+            if let Err(e) = crate::platform::write(&target, &bytes) {
+                self.message = Some(tf!("Could not write {}: {e}", target.display()));
+                return;
+            }
+        }
+        self.status = tf!("Exported {} part(s) as STEP and STL, in millimetres, into {}, and all of them as one assembly", steps.len(), folder.display());
+    }
+
     fn export_grey(&mut self) {
         let Some(model) = self.model_for_export() else { return };
         let Some(path) = crate::platform::FileDialog::new().add_filter(tr("Picture"), &["png"]).set_file_name("model.png").save_file() else { return };

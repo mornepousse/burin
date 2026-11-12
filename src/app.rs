@@ -1150,6 +1150,9 @@ pub struct App {
     pub blend_mm: f64,
     /// The pointer catches on what is drawn.
     pub snap_shapes: bool,
+    /// Clicks on the toolpath form's shapes put tabs on them or take them off, and tabs can be
+    /// slid along (the original's tab tool, `vcToolpathTabTool`, `0x140a83540`).
+    pub placing_tabs: bool,
     pub show_guides: bool,
     /// Alt is held: nothing catches for now.
     pub snap_held_off: bool,
@@ -1585,6 +1588,7 @@ impl Default for App {
             blend: kept_output.blend,
             blend_mm: kept_output.blend_mm,
             snap_shapes: true,
+            placing_tabs: false,
             show_guides: true,
             snap_held_off: false,
             snap_hit: std::cell::Cell::new(None),
@@ -2134,15 +2138,26 @@ impl App {
             }).collect();
         }
         let mut by_mark: std::collections::HashMap<[u8; 16], u64> = std::collections::HashMap::new();
+        // The tabs put on each shape, by the shape's id.
+        let mut tabs_of: std::collections::HashMap<u64, Vec<P>> = std::collections::HashMap::new();
         for (i, (layer, outline)) in p.shapes.iter().enumerate() {
             let mut outline = outline.clone();
             for q in &mut outline.pts {
                 *q = [q[0] + shift[0], q[1] + shift[1]];
             }
             doc.active_layer = *layer;
+            // The letters of one text block share its mark: they stay one object.
+            let same = p.marks.get(i).filter(|m| p.texts.contains(m) && i > 0 && p.marks.get(i - 1) == Some(*m)).and_then(|m| by_mark.get(m).copied());
+            if let Some(v) = same.and_then(|id| doc.vectors.iter_mut().find(|v| v.id == id)) {
+                v.paths.push(outline);
+                continue;
+            }
             let id = doc.add_vector(vec![outline], Prim::Free);
             if let Some(mark) = p.marks.get(i) {
                 by_mark.insert(*mark, id);
+            }
+            if let Some(spots) = p.tabs.get(i).filter(|t| !t.is_empty()) {
+                tabs_of.insert(id, spots.iter().map(|q| [q[0] + shift[0], q[1] + shift[1]]).collect::<Vec<_>>());
             }
         }
         doc.active_layer = 0;
@@ -2175,6 +2190,7 @@ impl App {
             // their moves as saved: V-carves, and those made partly from shapes since removed.
             let can_follow = (saved.kind.starts_with("Profile") || saved.kind == "Pocket" || saved.kind == "Drill") && !saved.options.area_clear && !saved.options.special;
             let whole = !sources.is_empty() && sources.len() == saved.sources.len();
+            op.tab_spots = sources.iter().filter_map(|id| tabs_of.get(id)).flatten().copied().collect();
             op.source = if can_follow && whole { sources } else { Vec::new() };
             saved_options(&mut op, &saved.options);
             if saved.kind.ends_with("Inside") {
@@ -2206,6 +2222,12 @@ impl App {
                     Move { p: place(q), rapid, join }
                 })
                 .collect();
+            // A contour saved before its drawing changed: its moves cut shapes that aren't these.
+            // The original keeps such moves as they are; they're kept too, but with no shapes of
+            // their own, so the toolpath shows as needing Recalculate.
+            if saved.kind.starts_with("Profile") && !op.source.is_empty() && !kept_moves_follow(&op.paths, &moves, op.tool.dia / 2.0 + op.allowance.abs() + if op.lead { op.lead_distance } else { 0.0 }.max(op.overcut) + FOLLOW_SLACK) {
+                op.paths = Vec::new();
+            }
             let moves = Arc::new(moves);
             let steps: Vec<crate::arcs::Step> = fast_descent_steps(&saved.steps, saved.plunge_gap)
                 .into_iter()
@@ -2218,6 +2240,25 @@ impl App {
                 })
                 .collect();
             doc.toolpaths.push(Toolpath { op, visible: true, kept_moves: Some(moves.clone()), kept_steps: Some(Arc::new(steps)), moves, color: palette[k % palette.len()], face: doc.active_face, sheet: doc.active_sheet });
+        }
+        // A V-Carve made with a clearing tool is saved as two toolpaths of one calculation: its own
+        // ("VCarveToolpath") and the clearing tool's ("AreaClearToolpath"), which the original pairs
+        // again by the identifier they share when the V-Carve is edited (`0x1407756d0`). That
+        // identifier isn't read here, so the pair is found by name: the clearing toolpath of the same
+        // name. The V-Carve gets its clearing tool back, so a recalculation cuts the same rings.
+        let base = doc.toolpaths.len() - p.toolpaths.len();
+        for (k, saved) in p.toolpaths.iter().enumerate() {
+            if !saved.kind.to_lowercase().contains("carve") {
+                continue;
+            }
+            let partner = p.toolpaths.iter().enumerate().find(|(j, o)| *j != k && o.name == saved.name && o.kind.to_lowercase().contains("areaclear"));
+            if let Some((j, _)) = partner {
+                let tool = doc.toolpaths[base + j].op.tool.clone();
+                let op = &mut doc.toolpaths[base + k].op;
+                if op.clearance_tool.is_none() {
+                    op.clearance_tool = Some(tool);
+                }
+            }
         }
         // Last: toolpaths found their shapes by what each goes by, and still can inside a group.
         for group in &p.groups {
@@ -2494,6 +2535,9 @@ impl App {
         self.doc.sort_out_copied_pieces(&pasted);
         self.doc.join_copies_to_toolpaths(&pairs);
         self.copy_selected();
+        // The copy comes selected with its handles showing, ready to be moved or sized, as the
+        // second click on a shape gives (seen by the person in the original).
+        self.handles_on = Some(self.selected.clone());
     }
 
     pub fn map_selected(&mut self, f: impl Fn(P) -> P) {
@@ -2872,6 +2916,7 @@ impl App {
             _ => self.doc.job.thickness,
         };
         let op = blank_op(kind, name, tool, depth, Vec::new());
+        self.placing_tabs = false;
         self.right = RightMode::Op { op: Box::new(op), editing: None, tab: 0, error: None };
         self.right_open = true;
     }
@@ -2900,6 +2945,7 @@ impl App {
             }
             self.selected = chosen;
         }
+        self.placing_tabs = false;
         self.right = RightMode::Op { op: Box::new(op), editing: Some(i), tab: 0, error: None };
         self.right_open = true;
     }
@@ -2949,6 +2995,7 @@ impl App {
         let paths = self.op_paths(&op);
         let model_based = op.kind.uses_model();
         if !paths.is_empty() || editing.is_none() || model_based {
+            op.tab_spots = toolpath::carry_tabs(&op.paths, &paths, &op.tab_spots);
             op.paths = paths;
             // Remember which shapes these were, so the path can follow them when they change.
             op.source = if model_based { Vec::new() } else { self.cut_ids() };
@@ -3032,7 +3079,13 @@ impl App {
             }
         }
         tasks.sort_by_key(|(at, _)| *at);
-        self.run_tasks(tasks, crate::recalc::Finish::All { unchanged, no_shapes, warn }, self.background_recalc);
+        // Nothing made yet: the original says so in a box (its message 0x278, `0x140297d90`).
+        if warn && self.doc.toolpaths.is_empty() {
+            self.message = Some(crate::i18n::tr("No toolpaths to recalculate.\n\nYou can only recalculate toolpaths which have already been created.").into());
+            return;
+        }
+        let queued = tasks.iter().map(|(_, op)| op.name.clone()).collect();
+        self.run_tasks(tasks, crate::recalc::Finish::All { unchanged, no_shapes, warn, queued }, self.background_recalc);
     }
 
     pub fn duplicate_toolpath(&mut self) {
@@ -3438,6 +3491,34 @@ impl App {
         }
     }
 
+    /// Carves only this share (0 to 1) of the moves of the preview just started, and stops there
+    /// with the tool where it got to: for pictures of the carving under way (the website's).
+    pub fn carve_share(&mut self, share: f64) {
+        let total: usize = self.anim.queue.iter().filter_map(|i| self.doc.toolpaths.get(*i)).map(|t| toolpath::working_moves(&t.moves).len()).sum();
+        let target = ((total as f64) * share.clamp(0.0, 1.0)).round() as usize;
+        self.anim.playing = true;
+        if target > 0 {
+            self.advance_preview(target);
+        }
+        self.anim.playing = false;
+        self.bump_surface();
+    }
+
+    /// Carries the preview on to this share (0 to 1) of its moves, from wherever it is, and stops
+    /// there with the tool shown: for a series of pictures of the carving under way.
+    pub fn carve_to(&mut self, share: f64) {
+        let counts: Vec<usize> = self.anim.queue.iter().map(|i| self.doc.toolpaths.get(*i).map_or(0, |t| toolpath::working_moves(&t.moves).len())).collect();
+        let total: usize = counts.iter().sum();
+        let done: usize = counts.iter().take(self.anim.at).sum::<usize>() + self.anim.step;
+        let target = ((total as f64) * share.clamp(0.0, 1.0)).round() as usize;
+        if target > done {
+            self.anim.playing = true;
+            self.advance_preview(target - done);
+            self.anim.playing = false;
+            self.bump_surface();
+        }
+    }
+
     pub fn finish_preview(&mut self) {
         self.anim.playing = true;
         while self.advance_preview(usize::MAX) {}
@@ -3693,7 +3774,37 @@ fn saved_tool(saved: &crate::crv3d::SavedToolpath) -> Tool {
         tool.plunge = t.plunge;
         tool.rpm = t.rpm as f64;
         tool.stepover = if t.dia > 0.0 { (t.stepover / t.dia).clamp(0.01, 1.0) } else { tool.stepover };
+        tool.clear_step = t.clear_step;
         let name = t.name.to_lowercase();
+        // The kind the file writes comes first; the name only when the kind isn't one known.
+        match t.kind {
+            0 => {
+                tool.kind = relief::ToolKind::BallNose;
+                return tool;
+            }
+            // 1 end mill, 2 radiused end mill, 8 form tool: cut with a flat end (the corner
+            // radius and the form aren't drawn yet).
+            1 | 2 | 8 => return tool,
+            3 if t.tip.1 > 0.0 => {
+                tool.kind = relief::ToolKind::VBit;
+                tool.angle = (2.0 * (t.tip.0 as f64).atan2(t.tip.1 as f64)).to_degrees();
+                return tool;
+            }
+            // 4 engraving, 5 radiused engraving, 9 diamond drag, 10 radiused flat engraving.
+            4 | 5 | 9 | 10 => {
+                tool.kind = relief::ToolKind::Engraving;
+                if t.tip.1 > 0.0 {
+                    tool.angle = (2.0 * (t.tip.0 as f64).atan2(t.tip.1 as f64)).to_degrees();
+                }
+                return tool;
+            }
+            // 6 through drill, 7 brad-point drill.
+            6 | 7 => {
+                tool.kind = relief::ToolKind::Drill;
+                return tool;
+            }
+            _ => {}
+        }
         if name.contains("v-bit") || name.contains("v bit") || name.contains("grav") {
             tool.kind = relief::ToolKind::VBit;
             // Named like "V-Bit (60 deg 12 mm)".
@@ -3704,6 +3815,63 @@ fn saved_tool(saved: &crate::crv3d::SavedToolpath) -> Tool {
         }
     }
     tool
+}
+
+/// How much further than the tool's radius, allowance and lead a saved contour may run from its
+/// shapes and still count as made from them. The contours seen made from other shapes ran 60 mm
+/// and more from theirs.
+const FOLLOW_SLACK: f64 = 2.0;
+
+/// Whether every cutting move stays within `reach` of these shapes: false for moves made from
+/// other shapes than these (a drawing changed after it was calculated).
+pub(crate) fn kept_moves_follow(paths: &[Path], moves: &[Move], reach: f64) -> bool {
+    // Only a cut that closes on itself, as a contour round a shape does, says which shapes it was
+    // made from; an open stretch of cut can't be told apart from part of one.
+    let mut closes = false;
+    let mut start: Option<[f64; 3]> = None;
+    for w in moves.windows(2) {
+        if w[1].rapid {
+            start = None;
+            continue;
+        }
+        let s = *start.get_or_insert(w[0].p);
+        if (w[1].p[0] - s[0]).hypot(w[1].p[1] - s[1]) < 0.01 && (w[1].p[0] - w[0].p[0]).hypot(w[1].p[1] - w[0].p[1]) > 0.0 {
+            closes = true;
+            break;
+        }
+    }
+    if !closes {
+        return true;
+    }
+    let cell = reach.max(1.0) * 2.0;
+    let key = |q: [f64; 2]| ((q[0] / cell).floor() as i64, (q[1] / cell).floor() as i64);
+    // The shapes' sides, by the squares of a grid they come near.
+    let mut grid: std::collections::HashMap<(i64, i64), Vec<([f64; 2], [f64; 2])>> = std::collections::HashMap::new();
+    for (a, b) in paths.iter().flat_map(|p| p.segments()) {
+        let (ka, kb) = (key([a[0].min(b[0]) - reach, a[1].min(b[1]) - reach]), key([a[0].max(b[0]) + reach, a[1].max(b[1]) + reach]));
+        if (kb.0 - ka.0 + 1) * (kb.1 - ka.1 + 1) > 1 << 16 {
+            // Too long a side to file this way: the cut is taken as following it.
+            return true;
+        }
+        for x in ka.0..=kb.0 {
+            for y in ka.1..=kb.1 {
+                grid.entry((x, y)).or_default().push((a, b));
+            }
+        }
+    }
+    let reach2 = reach * reach;
+    let near = |q: [f64; 2]| grid.get(&key(q)).is_some_and(|sides| sides.iter().any(|(a, b)| crate::geom::dist2_seg(q, *a, *b) <= reach2));
+    // Every cutting move, all along it: a contour made from these shapes never strays further
+    // than the tool's radius, its allowance and its lead. Places too narrow for the tool aren't
+    // cut at all, so they don't count against it.
+    moves.windows(2).filter(|w| !w[1].rapid).all(|w| {
+        let (a, b) = ([w[0].p[0], w[0].p[1]], [w[1].p[0], w[1].p[1]]);
+        let steps = ((b[0] - a[0]).hypot(b[1] - a[1]) / reach).ceil().clamp(1.0, 10_000.0) as usize;
+        (0..=steps).all(|k| {
+            let t = k as f64 / steps as f64;
+            near([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t])
+        })
+    })
 }
 
 /// The same as `fast_descents`, for the list with true arcs.
@@ -4223,6 +4391,30 @@ mod tests {
         assert_eq!(a.doc.toolpaths[0].op.name, "Pocket 1 [Clear]");
         assert_eq!(a.doc.toolpaths[1].op.name, "Pocket 1");
         assert!(a.doc.toolpaths[1].op.rest_only);
+    }
+
+    /// A V-Carve's clearing toolpath that would cut nothing is left out, with a message that
+    /// says why (`0x1405680a0`): a narrow strip has no flat wide enough for a big clearing tool.
+    #[test]
+    fn an_empty_flat_clearing_is_dropped_with_a_reason() {
+        for (width, flat, says) in [(0.2, 0.05, "wide enough"), (0.2, 0.4, "never gets down")] {
+            let mut a = working();
+            a.doc.add_vector(vec![Path::closed(geom::rect([5.0, 5.0], width, 4.0, 0.0))], Prim::Free);
+            a.select_all();
+            a.start_op(OpKind::VCarve);
+            let big = a.doc.tools.iter().find(|t| t.label() == "End Mill (0.5 inch)").unwrap().clone();
+            let vbit = a.doc.tools.iter().find(|t| t.label() == "V-Bit (90 deg 1.25 inch)").unwrap().clone();
+            if let RightMode::Op { op, .. } = &mut a.right {
+                op.tool = vbit;
+                op.flat_depth = flat;
+                op.clearance_tool = Some(big);
+            }
+            a.calculate_op();
+            assert_eq!(a.doc.toolpaths.len(), 1, "only the carving is kept ({says})");
+            assert_eq!(a.doc.toolpaths[0].op.kind, OpKind::VCarve);
+            let note = a.message.clone().unwrap_or_default();
+            assert!(note.contains(says), "{note}");
+        }
     }
 
     #[test]

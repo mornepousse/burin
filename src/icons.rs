@@ -1070,10 +1070,12 @@ mod tests {
         };
         for icon in shown {
             let square = Rect::from_min_size(egui::pos2(100.0, 100.0), vec2(24.0, 24.0));
-            let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 let p = ui.painter().with_clip_rect(Rect::EVERYTHING);
                 paint(&p, square, icon, true);
             });
+            // No screen takes the font picture here: drop it on purpose, as the library asks.
+            out.textures_delta.clear();
             // The points actually drawn, after the edges are smoothed.
             let reach = square.expand(4.0);
             let shapes: Vec<_> = out.shapes.into_iter().filter(|c| {

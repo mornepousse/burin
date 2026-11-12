@@ -45,7 +45,9 @@ fn fit(moves: &[Move], from: usize, to: usize, tol: f64) -> Option<Step> {
     // arc of hundreds of millimetres stand in for it, a millimetre and more off the cut.
     let mut sides: Vec<f64> = moves[from..to].iter().zip(&moves[from + 1..=to]).map(|(p, q)| (p.p[0] - q.p[0]).hypot(p.p[1] - q.p[1])).collect();
     sides.sort_by(|x, y| x.total_cmp(y));
-    let typical = sides[(sides.len() - 1) / 2];
+    // The longer half's middle: an exact offset of a curve drawn as sides alternates the sides'
+    // own offsets with tiny pieces where they turn, which would hide the sides' bulge.
+    let typical = sides[(sides.len() - 1) * 3 / 4];
     let bulge = typical * typical / (8.0 * radius.max(1e-9));
     if bulge > SIDE_BULGE_MOST * tol {
         return None;

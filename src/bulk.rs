@@ -201,6 +201,10 @@ impl App {
             let paths: Vec<Path> = tp.op.source.iter().filter_map(|id| shapes.get(id)).flat_map(|lines| lines.iter().cloned()).collect();
             if !paths.is_empty() && paths != tp.op.paths {
                 let mut op = tp.op.clone();
+                // Tabs put on the shapes go where the shapes went, at the same place along them,
+                // as the original keeps a tab as a piece of its shape and how far along it
+                // (`vdContourCarriage`, `0x1407aa650`).
+                op.tab_spots = crate::toolpath::carry_tabs(&tp.op.paths, &paths, &tp.op.tab_spots);
                 op.paths = paths;
                 tasks.push((i, op));
             }
