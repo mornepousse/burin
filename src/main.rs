@@ -66,6 +66,7 @@ mod sculpt;
 mod sweep;
 mod toolpath;
 mod ui;
+mod update;
 mod view3d;
 #[cfg(test)]
 mod ui_tests;

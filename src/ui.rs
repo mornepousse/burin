@@ -1690,6 +1690,44 @@ impl App {
         }
     }
 
+    /// Under the version on the start page: once, whether to look for new versions at start
+    /// (Burin asks nothing of anyone without a yes); then, when one is out, a link to it.
+    fn update_notice(&mut self, ui: &mut Ui, width: f32) {
+        if !crate::update::available() {
+            return;
+        }
+        crate::update::start(ui.ctx());
+        let state = crate::update::state();
+        if let Some((version, page)) = &state.newer {
+            ui.add_space(8.0);
+            ui.vertical_centered(|ui| {
+                let text = tf!("Burin {} is out: download it", version);
+                let button = egui::Button::new(RichText::new(text).strong().size(13.0).color(Color32::WHITE)).fill(theme::ACCENT).corner_radius(14.0).min_size(vec2(0.0, 28.0));
+                let response = ui.add(button);
+                if response.clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(page.clone()));
+                }
+                label_widget(&response, crate::i18n::tr("Opens the new version's page, with what's new and the files to download."));
+                response.on_hover_text(crate::i18n::tr("Opens the new version's page, with what's new and the files to download."));
+            });
+        } else if state.choice.is_none() {
+            ui.add_space(8.0);
+            Frame::new().fill(CARD()).corner_radius(8).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
+                ui.set_width(width - 24.0);
+                ui.label(RichText::new(crate::i18n::tr("Look for a new version each time Burin starts?")).size(12.5));
+                ui.label(RichText::new(crate::i18n::tr("Burin then only asks the project's page on GitHub for the latest version's number; nothing about you or your work is sent.")).size(11.0).color(theme::MUTED()));
+                ui.horizontal(|ui| {
+                    if ui.button(crate::i18n::tr("Yes")).clicked() {
+                        crate::update::set_choice(true, ui.ctx());
+                    }
+                    if ui.button(crate::i18n::tr("No")).clicked() {
+                        crate::update::set_choice(false, ui.ctx());
+                    }
+                });
+            });
+        }
+    }
+
     /// Choosing the language and the keys. The list waits for a key while one is being changed.
     fn preferences_window(&mut self, ctx: &egui::Context) {
         if !self.prefs_open {
@@ -1751,6 +1789,13 @@ impl App {
                     }
                 });
             });
+            if crate::update::available() {
+                ui.separator();
+                let mut look = crate::update::state().choice == Some(true);
+                if ui.checkbox(&mut look, crate::i18n::tr("Look for a new version each time Burin starts")).changed() {
+                    crate::update::set_choice(look, ui.ctx());
+                }
+            }
             ui.separator();
             heading(ui, Icon::Edit, crate::i18n::tr("Keyboard Shortcuts"));
             ui.horizontal(|ui| {
@@ -2045,6 +2090,7 @@ impl App {
             ui.vertical_centered(|ui| {
                 ui.label(RichText::new(tf!("Version {}", env!("CARGO_PKG_VERSION"))).size(12.0).color(theme::MUTED()));
             });
+            self.update_notice(ui, width);
             ui.add_space(22.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;

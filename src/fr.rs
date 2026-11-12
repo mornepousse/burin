@@ -5,6 +5,14 @@
 
 pub const FR: &[(&str, &str)] = &[
     ("Travel at", "Rapide à"),
+    // Whether a newer version is out.
+    ("Yes", "Oui"),
+    ("No", "Non"),
+    ("Burin {} is out: download it", "Burin {} est disponible : la télécharger"),
+    ("Opens the new version's page, with what's new and the files to download.", "Ouvre la page de la nouvelle version, avec ses nouveautés et les fichiers à télécharger."),
+    ("Look for a new version each time Burin starts?", "Chercher une nouvelle version à chaque démarrage de Burin ?"),
+    ("Look for a new version each time Burin starts", "Chercher une nouvelle version à chaque démarrage de Burin"),
+    ("Burin then only asks the project's page on GitHub for the latest version's number; nothing about you or your work is sent.", "Burin demande alors seulement à la page du projet sur GitHub le numéro de la dernière version ; rien sur vous ni sur votre travail n'est envoyé."),
     ("Slow from", "Lent dès"),
     ("Heights above the board, drawn as dashed lines above.", "Hauteurs au-dessus du brut, en pointillés sur le dessin."),
     // The machining board form, Burin's own wording.

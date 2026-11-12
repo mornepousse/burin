@@ -122,6 +122,11 @@ signaler un, un brouillon s'ouvre dans votre navigateur : vous voyez tout ce qu'
 que si vous le validez. Votre travail, ses noms de fichiers et le nom de votre dossier personnel n'y
 figurent jamais.
 
+Sur sa page d'accueil, Burin demande une fois s'il doit chercher une nouvelle version à chaque démarrage
+(réglable aussi dans les Préférences). Seulement si vous dites oui, il demande à GitHub le numéro de la
+dernière version du projet, et affiche un lien quand une plus récente est sortie. Rien sur vous ni sur votre
+travail n'est envoyé.
+
 <img src="docs/retour.png" alt="La fenêtre pour envoyer un retour" width="640">
 
 ## Ce qui manque encore
