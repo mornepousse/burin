@@ -18,8 +18,9 @@ type Outcome = (usize, Op, Result<Vec<Move>, String>);
 
 /// What the results are for.
 pub enum Finish {
-    /// The Recalculate button, and how many toolpaths it left as they were.
-    All { unchanged: usize, no_shapes: usize, warn: bool },
+    /// The Recalculate button, and how many toolpaths it left as they were. `queued` names the
+    /// toolpaths being worked out, in order, for telling which were left when it's stopped.
+    All { unchanged: usize, no_shapes: usize, warn: bool, queued: Vec<String> },
     /// The Calculate button of a toolpath form.
     Calculate { form: Box<Op>, editing: Option<usize>, tab: usize },
 }
@@ -114,8 +115,9 @@ impl App {
 
     fn finish_tasks(&mut self, results: Vec<Outcome>, finish: Finish, stopped: bool) -> usize {
         match finish {
-            Finish::All { unchanged, no_shapes, warn } => {
+            Finish::All { unchanged, no_shapes, warn, queued } => {
                 let tried = results.len();
+                let failed: Vec<String> = results.iter().filter(|(_, _, r)| r.is_err()).map(|(_, op, _)| op.name.clone()).collect();
                 let done = self.keep_results(results);
                 let mut told = tf!("Recalculated {done} toolpath(s).");
                 if unchanged > 0 {
@@ -131,6 +133,21 @@ impl App {
                     told = tf!("Stopped after {done} toolpath(s). The others still have their old moves: Recalculate finishes them.");
                 }
                 self.status = told;
+                // As the original's Recalculate All (`0x140297d90`, `0x14087b4a0`): a box naming
+                // the toolpaths that failed (its message 0x1E8), or, once stopped, those that
+                // failed or weren't reached (0x346). Asked by the person only, not on opening.
+                if warn && (stopped || !failed.is_empty()) {
+                    let mut names = failed;
+                    if stopped {
+                        names.extend(queued.into_iter().skip(tried));
+                    }
+                    let list = names.join("\n");
+                    self.message = Some(if stopped {
+                        tf!("Recalculation was cancelled.\n\nPlease check the data for the following toolpaths carefully:\n\n{list}")
+                    } else {
+                        tf!("One or more errors occurred while recalculating toolpaths.\n\nPlease check the data for the following toolpaths carefully:\n\n{list}")
+                    });
+                }
                 if !self.doc.toolpaths.is_empty() {
                     self.reset_preview();
                 }
@@ -150,11 +167,21 @@ impl App {
                 for (_, op, result) in results {
                     match result {
                         Ok(moves) => made.push((op, Arc::new(moves))),
+                        // A V-Carve's clearing pass that fits nowhere just has nothing to cut: the
+                        // carving goes ahead, and the message below says why.
+                        Err(_) if form.kind == toolpath::OpKind::VCarve && op.kind == toolpath::OpKind::Pocket && made.is_empty() => made.push((op, Arc::new(Vec::new()))),
                         Err(error) => {
                             self.right = RightMode::Op { op: form, editing, tab, error: Some(error) };
                             return 0;
                         }
                     }
+                }
+                // A V-Carve's clearing toolpath that cuts nothing is dropped, and the message says
+                // why, as the original does (`0x1405680a0`): from the deepest point the carving
+                // reached below its start depth, either no flat is wide enough for the clearing
+                // tool, or the carving never gets down to the flat depth at all.
+                if let Some(note) = self.empty_flat_clearing(&form, &mut made) {
+                    self.message = Some(note);
                 }
                 // Asked before calculating when the settings gave the depth; else its moves tell only now.
                 let asked = toolpath::deepest_cut(&form) > self.doc.job.deepest_allowed() + 1e-9;

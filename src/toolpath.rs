@@ -34,6 +34,16 @@ pub struct Tool {
     /// dragged onto it).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub group: String,
+    /// The stepover a V-carve clears with between passes, in the tool's unit; 0 for none. The
+    /// original's tools keep it beside the usual stepover (field +0x98, used by slot +0xa8 of
+    /// `mcVBitTool` at `0x1408667f0`, falling back to the stepover at +0x90), and a saved tool
+    /// writes it just after its name (0.794 for a 3.175 mm V-bit whose stepover is 0.133).
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub clear_step: f64,
+}
+
+fn is_zero_f64(v: &f64) -> bool {
+    *v == 0.0
 }
 
 impl ToolKind {
@@ -66,6 +76,7 @@ impl Tool {
             t.dia *= k;
             t.pass_depth *= k;
             t.flute_length *= k;
+            t.clear_step *= k;
             t.feed *= k;
             t.plunge *= k;
             t.metric = metric;
@@ -102,6 +113,7 @@ pub fn default_tools() -> Vec<Tool> {
             number,
             flute_length: 0.0,
             group: String::new(),
+            clear_step: 0.0,
         };
         tool.name = tool.label();
         tool
@@ -364,6 +376,11 @@ pub struct Op {
     pub tab_length: f64,
     pub tab_thickness: f64,
     pub tab_count: usize,
+    /// Where the tabs were put on the drawing, as the original keeps them with each shape
+    /// (`vcToolpathTab`): each tab is centred on the loop at the point nearest one of these.
+    /// None: `tab_count` tabs evenly spaced.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tab_spots: Vec<P>,
     pub ramp: bool,
     pub ramp_distance: f64,
     pub lead: bool,
@@ -788,6 +805,168 @@ fn along(route: &[P], mut s: f64) -> P {
     *route.last().unwrap_or(&[0.0, 0.0])
 }
 
+/// The stretches of a closed loop `total` long the tool stays up over for its tabs, measured from
+/// a start `shift` further on than the one they were spaced from (each also a loop before and
+/// after, for one across the start).
+fn tab_spans(pts: &[P], total: f64, op: &Op, shift: f64) -> Vec<(f64, f64)> {
+    let mids: Vec<f64> = if op.tab_spots.is_empty() {
+        (0..op.tab_count).map(|i| (total * (i as f64 + 0.5) / op.tab_count as f64 - shift).rem_euclid(total.max(1e-12))).collect()
+    } else {
+        // The drawing's tabs on this loop: those no further from it than the cut is from its
+        // shape, at the place on the loop nearest each.
+        let reach = op.tool.dia / 2.0 + op.allowance.abs() + op.last_allowance.abs() + op.tool.dia * 0.01;
+        op.tab_spots.iter().filter_map(|spot| nearest_station(pts, *spot).filter(|(_, d)| *d <= reach).map(|(s, _)| s)).collect()
+    };
+    let mut out = Vec::new();
+    for mid in mids {
+        for m in [mid - total, mid, mid + total] {
+            out.push((m - tab_reach(op) / 2.0, m + tab_reach(op) / 2.0));
+        }
+    }
+    out
+}
+
+/// `count` tabs on each closed shape, spread evenly along it from its start, as Burin spaces them
+/// when none are put by hand: the places to put on the drawing to start from.
+pub fn spread_tabs(paths: &[Path], count: usize) -> Vec<P> {
+    let mut out = Vec::new();
+    for path in paths.iter().filter(|p| p.closed && p.pts.len() >= 3) {
+        let mut route = path.pts.clone();
+        route.push(path.pts[0]);
+        let total: f64 = route.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum();
+        out.extend((0..count).map(|i| along(&route, total * (i as f64 + 0.5) / count as f64)));
+    }
+    out
+}
+
+/// Tabs on shapes `before` carried onto the same shapes changed (`after`): each at the same
+/// piece of its shape and the same share along it when the shape has as many points as before,
+/// else at the same share of the way round it; when the shapes aren't the same number, at the
+/// place on them nearest where it was.
+pub fn carry_tabs(before: &[Path], after: &[Path], tabs: &[P]) -> Vec<P> {
+    let length = |p: &Path| p.segments().map(|(a, b)| (b[0] - a[0]).hypot(b[1] - a[1])).sum::<f64>();
+    tabs.iter()
+        .map(|spot| {
+            // Where it is on the shapes before: which shape, which piece, how far along it.
+            let mut best: Option<(f64, usize, usize, f64, f64)> = None;
+            for (i, path) in before.iter().enumerate() {
+                let mut gone = 0.0;
+                for (k, (a, b)) in path.segments().enumerate() {
+                    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+                    let len2 = dx * dx + dy * dy;
+                    let t = if len2 > 0.0 { (((spot[0] - a[0]) * dx + (spot[1] - a[1]) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+                    let d = (a[0] + dx * t - spot[0]).hypot(a[1] + dy * t - spot[1]);
+                    if best.is_none_or(|b| d < b.0) {
+                        best = Some((d, i, k, t, gone + t * len2.sqrt()));
+                    }
+                    gone += len2.sqrt();
+                }
+            }
+            let Some((_, i, k, t, gone)) = best else { return *spot };
+            match (before.len() == after.len(), before.get(i), after.get(i)) {
+                (true, Some(old), Some(new)) if old.pts.len() == new.pts.len() && old.closed == new.closed => {
+                    let (a, b) = new.segments().nth(k).unwrap_or((new.pts[0], new.pts[0]));
+                    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+                }
+                (true, Some(old), Some(new)) => {
+                    let share = gone / length(old).max(1e-12);
+                    let mut route = new.pts.clone();
+                    if new.closed {
+                        route.push(new.pts[0]);
+                    }
+                    along(&route, share * length(new))
+                }
+                _ => nearest_on_paths(after, *spot).map_or(*spot, |(q, _)| q),
+            }
+        })
+        .collect()
+}
+
+/// The point of these shapes nearest `at`, and how far it is.
+pub fn nearest_on_paths(paths: &[Path], at: P) -> Option<(P, f64)> {
+    paths
+        .iter()
+        .flat_map(|p| p.segments())
+        .map(|(a, b)| {
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let len2 = dx * dx + dy * dy;
+            let t = if len2 > 0.0 { (((at[0] - a[0]) * dx + (at[1] - a[1]) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+            let q = [a[0] + dx * t, a[1] + dy * t];
+            (q, (q[0] - at[0]).hypot(q[1] - at[1]))
+        })
+        .min_by(|x, y| x.1.total_cmp(&y.1))
+}
+
+/// Whether a toolpath leaves tabs on its loops: some counted, or some put on the drawing.
+fn tabs_wanted(op: &Op) -> bool {
+    op.tab_count > 0 || !op.tab_spots.is_empty()
+}
+
+/// How far along a closed loop the place nearest `spot` is, and how far that place is from it.
+fn nearest_station(pts: &[P], spot: P) -> Option<(f64, f64)> {
+    let n = pts.len();
+    let mut acc = 0.0;
+    let mut best: Option<(f64, f64)> = None;
+    for k in 0..n {
+        let (a, b) = (pts[k], pts[(k + 1) % n]);
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let len2 = dx * dx + dy * dy;
+        let t = if len2 > 0.0 { (((spot[0] - a[0]) * dx + (spot[1] - a[1]) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+        let d = (a[0] + dx * t - spot[0]).hypot(a[1] + dy * t - spot[1]);
+        if best.is_none_or(|(_, bd)| d < bd) {
+            best = Some((acc + t * len2.sqrt(), d));
+        }
+        acc += len2.sqrt();
+    }
+    best
+}
+
+/// A closed loop started `s` along it from its first point (the point put in there).
+fn restart_at(pts: &[P], s: f64) -> Vec<P> {
+    let n = pts.len();
+    let mut acc = 0.0;
+    for k in 0..n {
+        let (a, b) = (pts[k], pts[(k + 1) % n]);
+        let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+        if acc + len >= s && len > 0.0 {
+            let t = ((s - acc) / len).clamp(0.0, 1.0);
+            let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+            let near = |q: P| (q[0] - p[0]).hypot(q[1] - p[1]) < 1e-9;
+            let first = if near(a) { k } else { (k + 1) % n };
+            let mut out: Vec<P> = Vec::with_capacity(n + 1);
+            if !near(a) && !near(b) {
+                out.push(p);
+            }
+            out.extend((0..n).map(|j| pts[(first + j) % n]));
+            return out;
+        }
+        acc += len;
+    }
+    pts.to_vec()
+}
+
+/// The route's points from its start up to `s` along it, ending at that place.
+fn route_to(route: &[P], s: f64) -> Vec<(P, f64)> {
+    let mut out = vec![(route[0], 0.0)];
+    let mut acc = 0.0;
+    for w in route.windows(2) {
+        let len = (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]);
+        if acc + len >= s {
+            out.push((along(route, s), s));
+            return out;
+        }
+        acc += len;
+        out.push((w[1], acc));
+    }
+    out
+}
+
+/// A ramp that goes the whole way round each time (`0x14085e3f0`): a spiral, or no distance set.
+/// On a closed loop it isn't followed by a lap at depth except at the last depth (`0x1408575e0`).
+fn ramps_whole_way(op: &Op) -> bool {
+    op.ramp_kind == RampKind::Spiral || (!op.ramp_by_angle && op.ramp_distance <= 0.0)
+}
+
 /// Which way is away from the part, seen from a loop: outside to the right of a line.
 fn away_from_part(pts: &[P], closed: bool, side: Side) -> f64 {
     // Going anticlockwise around a shape, its outside is on the right.
@@ -840,9 +1019,10 @@ fn lead_points_for(p: P, t: P, side_sign: f64, op: &Op, out: bool, distance: f64
 /// loop), the first point on the other side of the loop, the k-th, cuts the lead to (k - 1) tenths
 /// of its length (`/ 10.0`, `0x142736370`), when that is under 1.01 (`0x142103338`); nothing left
 /// means no lead. A lead whose middle point (the sixth) isn't on the waste side is left out. `None`
-/// means no lead: the cut then starts on the loop. The original tests the toolpath's other loops
-/// too; here only the lead's own loop is known.
-fn fitted_lead(loop_pts: &[P], side: Side, side_sign: f64, op: &Op) -> Option<f64> {
+/// means no lead: the cut then starts on the loop. The toolpath's other loops (`others`) count
+/// too, from the first point on: one across any of them at the k-th point also cuts the lead to
+/// (k - 1) tenths, the smallest fraction winning (`0x140842ba0` passes the whole group).
+fn fitted_lead(loop_pts: &[P], others: &[&[P]], side: Side, side_sign: f64, op: &Op) -> Option<f64> {
     if loop_pts.len() < 3 || side == Side::On {
         return Some(op.lead_distance);
     }
@@ -877,7 +1057,14 @@ fn fitted_lead(loop_pts: &[P], side: Side, side_sign: f64, op: &Op) -> Option<f6
     if sides[5] != waste_inside {
         return None;
     }
-    let fraction = (2..10).find(|&k| sides[k] != sides[1]).map_or(999.0, |k| (k - 1) as f64 / 10.0);
+    let mut fraction = (2..10).find(|&k| sides[k] != sides[1]).map_or(999.0, |k| (k - 1) as f64 / 10.0);
+    for other in others.iter().filter(|o| o.len() >= 3) {
+        let shape = [Path::closed(other.to_vec())];
+        let inside: Vec<bool> = (0..10).map(|k| crate::geom::inside_even_odd(&shape, at(total * (k as f64 / 9.0).min(1.0)))).collect();
+        if let Some(k) = (1..10).find(|&k| inside[k] != inside[0]) {
+            fraction = fraction.min((k - 1) as f64 / 10.0);
+        }
+    }
     if fraction < 1.01 {
         if fraction <= 0.0 {
             return None;
@@ -888,12 +1075,379 @@ fn fitted_lead(loop_pts: &[P], side: Side, side_sign: f64, op: &Op) -> Option<f6
 }
 
 /// Starts a closed loop at the one of its points nearest to where the tool is.
-fn start_near(pts: &mut [P], at: P) {
+fn start_near(pts: &mut Vec<P>, at: P) {
     let far = |p: P| (p[0] - at[0]).hypot(p[1] - at[1]);
+    // A round loop's nodes are its quarter points: the original keeps a circle, and its offset,
+    // as four arcs, and picks among the spans' starts (`0x14079b600`, the first nearest).
+    if let Some((c, r)) = round_loop(pts) {
+        let quarters = [[c[0] + r, c[1]], [c[0], c[1] + r], [c[0] - r, c[1]], [c[0], c[1] - r]];
+        if let Some(q) = quarters.into_iter().min_by(|a, b| far(*a).total_cmp(&far(*b))) {
+            start_loop_near_point(pts, q);
+        }
+        return;
+    }
     let best = (0..pts.len()).min_by(|a, b| far(pts[*a]).total_cmp(&far(pts[*b])));
     if let Some(best) = best {
         pts.rotate_left(best);
     }
+}
+
+/// A pocket's rings at `level`, as the original's offsets make them (`0x1407af400`): its outside
+/// geometry engine (`0x140dcb3a0`) works to half the toolpath's tolerance (`× 0.5`, `0x1420e8d28`),
+/// after each contour is tidied of pieces shorter than 1% of that (`0x14079cf50`, `0x1420fbbb0`:
+/// a piece's ends merged into its neighbours, over and over while any is removed and two or more
+/// are left; a contour that is one whole circle is left as it is). Where the shape is exactly twice
+/// the level wide, the offset has no width and gives nothing. The distance grid's contour runs out
+/// along such a ridge and back the same way; those runs are taken out, and a loop thinner than
+/// the engine's tolerance (mean half-width, area over perimeter) is dropped. Seen in the person's
+/// islands job: two bars 30 mm high joined by a 7 mm neck, the ring at 15 mm in is only the bump
+/// at the neck (x 149 to 156), not the whole middle line of each bar.
+fn area_contours(field: &Field, level: f64, tolerance: f64, exact: Option<&[Vec<P>]>) -> Vec<Vec<P>> {
+    // Shapes all closed: offset them exactly, as the original's engine does, so the corners
+    // where two offsets meet are sharp where the grid would round them off (the person's islands
+    // job: a ring meeting the offset of a round island at 7.6 degrees, 0.65 mm along the line short
+    // on the grid). The arcs are drawn within the engine's tolerance; points are put a quarter of
+    // a tool apart along straight stretches, so a ring can be started near the tool anywhere.
+    if let Some(loops) = exact {
+        let engine = tolerance * OFFSET_TOLERANCE_SHARE;
+        let arc_step = (8.0 * engine / level.max(field.cell)).sqrt().clamp(0.02, 0.5);
+        return crate::solid::shrunk(loops, level, arc_step).into_iter().map(|r| densify_loop(&r, field.cell * EXACT_RING_SPACING_CELLS)).collect();
+    }
+    let engine = tolerance * OFFSET_TOLERANCE_SHARE;
+    let tidy = engine * TIDY_SHARE;
+    let tol = field.cell * BACK_TRACK_SHARE;
+    let thinnest = tol.max(engine);
+    field
+        .contours(level)
+        .into_iter()
+        .map(|l| without_short_pieces(without_back_tracks(l, tol), tidy))
+        .filter(|l| {
+            let n = l.len();
+            let perimeter: f64 = (0..n).map(|k| (l[(k + 1) % n][0] - l[k][0]).hypot(l[(k + 1) % n][1] - l[k][1])).sum();
+            n >= 3 && signed_area(l).abs() > thinnest * perimeter
+        })
+        .collect()
+}
+
+/// The spacing of points along an exactly offset ring's straight stretches, in grid cells: 16, a
+/// quarter of the tool (the grid is 1/64 of it). Closer gives the same cuts with more points;
+/// none leaves a ring's start only at its corners, and rings stop linking.
+const EXACT_RING_SPACING_CELLS: f64 = 16.0;
+
+/// A closed loop without the points that lie on the straight line through their neighbours
+/// (within a millionth of a millimetre), its first point kept.
+fn without_straight_points(pts: Vec<P>) -> Vec<P> {
+    let n = pts.len();
+    if n < 4 {
+        return pts;
+    }
+    let on_line = |a: P, p: P, b: P| {
+        let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+        len > 0.0 && ((p[0] - a[0]) * (b[1] - a[1]) - (p[1] - a[1]) * (b[0] - a[0])).abs() / len < 1e-6 && (p[0] - a[0]) * (b[0] - p[0]) + (p[1] - a[1]) * (b[1] - p[1]) >= 0.0
+    };
+    let mut out = vec![pts[0]];
+    for k in 1..n {
+        if !on_line(*out.last().unwrap(), pts[k], pts[(k + 1) % n]) {
+            out.push(pts[k]);
+        }
+    }
+    out
+}
+
+/// A closed loop with points put in along its pieces, no further apart than `step`.
+fn densify_loop(l: &[P], step: f64) -> Vec<P> {
+    let n = l.len();
+    let mut out = Vec::new();
+    for k in 0..n {
+        let (a, b) = (l[k], l[(k + 1) % n]);
+        let m = (((b[0] - a[0]).hypot(b[1] - a[1]) / step).ceil() as usize).max(1);
+        for i in 0..m {
+            let t = i as f64 / m as f64;
+            out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+        }
+    }
+    out
+}
+
+/// A ring with an ear at each of its sharp corners: out along the middle line's branch into the
+/// corner, away from the ring's inside, until the distance from the walls has dropped by `drop`,
+/// and back. The branch is followed through the sharp corners of `between`, the exact offsets at
+/// levels going down to the end of the ear, each the nearest to the point before; with none near,
+/// the ear goes straight along the corner's bisector. The ring has the region on its left (outer
+/// loops anticlockwise, holes clockwise), so a corner the region turns round is a left turn.
+/// Corners turning less than `EAR_CORNER_DEGREES` are an offset arc's pieces and get none.
+fn with_corner_ears(ring: Vec<P>, drop: f64, between: &[Vec<Vec<P>>], pieces: &mut Vec<(Vec<P>, Vec<P>)>, reach_piece: f64, cell: f64) -> Vec<P> {
+    let n = ring.len();
+    if drop <= 0.0 || n < 3 {
+        return ring;
+    }
+    let sharp = |a: P, p: P, b: P| -> Option<([f64; 2], [f64; 2], f64)> {
+        let (la, lb) = ((p[0] - a[0]).hypot(p[1] - a[1]), (b[0] - p[0]).hypot(b[1] - p[1]));
+        if la < 1e-9 || lb < 1e-9 {
+            return None;
+        }
+        let (u, v) = ([(p[0] - a[0]) / la, (p[1] - a[1]) / la], [(b[0] - p[0]) / lb, (b[1] - p[1]) / lb]);
+        let turn = (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1]);
+        (turn >= EAR_CORNER_DEGREES.to_radians()).then_some((u, v, turn))
+    };
+    let mut out = Vec::with_capacity(n + 16);
+    for k in 0..n {
+        let (a, p, b) = (ring[(k + n - 1) % n], ring[k], ring[(k + 1) % n]);
+        out.push(p);
+        let Some((u, v, turn)) = sharp(a, p, b) else { continue };
+
+        let half = (std::f64::consts::PI - turn) / 2.0;
+        let (bx, by) = (u[0] - v[0], u[1] - v[1]);
+        let bl = bx.hypot(by);
+        if bl < 1e-9 || half.sin() < 1e-6 {
+            continue;
+        }
+        let reach = drop / half.sin();
+        let straight = [p[0] + bx / bl * reach, p[1] + by / bl * reach];
+        // Only at a real corner: a ring's way still turning by that much a tool's diameter before
+        // and after. A step in a ragged side (a thin ring along a font's outline in the person's
+        // logo in a saved job) goes on straight either side of it.
+        let along = |from: usize, back: bool, length: f64| {
+            let (mut gone, mut k) = (0.0, from);
+            loop {
+                let next = if back { (k + n - 1) % n } else { (k + 1) % n };
+                gone += (ring[next][0] - ring[k][0]).hypot(ring[next][1] - ring[k][1]);
+                k = next;
+                if gone >= length || k == from {
+                    return ring[k];
+                }
+            }
+        };
+        let span = 2.0 * (reach_piece - cell);
+        let (before, after) = (along(k, true, span), along(k, false, span));
+        let (wu, wv) = ([p[0] - before[0], p[1] - before[1]], [after[0] - p[0], after[1] - p[1]]);
+        let wide = (wu[0] * wv[1] - wu[1] * wv[0]).atan2(wu[0] * wv[0] + wu[1] * wv[1]);
+        if wide < EAR_CORNER_DEGREES.to_radians() {
+            continue;
+        }
+        // Along the branch: each level's sharp corner nearest the point before, no further than
+        // the straight way's step would take it, twice over.
+        let mut way: Vec<P> = Vec::new();
+        let mut at = p;
+        let each = reach / between.len().max(1) as f64;
+        for level in between {
+            let found = level
+                .iter()
+                .flat_map(|l| {
+                    let m = l.len();
+                    (0..m).filter(move |&j| sharp(l[(j + m - 1) % m], l[j], l[(j + 1) % m]).is_some()).map(move |j| l[j])
+                })
+                .map(|q| ((q[0] - at[0]).hypot(q[1] - at[1]), q))
+                .filter(|(d, _)| *d <= 2.0 * each)
+                .min_by(|x, y| x.0.total_cmp(&y.0));
+            match found {
+                Some((_, q)) => {
+                    way.push(q);
+                    at = q;
+                }
+                None => {
+                    way.clear();
+                    break;
+                }
+            }
+        }
+        if way.len() != between.len() || between.is_empty() {
+            // The branch bends too much to follow level by level: the leftover piece at this
+            // corner, if there is one, is the ear, all along its middle (a corner meeting an arc
+            // in the person's saved jobs: the saved ear runs 5 mm round the curve).
+            let found = pieces
+                .iter()
+                .enumerate()
+                .filter_map(|(k, (_, m))| m.iter().enumerate().map(|(j, q)| ((q[0] - p[0]).hypot(q[1] - p[1]), k, j)).min_by(|a, b| a.0.total_cmp(&b.0)))
+                .filter(|(d, _, _)| *d <= reach_piece)
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+            if let Some((_, k, _)) = found {
+                let (_, middle) = pieces.swap_remove(k);
+                // Not the piece's corners on the edge of what this ring clears: those are spurs
+                // off its middle, within the ring's reach already.
+                let reached = |q: &P| (0..n).any(|t| crate::geom::dist2_seg(*q, ring[t], ring[(t + 1) % n]) <= reach_piece * reach_piece);
+                let middle: Vec<P> = middle.into_iter().filter(|q| !reached(q)).collect();
+                let m = middle.len();
+                if let Some(j) = (0..m).min_by(|a, b| (middle[*a][0] - p[0]).hypot(middle[*a][1] - p[1]).total_cmp(&(middle[*b][0] - p[0]).hypot(middle[*b][1] - p[1]))) {
+                    out.extend((0..=m).map(|t| middle[(j + t) % m]));
+                    out.push(p);
+                    continue;
+                }
+            }
+            way = vec![straight];
+        }
+        out.extend(way.iter().copied());
+        out.extend(way.iter().rev().skip(1).copied());
+        out.push(p);
+    }
+    out
+}
+
+/// How many levels the branch into a corner is followed through for an ear.
+const EAR_LEVELS: usize = 4;
+
+/// The least a ring turns at a corner for it to get an ear (degrees): offset arcs turn by under
+/// 30 degrees a piece.
+const EAR_CORNER_DEGREES: f64 = 35.0;
+
+/// What lies past the reach of a ring at `level` (its level and the tool's `radius` in) and out
+/// of reach of the next, at `next_level` (its region grown by the radius): each piece's outline
+/// and its middle line, out and back. Slivers thinner than a grid cell are left out.
+fn leftover_pieces(field: &Field, loops: &[Vec<P>], level: f64, next_level: f64, radius: f64, tolerance: f64) -> Vec<(Vec<P>, Vec<P>)> {
+    let engine = tolerance * OFFSET_TOLERANCE_SHARE;
+    let arc = |l: f64| (8.0 * engine / l.max(field.cell)).sqrt().clamp(0.02, 0.5);
+    let beyond = crate::solid::shrunk(loops, level + radius, arc(level + radius));
+    let inner = crate::solid::shrunk(loops, next_level, arc(next_level));
+    if beyond.is_empty() {
+        return Vec::new();
+    }
+    let reached = if inner.is_empty() { Vec::new() } else { crate::solid::shrunk(&inner, -radius, arc(radius)) };
+    let pieces = crate::solid::overlay(&beyond, &reached, i_overlay::core::overlay_rule::OverlayRule::Difference);
+    let mut out = Vec::new();
+    for piece in pieces {
+        let Some(outline) = piece.first() else { continue };
+        let n = outline.len();
+        let perimeter: f64 = (0..n).map(|k| (outline[(k + 1) % n][0] - outline[k][0]).hypot(outline[(k + 1) % n][1] - outline[k][1])).sum();
+        if n < 3 || signed_area(outline).abs() <= field.cell * perimeter {
+            continue;
+        }
+        // Climbing the field can leave a small piece on its high side: what is outside the piece
+        // (by more than a grid cell) is not its middle.
+        let around = [Path::closed(outline.clone())];
+        let inside = |q: &P| inside_even_odd(around.iter(), *q) || (0..n).any(|k| crate::geom::dist2_seg(*q, outline[k], outline[(k + 1) % n]) <= field.cell * field.cell);
+        let middle: Vec<P> = middle_line_of(field, outline, true).into_iter().filter(inside).collect();
+        if middle.len() < 2 {
+            continue;
+        }
+        out.push((outline.clone(), without_repeats(crate::geom::simplify_loop(&middle, field.cell * STROKE_THIN_CELLS), field.cell)));
+    }
+    out
+}
+
+/// Of the leftover pieces, the middles of those the next ring's path, with its ears, comes within
+/// the tool's radius of somewhere but not all round.
+fn leftover_strokes(field: &Field, pieces: &[(Vec<P>, Vec<P>)], radius: f64, next: &[Vec<P>], whole: &[Vec<P>]) -> Vec<Vec<P>> {
+    let segments: Vec<(P, P)> = next.iter().flat_map(|r| (0..r.len()).map(move |k| (r[k], r[(k + 1) % r.len()]))).collect();
+    let near_next = |q: P| segments.iter().any(|(a, b)| crate::geom::dist2_seg(q, *a, *b) <= (radius * 1.02 + field.cell).powi(2));
+    // A whole loop the stroke along the middle before already cuts is the same piece again: the
+    // same size, round the same place.
+    let bounds = |l: &[P]| l.iter().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), q| ([lo[0].min(q[0]), lo[1].min(q[1])], [hi[0].max(q[0]), hi[1].max(q[1])]));
+    let same = |a: &[P], b: &[P]| {
+        let ((la, ha), (lb, hb)) = (bounds(a), bounds(b));
+        (0..2).all(|k| (la[k] - lb[k]).abs() <= field.cell * 2.0 && (ha[k] - hb[k]).abs() <= field.cell * 2.0)
+    };
+    pieces
+        .iter()
+        .filter(|(outline, _)| !outline.iter().all(|q| near_next(*q)) && !whole.iter().any(|w| same(w, outline)))
+        .map(|(_, middle)| middle.clone())
+        .collect()
+}
+
+/// A stroke with the trips it makes twice taken out: out to a point and back, then out to the
+/// same point and back again (the loop's two sides of a corner both land on the branch into it),
+/// is one trip. Points within `same` count as one place.
+fn without_repeats(pts: Vec<P>, same: f64) -> Vec<P> {
+    let near = |a: P, b: P| (a[0] - b[0]).hypot(a[1] - b[1]) <= same;
+    let mut out: Vec<P> = Vec::with_capacity(pts.len());
+    for p in pts {
+        // Here again where the tool was two points ago, having just gone out and back: the trip
+        // out and back is done again from here, so the last two points go.
+        let n = out.len();
+        if n >= 3 && near(p, out[n - 2]) && near(out[n - 1], out[n - 3]) {
+            out.truncate(n - 1);
+            continue;
+        }
+        if out.last().is_none_or(|q| !near(*q, p)) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// How far a pocket's stroke along the middle may wander from a straight line and still be
+/// drawn as one, in grid cells (the grid puts it a few hundredths of a millimetre either way).
+const STROKE_THIN_CELLS: f64 = 0.3;
+
+/// The offset engine's tolerance as a share of the toolpath's (`0x1407af400`, `0x1420e8d28`).
+const OFFSET_TOLERANCE_SHARE: f64 = 0.5;
+/// Pieces shorter than this share of the engine's tolerance are tidied away before offsetting
+/// (`0x1407af400` passes it to `0x14079cf50`; `0x1420fbbb0`).
+const TIDY_SHARE: f64 = 0.01;
+
+/// A closed loop with its pieces shorter than `shortest` taken out, as `0x14079cf50` tidies a
+/// contour: each such piece's ends are merged, again and again while any goes and at least three
+/// points are left.
+fn without_short_pieces(mut l: Vec<P>, shortest: f64) -> Vec<P> {
+    loop {
+        let n = l.len();
+        if n <= 3 {
+            return l;
+        }
+        let Some(k) = (0..n).find(|&k| (l[(k + 1) % n][0] - l[k][0]).hypot(l[(k + 1) % n][1] - l[k][1]) < shortest) else { return l };
+        l.remove((k + 1) % n);
+    }
+}
+
+/// How far off a line a contour may wander and still be going back along it, as a share of the
+/// grid's cell.
+const BACK_TRACK_SHARE: f64 = 0.05;
+
+/// A closed loop with the stretches where it goes out and comes straight back taken out: a point
+/// where the way turns right round (within `tol`) goes, again and again, all the way round.
+fn without_back_tracks(l: Vec<P>, tol: f64) -> Vec<P> {
+    let back = |a: P, p: P, b: P| {
+        let (u, v) = ([p[0] - a[0], p[1] - a[1]], [b[0] - p[0], b[1] - p[1]]);
+        let (lu, lv) = (u[0].hypot(u[1]), v[0].hypot(v[1]));
+        if lu < 1e-12 || lv < 1e-12 {
+            return true;
+        }
+        (u[0] * v[1] - u[1] * v[0]).abs() <= tol * lu.max(lv) && u[0] * v[0] + u[1] * v[1] < 0.0
+    };
+    let pass = |pts: Vec<P>| -> Vec<P> {
+        let mut out: Vec<P> = Vec::with_capacity(pts.len());
+        for p in pts {
+            while out.len() >= 2 && back(out[out.len() - 2], out[out.len() - 1], p) {
+                out.pop();
+            }
+            if out.last().is_none_or(|q| (q[0] - p[0]).hypot(q[1] - p[1]) > 1e-12) {
+                out.push(p);
+            }
+        }
+        out
+    };
+    // Twice, the second time from halfway round, so a run across the loop's start goes too.
+    let mut once = pass(l);
+    let half = once.len() / 2;
+    once.rotate_left(half);
+    let mut out = pass(once);
+    // The joint where it closes.
+    while out.len() >= 3 && back(out[out.len() - 1], out[0], out[1]) {
+        out.remove(0);
+    }
+    while out.len() >= 3 && back(out[out.len() - 2], out[out.len() - 1], out[0]) {
+        out.pop();
+    }
+    out
+}
+
+/// The circle a closed loop runs round, if it is one: a dozen points or more, all on it within a
+/// thousandth of its radius.
+fn round_loop(pts: &[P]) -> Option<(P, f64)> {
+    let n = pts.len();
+    if n < 12 {
+        return None;
+    }
+    let (a, b, c) = (pts[0], pts[n / 3], pts[2 * n / 3]);
+    let (bx, by, cx, cy) = (b[0] - a[0], b[1] - a[1], c[0] - a[0], c[1] - a[1]);
+    let d = 2.0 * (bx * cy - by * cx);
+    if d.abs() < 1e-12 {
+        return None;
+    }
+    let (b2, c2) = (bx * bx + by * by, cx * cx + cy * cy);
+    let centre = [a[0] + (cy * b2 - by * c2) / d, a[1] + (bx * c2 - cx * b2) / d];
+    let r = (a[0] - centre[0]).hypot(a[1] - centre[1]);
+    let tol = (r * 1e-3).max(1e-6);
+    pts.iter().all(|p| ((p[0] - centre[0]).hypot(p[1] - centre[1]) - r).abs() <= tol).then_some((centre, r))
 }
 
 /// Starts a closed loop at its point nearest to `target`, adding one there if need be.
@@ -1028,6 +1582,79 @@ fn distance_to_path(q: P, path: &Path) -> f64 {
     best
 }
 
+/// The tolerance the original works to in a toolpath, Burin keeping none of its own: its default,
+/// the same for 2D, 3D and V-Carve toolpaths, 0.0003937 inch, which is 0.01 mm (`0x1420fbb90`, set
+/// by `0x140896880`, kept within 0.00004 and 0.02 inch when read back, `0x140896930`). The saved
+/// test job has it (0.010 mm).
+const DEFAULT_TOLERANCE_INCH: f64 = 0.00039370078740000005;
+
+fn toolpath_tolerance(op: &Op) -> f64 {
+    if op.tool.metric { DEFAULT_TOLERANCE_INCH * 25.4 } else { DEFAULT_TOLERANCE_INCH }
+}
+
+/// The size of the circle cut where a place is only just as wide as the tool, as a share of the
+/// tool's radius (estimated from one saved job: 0.015 mm with a 3 mm tool).
+const SNUG_CIRCLE_SHARE: f64 = 0.01;
+
+/// The widest point of each part of the shape that is no wider than the tool but within
+/// `tolerance` of it: there the first ring, a radius in, comes to nothing, yet the tool fits. The
+/// grid's best point is refined on the shapes themselves.
+fn snug_spots(field: &Field, paths: &[Path], radius: f64, tolerance: f64) -> Vec<P> {
+    let (nx, ny, cell) = (field.nx, field.ny, field.cell);
+    let exact = |q: P| -> f64 {
+        if field.sample(q[0], q[1]) <= 0.0 {
+            return -1.0;
+        }
+        paths.iter().filter(|p| p.closed).map(|p| distance_to_path(q, p)).fold(f64::MAX, f64::min)
+    };
+    let mut seen = vec![false; nx * ny];
+    let mut out = Vec::new();
+    for start in 0..nx * ny {
+        if seen[start] || field.d[start] <= 0.0 {
+            continue;
+        }
+        let (mut best, mut widest) = (start, field.d[start]);
+        let mut todo = vec![start];
+        seen[start] = true;
+        while let Some(i) = todo.pop() {
+            if field.d[i] > widest {
+                (best, widest) = (i, field.d[i]);
+            }
+            let (ix, iy) = (i % nx, i / nx);
+            let around = [(ix + 1 < nx).then(|| i + 1), (ix > 0).then(|| i - 1), (iy + 1 < ny).then(|| i + nx), (iy > 0).then(|| i - nx)];
+            for j in around.into_iter().flatten() {
+                if !seen[j] && field.d[j] > 0.0 {
+                    seen[j] = true;
+                    todo.push(j);
+                }
+            }
+        }
+        let widest = widest as f64;
+        if widest >= radius || widest < radius - tolerance - 2.0 * cell {
+            continue;
+        }
+        // Climb to the true widest point from the grid's.
+        let mut p = [field.x0 + (best % nx) as f64 * cell, field.y0 + (best / nx) as f64 * cell];
+        let mut d = exact(p);
+        let mut stride = cell;
+        while stride > cell * 1e-4 {
+            let moved = (0..8).map(|k| {
+                let a = std::f64::consts::TAU * k as f64 / 8.0;
+                let q = [p[0] + stride * a.cos(), p[1] + stride * a.sin()];
+                (q, exact(q))
+            }).filter(|(_, dq)| *dq > d).max_by(|a, b| a.1.total_cmp(&b.1));
+            match moved {
+                Some((q, dq)) => (p, d) = (q, dq),
+                None => stride *= 0.5,
+            }
+        }
+        if d < radius && d > radius - tolerance {
+            out.push(p);
+        }
+    }
+    out
+}
+
 /// Whether a tool of radius `radius` following a loop stays off every shape.
 fn stays_clear(route: &[P], paths: &[Path], radius: f64) -> bool {
     let n = route.len();
@@ -1078,6 +1705,13 @@ fn tab_reach(op: &Op) -> f64 {
 }
 
 fn walk(e: &mut Emit, pts: &[P], closed: bool, z: f64, op: &Op, ramp_from: Option<f64>, tab_z: Option<f64>) {
+    walk_from(e, pts, closed, z, op, ramp_from, tab_z, 0.0, true);
+}
+
+/// Cuts along a loop as `walk` does, its tabs where they stand on the loop started `shift` further
+/// back, and with `recut` false leaving out the cut at depth along a ramp's stretch.
+#[allow(clippy::too_many_arguments)]
+fn walk_from(e: &mut Emit, pts: &[P], closed: bool, z: f64, op: &Op, ramp_from: Option<f64>, tab_z: Option<f64>, shift: f64, recut: bool) {
     let ramp_length = ramp_from.map_or(0.0, |from| ramp_distance(op, from, z));
     if pts.len() < 2 {
         return;
@@ -1095,12 +1729,7 @@ fn walk(e: &mut Emit, pts: &[P], closed: bool, z: f64, op: &Op, ramp_from: Optio
         return;
     }
     let tabs: Vec<(f64, f64)> = match tab_z {
-        Some(_) if op.tab_count > 0 => (0..op.tab_count)
-            .map(|i| {
-                let mid = total * (i as f64 + 0.5) / op.tab_count as f64;
-                (mid - tab_reach(op) / 2.0, mid + tab_reach(op) / 2.0)
-            })
-            .collect(),
+        Some(_) if tabs_wanted(op) => tab_spans(pts, total, op, shift),
         _ => Vec::new(),
     };
     let ramp_len = ramp_length.min(total);
@@ -1121,8 +1750,7 @@ fn walk(e: &mut Emit, pts: &[P], closed: bool, z: f64, op: &Op, ramp_from: Optio
     };
     let mut breaks: Vec<f64> = stations.clone();
     for (a, b) in &tabs {
-        breaks.push(*a);
-        breaks.push(*b);
+        breaks.extend([*a, *b].into_iter().filter(|s| *s > 0.0 && *s < total));
     }
     if ramp_len > 0.0 {
         breaks.push(ramp_len);
@@ -1159,7 +1787,7 @@ fn walk(e: &mut Emit, pts: &[P], closed: bool, z: f64, op: &Op, ramp_from: Optio
         prev = Some(s);
     }
     // A ramp on a closed loop leaves its first stretch shallow, so cut it again at depth, tabs left standing.
-    if closed && ramp_len > 0.0 {
+    if recut && closed && ramp_len > 0.0 {
         let flat = |s: f64, after_tab_edge: bool| -> f64 {
             let eps = if after_tab_edge { 1e-9 } else { -1e-9 };
             match tab_z {
@@ -1649,7 +2277,7 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
     let extra = if separate_last { op.last_allowance } else { 0.0 };
     let margin = radius + extra + op.tool.dia;
     // Each set of shapes on its own grid; a set inside another shape counts its inside the other way round.
-    let fields: Vec<(Field, bool)> = if side == Side::On {
+    let fields: Vec<(Field, bool, Vec<Vec<P>>)> = if side == Side::On {
         Vec::new()
     } else {
         regions(&op.paths, 2.0 * margin, false)
@@ -1658,9 +2286,17 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                 let shapes: Vec<Path> = set.iter().map(|i| op.paths[*i].clone()).collect();
                 let others = op.paths.iter().enumerate().filter(|(i, p)| p.closed && !set.contains(i)).map(|(_, p)| p);
                 let flipped = inside_even_odd(others, shapes[0].pts[0]);
-                Some((Field::build_to(&shapes, margin, 900, op.tool.dia / 64.0)?, flipped))
+                let loops: Vec<Vec<P>> = shapes.iter().map(|p| p.pts.clone()).collect();
+                Some((Field::build_to(&shapes, margin, 900, op.tool.dia / 64.0)?, flipped, loops))
             })
             .collect()
+    };
+    // The offsets worked out exactly, as the original's engine does (`0x1407af400`): straight
+    // stretches stay single lines, so a loop's start falls on the end of one, as the original
+    // starts on a span's start (`0x14079b600`). Grown or shrunk by `inset` (positive inward).
+    let exact_offset = |loops: &[Vec<P>], inset: f64| -> Vec<Vec<P>> {
+        let engine = toolpath_tolerance(op) * OFFSET_TOLERANCE_SHARE;
+        crate::solid::shrunk(loops, inset, (8.0 * engine / inset.abs().max(1e-3)).sqrt().clamp(0.02, 0.5))
     };
     // Square corners are worked out shape by shape, which only suits shapes not inside each other.
     let closed: Vec<&Path> = op.paths.iter().filter(|p| p.closed).collect();
@@ -1677,13 +2313,17 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                 out.extend(square.unwrap_or_default().into_iter().map(|l| (oriented(l, !op.climb), true)));
             }
             Side::Outside => {
-                for (f, flipped) in &fields {
-                    out.extend(f.contours(if *flipped { off } else { -off }).into_iter().map(|l| (oriented(l, !op.climb), true)));
+                for (_, flipped, loops) in &fields {
+                    let level = if *flipped { off } else { -off };
+                    let found = exact_offset(loops, level);
+                    out.extend(found.into_iter().map(|l| (oriented(l, !op.climb), true)));
                 }
             }
             Side::Inside => {
-                for (f, flipped) in &fields {
-                    out.extend(f.contours(if *flipped { -off } else { off }).into_iter().map(|l| (oriented(l, op.climb), true)));
+                for (_, flipped, loops) in &fields {
+                    let level = if *flipped { -off } else { off };
+                    let found = exact_offset(loops, level);
+                    out.extend(found.into_iter().map(|l| (oriented(l, op.climb), true)));
                 }
             }
             _ => {}
@@ -1705,8 +2345,10 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
     };
     let tab_top = -(op.cut_depth - op.tab_thickness);
     let start = if op.start_at == StartAt::Keep && op.start_mid_span { StartAt::Optimize } else { op.start_at };
-    // With leads or ramps, the start isn't moved to suit the tool: only a chosen point moves it.
-    let start = if start == StartAt::Optimize && (op.lead || op.ramp) { StartAt::Keep } else { start };
+    // With leads, the start isn't moved to suit the tool: only a chosen point moves it
+    // (`0x140855cf0`). Ramps don't stop it: there the starts are moved in a first run that only
+    // counts the moves, on the loops themselves, and kept (`0x140857080`).
+    let start = if start == StartAt::Optimize && op.lead { StartAt::Keep } else { start };
     // The order is settled with each shape starting where it was drawn to, and only then is
     // the start moved.
     let settle = |mut items: Vec<(Vec<P>, bool)>, from: [f64; 3]| {
@@ -1745,6 +2387,9 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                 }
             }
         }
+        // Every closed loop of the pass, which a lead mustn't cross either (`0x140842ba0` hands
+        // the whole group to each loop's lead fitting).
+        let group: Vec<Vec<P>> = ordered.iter().filter(|(_, c)| *c).map(|(p, _)| p.clone()).collect();
         for (mut pts, closed) in ordered {
             let mut route = pts.clone();
             if closed {
@@ -1758,7 +2403,12 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
             let side_sign = away_from_part(&pts, closed, side);
             // A lead that would reach into the part is shortened, or left out.
             let lead_length = if op.lead && op.lead_distance > 0.0 && pts.len() >= 2 {
-                if closed { fitted_lead(&pts, side, side_sign, op) } else { Some(op.lead_distance) }
+                if closed {
+                    let others: Vec<&[P]> = group.iter().filter(|g| **g != pts).map(|g| g.as_slice()).collect();
+                    fitted_lead(&pts, &others, side, side_sign, op)
+                } else {
+                    Some(op.lead_distance)
+                }
             } else {
                 None
             };
@@ -1774,7 +2424,45 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                 if closed {
                     let behind = unit_dir(along(&route, total - heading), route[0]);
                     let across = unit_dir(along(&route, total - heading), along(&route, heading));
-                    if ahead[0] * behind[0] + ahead[1] * behind[1] > 20f64.to_radians().cos() { across } else { ahead }
+                    // Not smooth through the start: the way its first piece sets off. On a circle
+                    // drawn with few points (the 60 plate's grouped holes turn 20° a point), that
+                    // is the first step turned back by its share of the turn: the original's lead
+                    // then goes straight to the hole's middle, as off the true arc.
+                    let signed_turn = |k: usize| -> Option<f64> {
+                        let (a, b, c) = (pts.get(k.checked_sub(1)?)?, pts.get(k)?, pts.get(k + 1)?);
+                        let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+                        (u[0].hypot(u[1]) > 1e-9 && v[0].hypot(v[1]) > 1e-9).then(|| (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1]))
+                    };
+                    let on_arc = match (signed_turn(1), signed_turn(2)) {
+                        (Some(t1), Some(t2)) if t1.abs() > 0.5f64.to_radians() && t1.abs() < 45f64.to_radians() && (t1 - t2).abs() < 0.2 * t1.abs() + 0.5f64.to_radians() => Some(t1),
+                        _ => None,
+                    }
+                    // Only on a whole circle: every point turns the same way, by about the same.
+                    .filter(|t1| {
+                        let n = pts.len();
+                        let turns: Vec<f64> = (0..n)
+                            .filter_map(|k| {
+                                let (a, b, c) = (pts[(k + n - 1) % n], pts[k], pts[(k + 1) % n]);
+                                let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+                                (u[0].hypot(u[1]) > 1e-6 && v[0].hypot(v[1]) > 1e-6).then(|| (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1]))
+                            })
+                            .collect();
+                        let whole: f64 = turns.iter().sum();
+                        n >= 6 && (whole.abs() - std::f64::consts::TAU).abs() < 0.05 && turns.iter().all(|t| t.signum() == t1.signum() && t.abs() < 2.0 * t1.abs() + 1f64.to_radians())
+                    });
+                    if ahead[0] * behind[0] + ahead[1] * behind[1] > 20f64.to_radians().cos() {
+                        across
+                    } else if let Some(t) = on_arc {
+                        // On an arc of radius R, chords of lengths l0 and l1 turn (l0 + l1) / 2R
+                        // from one to the next, and the first lies l0 / 2R off the tangent.
+                        let d = unit_dir(pts[0], pts[1]);
+                        let (l0, l1) = ((pts[1][0] - pts[0][0]).hypot(pts[1][1] - pts[0][1]), (pts[2][0] - pts[1][0]).hypot(pts[2][1] - pts[1][1]));
+                        let back = t * l0 / (l0 + l1).max(1e-12);
+                        let (c, s) = ((-back).cos(), (-back).sin());
+                        [d[0] * c - d[1] * s, d[0] * s + d[1] * c]
+                    } else {
+                        ahead
+                    }
                 } else {
                     ahead
                 }
@@ -1783,6 +2471,8 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
             };
             let lead_in = if has_lead { lead_points_for(pts[0], set_off, side_sign, op, false, lead_length) } else { Vec::new() };
             let mut previous = -op.start_depth;
+            // How far on the loop now starts from where its tabs were spaced from.
+            let mut shift = 0.0;
             for (i, z) in pass_zs.iter().enumerate() {
                 // Back the way it came, from where the last pass ended.
                 if i > 0 && op.zigzag_open && !closed && !has_lead {
@@ -1792,7 +2482,7 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                 let tab_z = (op.tabs && closed && *z < tab_top).then_some(tab_top);
                 // Moves added at full depth near the start must stop short of the first tab.
                 let before_tab = match tab_z {
-                    Some(_) if op.tab_count > 0 => (total / (2.0 * op.tab_count as f64) - tab_reach(op) / 2.0).max(0.0),
+                    Some(_) if tabs_wanted(op) => tab_spans(&pts, total, op, shift).into_iter().filter(|(_, b)| *b > 0.0).map(|(a, _)| a.max(0.0)).fold(f64::MAX, f64::min),
                     _ => f64::MAX,
                 };
                 let depth = (previous - *z).abs();
@@ -1804,6 +2494,9 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                 let ramp_from = (wants_ramp && !ramp_on_lead && !zigzag).then_some(previous);
                 let lead_z = if ramp_on_lead || (wants_ramp && has_lead) { previous } else { *z };
                 let plunge_z = if zigzag { previous } else { ramp_from.unwrap_or(lead_z) };
+                // A loop that starts on a tab comes down only to the tab's top there.
+                let on_tab = closed && !has_lead && tab_z.is_some() && tabs_wanted(op) && tab_spans(&pts, total, op, shift).iter().any(|(a, b)| *a < 0.0 && *b > 0.0);
+                let plunge_z = if on_tab { plunge_z.max(tab_top) } else { plunge_z };
                 if has_lead {
                     e.go_to(lead_in[0][0], lead_in[0][1], plunge_z);
                     // A zig-zag on the lead: once along 95% of it and back, then the lead at full depth
@@ -1834,16 +2527,38 @@ fn profile_like(e: &mut Emit, op: &Op, side: Side) {
                     e.feed(pts[0][0], pts[0][1], plunge_z);
                 }
                 if zigzag {
-                    // Forward going part of the way down, and back for the next part.
+                    // Forward along the cut going part of the way down, and back along it for the
+                    // next part (`0x140857ce0`: the leg's pieces, then the same pieces reversed).
                     let (leg, times) = zig_zag(op, depth);
-                    let turn = along(&route, leg.min(total).min(before_tab));
+                    let leg = leg.min(total).min(before_tab);
+                    let way = route_to(&route, leg);
                     let drop = (previous - *z) / (2 * times) as f64;
+                    let share = |s: f64| if leg > 0.0 { s / leg } else { 1.0 };
                     for k in 0..times {
-                        e.feed(turn[0], turn[1], previous - drop * (2 * k + 1) as f64);
-                        e.feed(pts[0][0], pts[0][1], previous - drop * (2 * k + 2) as f64);
+                        for (q, s) in way.iter().skip(1) {
+                            e.feed(q[0], q[1], previous - drop * (2 * k) as f64 - drop * share(*s));
+                        }
+                        for (q, s) in way.iter().rev().skip(1) {
+                            e.feed(q[0], q[1], previous - drop * (2 * k + 1) as f64 - drop * (1.0 - share(*s)));
+                        }
                     }
                 }
-                walk(e, &pts, closed, *z, op, ramp_from, tab_z);
+                let last_pass = i + 1 == pass_zs.len();
+                // A ramp the whole way round goes on down with no lap between depths.
+                let recut = !(closed && ramp_from.is_some() && ramps_whole_way(op) && !last_pass);
+                walk_from(e, &pts, closed, *z, op, ramp_from, tab_z, shift, recut);
+                // The loop goes on from where its ramp ended (`0x1408566f0` starts it again at
+                // the point nearest there, `0x14079bc50`): the next ramp follows on, with no move
+                // across back to the start.
+                if let (Some(from), true, false) = (ramp_from, closed, last_pass) {
+                    let s = ramp_distance(op, from, *z).min(total);
+                    if s > 0.0 && s < total {
+                        pts = restart_at(&pts, s);
+                        route = pts.clone();
+                        route.push(pts[0]);
+                        shift = (shift + s).rem_euclid(total);
+                    }
+                }
                 previous = *z;
                 if has_lead || !closed || i + 1 == pass_zs.len() {
                     // Running on past the start leaves no mark where the cut closes.
@@ -2121,6 +2836,90 @@ pub const RING_LINK_STEPS: f64 = 1.001;
 /// just touches a level, and the original's offsets don't.
 pub const TINY_RING_SHARE: f64 = 0.25;
 
+
+/// A loop just inside an outline drawn onto the shape's middle line: each point climbs straight
+/// in, away from the outline, and stops where its way turns, on the middle line, so the points
+/// near a corner land along the line into that corner instead of sliding on to the deepest part.
+fn onto_middle_line(field: &Field, ring: &[P]) -> Vec<P> {
+    middle_line_of(field, ring, false)
+}
+
+/// The same, with `keep_sharp`: the loop's sharp corners (turning `EAR_CORNER_DEGREES` or more)
+/// stay where they are. An exact offset's sharp corners lie on the middle line already, at the
+/// ends of its branches; climbing from there runs up the branch and leaves its end uncut.
+fn middle_line_of(field: &Field, ring: &[P], keep_sharp: bool) -> Vec<P> {
+    let h = field.cell * 0.5;
+    let grad = |q: P| {
+        let gx = field.sample(q[0] + h, q[1]) - field.sample(q[0] - h, q[1]);
+        let gy = field.sample(q[0], q[1] + h) - field.sample(q[0], q[1] - h);
+        let len = gx.hypot(gy);
+        if len > 1e-12 { [gx / len, gy / len] } else { [0.0, 0.0] }
+    };
+    let pace = field.cell * 0.25;
+    let turned = MIDDLE_TURN_DEGREES.to_radians().cos();
+    // A point every grid cell along the loop: a long straight side has none between its ends.
+    let m = ring.len();
+    let sharp = |k: usize| {
+        let (a, p, b) = (ring[(k + m - 1) % m], ring[k], ring[(k + 1) % m]);
+        let (u, v) = ([p[0] - a[0], p[1] - a[1]], [b[0] - p[0], b[1] - p[1]]);
+        keep_sharp && u[0].hypot(u[1]) > 1e-9 && v[0].hypot(v[1]) > 1e-9 && (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1]).abs() >= EAR_CORNER_DEGREES.to_radians()
+    };
+    let mut dense: Vec<(P, bool)> = Vec::with_capacity(ring.len());
+    for k in 0..m {
+        let (a, b) = (ring[k], ring[(k + 1) % m]);
+        let n = ((b[0] - a[0]).hypot(b[1] - a[1]) / field.cell).ceil().max(1.0) as usize;
+        let corner = sharp(k);
+        dense.extend((0..n).map(|i| {
+            let t = i as f64 / n as f64;
+            ([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], i == 0 && corner)
+        }));
+    }
+    let mut out: Vec<P> = Vec::with_capacity(dense.len());
+    for &(p, stays) in &dense {
+        if stays {
+            out.push(p);
+            continue;
+        }
+        let start = grad(p);
+        let (mut q, mut v) = (p, field.sample(p[0], p[1]));
+        for _ in 0..1_000_000 {
+            let g = grad(q);
+            if g[0] * start[0] + g[1] * start[1] < turned {
+                break;
+            }
+            let next = [q[0] + g[0] * pace, q[1] + g[1] * pace];
+            let w = field.sample(next[0], next[1]);
+            if w <= v {
+                break;
+            }
+            (q, v) = (next, w);
+        }
+        if out.last().is_none_or(|l: &P| (l[0] - q[0]).hypot(l[1] - q[1]) > field.cell * 0.5) {
+            out.push(q);
+        }
+    }
+    while out.len() < 2 {
+        out.push(out.last().copied().unwrap_or(ring[0]));
+    }
+    out
+}
+
+/// How far the way in may turn before a point counts as on the middle line.
+const MIDDLE_TURN_DEGREES: f64 = 25.0;
+
+
+/// Whether the field is higher inside this level's loop than on it: a loop round a part of the
+/// pocket, not round a hole in it.
+fn encloses_higher(field: &Field, ring: &[P], level: f64) -> bool {
+    let (a, b) = (ring[0], ring[1]);
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let len = dx.hypot(dy).max(1e-12);
+    let mid = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+    let d = field.cell * 0.5;
+    let around = [Path::closed(ring.to_vec())];
+    [1.0, -1.0].iter().map(|s| [mid[0] - dy / len * d * s, mid[1] + dx / len * d * s]).find(|q| inside_even_odd(around.iter(), *q)).is_some_and(|q| field.sample(q[0], q[1]) > level)
+}
+
 /// How much of the way on, in stepovers, is left out at each end when looking for crossings
 /// (`0x1407b5500`: the stepover times 0.01, `0x1420fbbb0`).
 pub const RING_LINK_TRIM: f64 = 0.01;
@@ -2212,7 +3011,13 @@ fn pocket_set(e: &mut Emit, op: &Op) {
     let radius = op.tool.dia / 2.0 + op.allowance;
     let step = step_of(op);
     let Some(field) = Field::build_to(&op.paths, op.tool.dia, 900, op.tool.dia / 64.0) else { return };
+    let exact_loops: Option<Vec<Vec<P>>> = op.paths.iter().all(|p| p.closed).then(|| op.paths.iter().map(|p| p.pts.clone()).collect());
+    let exact = exact_loops.as_deref();
     let zs = depths(op);
+    // Places only just as wide as the tool, a hole of its own diameter say, where the first ring
+    // shrinks to nothing: the original still cuts them (its pocket, `0x14081fa20`, tests the widest
+    // point against the radius less the tolerance, `0x1407c9a60`, `0x1407c98f0`).
+    let snug = if op.rest_only { Vec::new() } else { snug_spots(&field, &op.paths, radius, toolpath_tolerance(op)) };
     let (lo, hi) = bbox(&op.paths).unwrap();
     // Cuts one ring from its point nearest the tool. With `may_link`, the tool goes on at depth from
     // the ring before, as the original links a ring to the next (`0x1407b5200`, `0x1407b5500`): when
@@ -2233,10 +3038,23 @@ fn pocket_set(e: &mut Emit, op: &Op) {
                 // corners a hair apart on either side of a straight slot, and the nearest by a
                 // hair can be the one across the ring just cut.
                 let tie = far(&pts[nearest]) + 0.5 * step;
-                let reachable = (0..pts.len())
+                // Of those, a node if there is one: the original's rings are lines and arcs, and a
+                // ring starts where one of them does (`0x14079b600` picks among span starts). The
+                // points only put in along a straight stretch are passed over.
+                let n = pts.len();
+                let node = |k: usize| {
+                    let (a, p, b) = (pts[(k + n - 1) % n], pts[k], pts[(k + 1) % n]);
+                    let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+                    len <= 0.0 || ((p[0] - a[0]) * (b[1] - a[1]) - (p[1] - a[1]) * (b[0] - a[0])).abs() / len >= 1e-6
+                };
+                let candidates: Vec<usize> = (0..n)
                     .filter(|k| far(&pts[*k]) <= tie && !matches!(link, Link::No))
                     .filter(|k| !crosses_rings([last[0], last[1]], pts[*k], walls, step * RING_LINK_TRIM))
-                    .min_by(|a, b| far(&pts[*a]).total_cmp(&far(&pts[*b])));
+                    .collect();
+                let closest = |ks: &mut dyn Iterator<Item = usize>| ks.min_by(|a, b| far(&pts[*a]).total_cmp(&far(&pts[*b])));
+                // A node only where the tool still goes on to it without lifting.
+                let goes_on = |k: usize| !matches!(link, Link::Near) || far(&pts[k]) <= step * RING_LINK_STEPS;
+                let reachable = closest(&mut candidates.iter().copied().filter(|k| node(*k) && goes_on(*k))).or_else(|| closest(&mut candidates.iter().copied()));
                 pts.rotate_left(reachable.unwrap_or(nearest));
             }
         }
@@ -2252,7 +3070,7 @@ fn pocket_set(e: &mut Emit, op: &Op) {
             let steps = ((across / field.cell).ceil() as usize).max(1);
             (0..=steps).all(|k| {
                 let t = k as f64 / steps as f64;
-                field.sample(last[0] + (pts[0][0] - last[0]) * t, last[1] + (pts[0][1] - last[1]) * t) >= radius - field.cell * 0.1
+                field.sample(last[0] + (pts[0][0] - last[0]) * t, last[1] + (pts[0][1] - last[1]) * t) >= radius - field.cell * 0.5
             })
         };
         if stays_down {
@@ -2260,6 +3078,8 @@ fn pocket_set(e: &mut Emit, op: &Op) {
         } else {
             e.go_to(pts[0][0], pts[0][1], ramp.unwrap_or(z));
         }
+        // The points only put in to choose the start from go again, its start kept.
+        let pts = without_straight_points(pts);
         walk(e, &pts, true, z, op, ramp, None);
     };
     // The nearest of these rings to where the tool is.
@@ -2270,8 +3090,8 @@ fn pocket_set(e: &mut Emit, op: &Op) {
     };
     // One level's rings, nearest first; only the first may go on from what came before.
     let ring = |e: &mut Emit, level: f64, z: f64, from: f64| {
-        let mut rings = field.contours(level);
-        let inner = field.contours(level + step);
+        let mut rings = area_contours(&field, level, toolpath_tolerance(op), exact);
+        let inner = area_contours(&field, level + step, toolpath_tolerance(op), exact);
         // Kept apart from `rings`, which empties as they're cut.
         let owned: Vec<Vec<P>> = rings.iter().chain(&inner).cloned().collect();
         let walls: Vec<&[P]> = owned.iter().map(|w| w.as_slice()).collect();
@@ -2287,18 +3107,110 @@ fn pocket_set(e: &mut Emit, op: &Op) {
     // after one of its own, so the tool goes on from the last child to its parent and lifts only to
     // start another branch, as the original chains rings parent to child (`0x1407b99b0`).
     let ring_tree = |e: &mut Emit, levels: &[f64], z: f64, from: f64| {
-        let rings: Vec<Vec<Vec<P>>> = levels.iter().map(|l| field.contours(*l)).collect();
+        let mut rings: Vec<Vec<Vec<P>>> = levels.iter().map(|l| area_contours(&field, *l, toolpath_tolerance(op), exact)).collect();
+        // Each ring after the first reaches into its sharp corners, out to where the ring before
+        // stopped clearing (saved jobs: ears 1.96 mm long at the corners of a slot's second ring
+        // with a 94% stepover, their tips 3.18 from the walls, the first ring's level and the
+        // tool's radius).
+        // The pieces each ring after the first leaves for strokes of their own.
+        let mut leftovers: Vec<Vec<(Vec<P>, Vec<P>)>> = vec![Vec::new(); levels.len()];
+        if let Some(loops) = exact {
+            let tolerance = toolpath_tolerance(op);
+            for i in 1..levels.len() {
+                let target = levels[i - 1] + op.tool.dia / 2.0;
+                if target >= levels[i] {
+                    continue;
+                }
+                // The middle line's branch into a corner, where it bends (a corner meeting a round
+                // end): the sharp corners of the exact offsets at levels between, outermost last.
+                let between: Vec<Vec<Vec<P>>> = (1..=EAR_LEVELS).map(|j| {
+                    let level = levels[i] - (levels[i] - target) * j as f64 / EAR_LEVELS as f64;
+                    let engine = tolerance * OFFSET_TOLERANCE_SHARE;
+                    crate::solid::shrunk(loops, level, (8.0 * engine / level.max(field.cell)).sqrt().clamp(0.02, 0.5))
+                }).collect();
+                let mut pieces = leftover_pieces(&field, loops, levels[i - 1], levels[i], op.tool.dia / 2.0, tolerance);
+                for r in rings[i].iter_mut() {
+                    *r = with_corner_ears(std::mem::take(r), levels[i] - target, &between, &mut pieces, op.tool.dia / 2.0 + field.cell, field.cell);
+                }
+                leftovers[i] = pieces;
+            }
+        }
+        // Per level, where the strokes along the middle begin among its rings.
+        let mut stroke_from: Vec<usize> = vec![usize::MAX; rings.len()];
+        // Where a ring leaves material, further from the walls than its level and the tool's
+        // radius, in a part too narrow for the next ring, the original runs along the middle of
+        // what's left, out and back (saved jobs: a bend in a band, rings at 1.59 and 4.55 mm from
+        // the walls, a 16 mm stroke where the middle is 3.18 to 3.44 mm in; the meeting of three
+        // arms in a logo, a 0.8 mm stroke where they're 5.18 to 5.39 mm in; a single plunge in
+        // the middle of a round pocket). That level's loops with no next ring inside give it,
+        // drawn in onto the middle line; it is cut as one of the next level's rings, so the tree
+        // chains it as it does them.
+        for i in 0..levels.len() {
+            let half = levels[i] + op.tool.dia / 2.0;
+            // Exact when the shapes are closed: the loop's corners, where the strokes' ears end,
+            // are sharp there and rounded off on the grid (the person's desk, "ruban leds": a
+            // stroke round a corner of the slot 0.35 and 0.53 mm short at its two ends).
+            let whole: Vec<Vec<P>> = area_contours(&field, half, toolpath_tolerance(op), exact)
+                .into_iter()
+                .filter(|l| l.len() >= 3 && encloses_higher(&field, l, half))
+                .filter(|l| {
+                    let around = [Path::closed(l.clone())];
+                    // No next ring inside it, nor round it (with a stepover under the tool's
+                    // radius the next ring lies between this one and the loop, and clears it).
+                    rings.get(i + 1).is_none_or(|next| {
+                        !next.iter().any(|n| inside_even_odd(around.iter(), n[0]) || inside_even_odd(std::iter::once(&Path::closed(n.clone())), l[0]))
+                    })
+                })
+                .collect();
+            let strokes: Vec<Vec<P>> = whole
+                .iter()
+                .map(|l| {
+                    // Into the corners too, as the saved jobs' strokes do: the loop's corners lie on the
+                    // middle line's branches into the corners, where the ring before stops
+                    // clearing (its level and the tool's radius in), and stay there.
+                    without_repeats(crate::geom::simplify_loop(&middle_line_of(&field, l, exact.is_some()), field.cell * STROKE_THIN_CELLS), field.cell)
+                })
+                .collect();
+            // Where there is a next ring: the pieces the ring before leaves and the next ring's
+            // tool doesn't reach either, each cut along its middle (the person's desk, "ruban
+            // leds": a curved stroke 8 mm long in a slot's rounded corner, where the second
+            // ring doesn't go, its ends 3.20 from the walls). The pieces at the next ring's
+            // corners are left to its ears, which clear them.
+            let mut strokes = strokes;
+            if let (Some(next), Some(pieces)) = (rings.get(i + 1).filter(|_| exact.is_some()), leftovers.get(i + 1)) {
+                strokes.extend(leftover_strokes(&field, pieces, op.tool.dia / 2.0, next, &whole));
+            }
+            if strokes.is_empty() {
+                continue;
+            }
+            if i + 1 == rings.len() {
+                rings.push(Vec::new());
+            }
+            stroke_from.resize(rings.len(), usize::MAX);
+            stroke_from[i + 1] = stroke_from[i + 1].min(rings[i + 1].len());
+            rings[i + 1].extend(strokes);
+        }
+        let is_stroke = |i: usize, j: usize| stroke_from.get(i).is_some_and(|from| j >= *from);
         let mut children: Vec<Vec<Vec<usize>>> = rings.iter().map(|r| vec![Vec::new(); r.len()]).collect();
+        // The strokes along the middle that follow each ring, cut once it is: after the rings round
+        // a round pocket's centre, after the ring round a band's bend, as in the saved jobs (the
+        // original walks its tree of rings from the outside in, `0x1407b99b0`, a stroke starting
+        // a chain of its own).
+        let mut after: Vec<Vec<Vec<usize>>> = rings.iter().map(|r| vec![Vec::new(); r.len()]).collect();
         for i in 1..rings.len() {
             let turns: Vec<bool> = rings[i - 1].iter().map(|r| signed_area(r) > 0.0).collect();
             for (j, ring) in rings[i].iter().enumerate() {
                 let p = ring[0];
                 let gap = |k: &usize| rings[i - 1][*k].iter().map(|q| (q[0] - p[0]).hypot(q[1] - p[1])).fold(f64::MAX, f64::min);
                 let turn = signed_area(ring) > 0.0;
-                let all = 0..rings[i - 1].len();
+                let all = (0..rings[i - 1].len()).filter(|k| !is_stroke(i - 1, *k));
                 let parent = all.clone().filter(|k| turns[*k] == turn).min_by(|a, b| gap(a).total_cmp(&gap(b))).or_else(|| all.min_by(|a, b| gap(a).total_cmp(&gap(b))));
                 if let Some(k) = parent {
-                    children[i - 1][k].push(j);
+                    if is_stroke(i, j) {
+                        after[i - 1][k].push(j);
+                    } else {
+                        children[i - 1][k].push(j);
+                    }
                 }
             }
         }
@@ -2333,6 +3245,8 @@ fn pocket_set(e: &mut Emit, op: &Op) {
             let r = roots.swap_remove(nearest_of(e, &roots.iter().map(|k| &top[*k]).collect::<Vec<_>>()));
             let mut stack: Vec<(usize, usize, Vec<usize>)> = vec![(0, r, children[0][r].clone())];
             let mut first_ring = true;
+            // The branch's strokes, cut once all its rings are.
+            let mut waiting: Vec<(usize, usize)> = Vec::new();
             while let Some(at) = stack.len().checked_sub(1) {
                 let (i, j) = (stack[at].0, stack[at].1);
                 if stack[at].2.is_empty() {
@@ -2341,7 +3255,31 @@ fn pocket_set(e: &mut Emit, op: &Op) {
                     // which was just cut (`0x1407b5500` looks at the two rings and the outer one's
                     // other inner rings).
                     let walls: Vec<&[P]> = std::iter::once(&rings[i][j]).chain(children[i][j].iter().map(|c| &rings[i + 1][*c])).map(|w| w.as_slice()).collect();
-                    let link = if children[i][j].is_empty() { Link::Near } else { Link::Clear };
+                    // Only a parent's last child goes on into it (`0x1407b5200`: no next sibling,
+                    // the parent not taken yet, both closed and turning the same way). A ring
+                    // with a stroke along its middle has that stroke as its last child, so its
+                    // inner ring lifts before it, as in the saved band pockets.
+                    // A stroke along the middle with some length is the ring's last child: it is
+                    // cut now, after the ring's other children, and the ring goes on from it. A
+                    // single plunge isn't a closed ring and never goes on into one: it waits for
+                    // the end of the branch.
+                    let (strokes, plunges): (Vec<usize>, Vec<usize>) = after[i][j].iter().partition(|s| {
+                        let ring = &rings[i + 1][**s];
+                        ring.iter().any(|q| (q[0] - ring[0][0]).hypot(q[1] - ring[0][1]) > field.cell)
+                    });
+                    waiting.extend(plunges.iter().map(|s| (i + 1, *s)));
+                    let mut left = strokes.clone();
+                    while !left.is_empty() {
+                        let k = left.swap_remove(nearest_of(e, &left.iter().map(|s| &rings[i + 1][*s]).collect::<Vec<_>>()));
+                        cut_ring(e, rings[i + 1][k].clone(), z, from, Link::No, &[rings[i + 1][k].as_slice()], None);
+                    }
+                    let link = if !strokes.is_empty() {
+                        Link::Near
+                    } else if children[i][j].is_empty() {
+                        Link::Near
+                    } else {
+                        Link::Clear
+                    };
                     // An innermost ring that is hardly more than a point, where the grid meets a level
                     // at the very middle of a stroke, isn't cut on its own: the passes around it
                     // reach it, and whatever they leave is cleaned from them afterwards (`tuck_spots`).
@@ -2360,6 +3298,11 @@ fn pocket_set(e: &mut Emit, op: &Op) {
                     let c = stack[at].2.swap_remove(pick);
                     stack.push((i + 1, c, children[i + 1][c].clone()));
                 }
+            }
+            while !waiting.is_empty() {
+                let k = nearest_of(e, &waiting.iter().map(|(i, j)| &rings[*i][*j]).collect::<Vec<_>>());
+                let (i, j) = waiting.swap_remove(k);
+                cut_ring(e, rings[i][j].clone(), z, from, Link::Near, &[rings[i][j].as_slice()], None);
             }
         }
     };
@@ -2434,6 +3377,17 @@ fn pocket_set(e: &mut Emit, op: &Op) {
                 level += step;
             }
             ring_tree(e, &levels, *z, previous);
+        }
+        // There, a circle of a hundredth of the tool's radius, as the saved test job has (a 3 mm
+        // hole with a 3 mm end mill: a circle 0.015 mm round its middle). Its size is estimated
+        // from that one job; it is only a plunge with a hair of movement.
+        for c in &snug {
+            let r = op.tool.dia / 2.0 * SNUG_CIRCLE_SHARE;
+            e.go_to(c[0] + r, c[1], *z);
+            for k in 1..=16 {
+                let a = std::f64::consts::TAU * k as f64 / 16.0 * if op.climb { 1.0 } else { -1.0 };
+                e.feed(c[0] + r * a.cos(), c[1] + r * a.sin(), *z);
+            }
         }
         // What the passes above didn't reach, worked out once and cut at every depth, going on from
         // the passes without lifting. A pocket that only clears the rest of a larger tool leaves the
@@ -3325,6 +4279,11 @@ fn vcarve(e: &mut Emit, op: &Op) {
     let half = (op.tool.angle.to_radians() / 2.0).tan().max(1e-3);
     let Some(field) = Field::build(&op.paths, op.tool.dia, 900) else { return };
     let reach = op.tool.dia / 2.0;
+    // A ball nose carves by its own profile, as a V-bit does by its angle (`mcBallNoseTool`).
+    if op.kind == OpKind::VCarve && op.tool.kind == ToolKind::BallNose && op.clearance_tool.is_none() {
+        profile_carve(e, op);
+        return;
+    }
     if op.tool.angle < FLAT_TOOL_ANGLE && op.kind == OpKind::VCarve {
         // An end mill can't carve a slope: it follows each shape once, its radius inside, at the
         // flat depth, as the saved jobs show (a 2 mm end mill: every cut 1.0 mm inside the letters,
@@ -3384,6 +4343,10 @@ fn vcarve(e: &mut Emit, op: &Op) {
         }
         return;
     }
+    if op.kind == OpKind::VCarve {
+        profile_carve(e, op);
+        return;
+    }
     // Fine enough to trace the middle of thin strokes, which set how deep the V goes.
     let step = (op.tool.dia * op.tool.stepover).min(op.tool.dia * 0.02).max(field.cell * 0.5);
     let limit = if op.kind == OpKind::Prism {
@@ -3407,6 +4370,369 @@ fn vcarve(e: &mut Emit, op: &Op) {
             e.retract();
         }
         level += step;
+    }
+}
+
+/// A V-carve by the tool's own profile (a V-bit, or a ball nose), as the original makes it (`0x1405697d0`, each pass's
+/// numbers from `0x1407c1230`): the full depth is the middle's distance from the outline over the
+/// tangent of half the angle, with no limit (a 3.8 mm hole, 60 degree bit: 6.58 mm). Where that is
+/// deeper than the pass depth, every whole pass depth above it is cleared first: a ring where the
+/// V touches the outline at that depth (depth × tan(half angle) in), then rings a clearing step
+/// further in each while any are left (`0x1407be050`), cut from the inside out in one go. The
+/// last pass walks the middle line at its own depth (`0x1407bdc20`): in a round hole, a plunge
+/// in the middle.
+/// How far round a closed ring is.
+fn ring_length(r: &[P]) -> f64 {
+    (0..r.len()).map(|k| (r[(k + 1) % r.len()][0] - r[k][0]).hypot(r[(k + 1) % r.len()][1] - r[k][1])).sum()
+}
+
+fn profile_carve(e: &mut Emit, op: &Op) {
+    // The grid's cells no wider than half the stepover: a large V-bit with a fine stepover (31.75
+    // mm and 0.41 mm in the person's flat V-Carve test) would otherwise have rings closer than a
+    // cell.
+    let finest = (op.tool.dia / 64.0).min(op.tool.dia * op.tool.stepover / 2.0).max(op.tool.dia / 400.0);
+    let Some(field) = Field::build_to(&op.paths, op.tool.dia, 900, finest) else { return };
+    // The tool's profile: how far in from the outline its side touches at a depth (slot +0x38:
+    // `0x1408995b0` for a V-bit, depth × tan(half the angle); `0x1408665f0` for a ball nose, the
+    // ball's radius at that height, then the tool's radius below it), and how deep it goes where
+    // the middle is a distance in (slot +0x40: `0x140899590`, distance / tan; `0x1408666f0`, from
+    // the ball's profile, and no deeper than the ball's radius beyond it).
+    let radius = op.tool.dia / 2.0;
+    let half = (op.tool.angle.to_radians() / 2.0).tan().max(1e-3);
+    let ball = op.tool.kind == ToolKind::BallNose;
+    let offset_at = |d: f64| if ball { if d < radius { (2.0 * radius * d - d * d).max(0.0).sqrt() } else { radius } } else { d * half };
+    let depth_for = |f: f64| if ball { if f < radius { radius - (radius * radius - f * f).max(0.0).sqrt() } else { radius } } else { f / half };
+    // How deep it may go at all: the flat depth when asked for, and a ball's own radius.
+    let cap = if op.flat_depth > 0.0 { op.flat_depth } else { f64::MAX }.min(if ball { radius } else { f64::MAX });
+    let deepest_middle = field.d.iter().copied().fold(0f32, f32::max) as f64;
+    let full = depth_for((deepest_middle - op.allowance).max(0.0)).min(cap);
+    // Capped where the middle lies further in than the tool's side reaches at its full depth.
+    let capped = deepest_middle - op.allowance > offset_at(full) + 1e-6;
+    // Between passes the tool's clearing stepover (`mcVBitTool` slot +0xa8), else its usual one;
+    // at the full depth, its usual stepover (`0x1407c1230`: the last pass takes field +0x90).
+    let usual = (op.tool.dia * op.tool.stepover).max(field.cell);
+    let clearing = if op.tool.clear_step > 0.0 { op.tool.clear_step.max(field.cell) } else { usual };
+    let roots = |level: f64| -> Vec<Vec<P>> { field.contours(level).into_iter().filter(|l| l.len() >= 3 && encloses_higher(&field, l, level)).collect() };
+    // Every whole pass depth above the full depth, then, where the tool can't reach the middle
+    // (a flat depth, or a ball's radius), the full depth itself, cleared by rings.
+    let pass = op.tool.pass_depth;
+    let mut depths: Vec<f64> = Vec::new();
+    let mut k = 1;
+    while pass > 0.0 && k as f64 * pass < full - 1e-9 {
+        depths.push(k as f64 * pass);
+        k += 1;
+    }
+    let passes = depths.len();
+    if capped {
+        depths.push(full);
+    }
+    // How deep the walk goes at a point, and how near two of its pieces' ends must be to be one cut
+    // (`0x1407b5fe0`, the tolerance times 10.0 at 0x142736370).
+    let walk_z = |q: &P| -(op.start_depth + depth_for((field.sample(q[0], q[1]) - op.allowance).max(0.0)).min(cap));
+    let join = toolpath_tolerance(op) * 10.0 + field.cell * 1.5;
+    // Per outline: its walk's pieces, or the one plunge of a round hole.
+    let mut walks: Vec<(Vec<Vec<P>>, Option<P>)> = Vec::new();
+    // The last pass's walk, worked out before the rings: along the middle line, each point as deep as the tool reaches there (no
+    // deeper than it may go). The outline, just inside, drawn onto the middle: its points climb
+    // straight in until the distance from the outline stops growing.
+    // With a flat depth and a clearing tool, the walk leaves out the pieces that run into the
+    // outline's corners and keeps those between two flat parts (a neck narrower than the ring):
+    // on the person's 80 cm plates the saved cuts rise only in two necks, 0.6 to 0.8 mm from the
+    // outline, and on the 100 plate nowhere; the person's test without a clearing tool climbs
+    // into every corner up to the surface.
+    let no_corners = op.clearance_tool.is_some() && op.flat_depth > 0.0 && capped;
+    // The outlines, then the holes in them: a neck between two holes of a letter (an 8's waist)
+    // is only seen from the holes. Pieces already walked from another outline aren't walked again.
+    let mut outlines_and_holes = roots(field.cell * 0.5);
+    for ring in field.contours(field.cell * 0.5).into_iter().filter(|l| l.len() >= 3) {
+        if !outlines_and_holes.iter().any(|o| o.len() == ring.len() && o[0] == ring[0]) {
+            outlines_and_holes.push(ring);
+        }
+    }
+    let seen_cell = field.cell * 1.5;
+    let mut seen: std::collections::HashSet<(i64, i64)> = std::collections::HashSet::new();
+    let key = |q: &P| ((q[0] / seen_cell).floor() as i64, (q[1] / seen_cell).floor() as i64);
+    for outline in outlines_and_holes {
+        let middle = onto_middle_line(&field, &outline);
+        let (lo, hi) = middle.iter().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), q| ([lo[0].min(q[0]), lo[1].min(q[1])], [hi[0].max(q[0]), hi[1].max(q[1])]));
+        if (hi[0] - lo[0]).max(hi[1] - lo[1]) <= field.cell * 2.0 {
+            // A round hole's middle is a point: a plunge there.
+            walks.push((Vec::new(), Some([(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0])));
+            continue;
+        }
+        // Only the middle line's parts no further in than the full depth's offset (`0x1407bdc20`
+        // keeps the pass's offset, times 1.0 at 0x142e6d670, as the walk's limit): wider parts are
+        // the rings'. Uncapped, that is the whole line.
+        let limit = offset_at(full) + op.allowance + field.cell * 0.5;
+        let walked = |q: &P| field.sample(q[0], q[1]) <= limit;
+        let mut pts = middle.clone();
+        if let Some(out) = pts.iter().position(|q| !walked(q)) {
+            pts.rotate_left(out);
+        } else {
+            pts.push(pts[0]);
+        }
+        let mut runs: Vec<Vec<P>> = vec![Vec::new()];
+        for q in pts {
+            if walked(&q) {
+                runs.last_mut().unwrap().push(q);
+            } else if !runs.last().unwrap().is_empty() {
+                runs.push(Vec::new());
+            }
+        }
+        // A corner's piece goes out to the outline and comes back where it left; a neck's runs
+        // from one flat part to the other.
+        let into_corner = |r: &Vec<P>| r.iter().any(|q| field.sample(q[0], q[1]) < field.cell * 2.0) && (r[0][0] - r[r.len() - 1][0]).hypot(r[0][1] - r[r.len() - 1][1]) < limit;
+        runs.retain(|r| r.len() >= 2 && !(no_corners && into_corner(r)));
+        // Most of a piece where pieces already go: walked already.
+        runs.retain(|r| {
+            let near = |q: &P| { let (i, j) = key(q); (-1..=1).any(|a| (-1..=1).any(|b| seen.contains(&(i + a, j + b)))) };
+            r.iter().filter(|q| near(q)).count() * 5 < r.len() * 4
+        });
+        for r in &runs {
+            for q in r {
+                seen.insert(key(q));
+            }
+        }
+        // Pieces whose ends are within ten times the tolerance are one cut (`0x1407b5fe0`, the
+        // tolerance times 10.0 at 0x142736370): the tool goes on, without lifting.
+        let close = |a: &P, b: &P| (a[0] - b[0]).hypot(a[1] - b[1]) <= join;
+        let mut chains: Vec<Vec<P>> = Vec::new();
+        while let Some(mut chain) = runs.pop() {
+            loop {
+                let end = *chain.last().unwrap();
+                let Some((k, flip)) = runs.iter().enumerate().find_map(|(k, r)| {
+                    if close(&end, &r[0]) {
+                        Some((k, false))
+                    } else if close(&end, r.last().unwrap()) {
+                        Some((k, true))
+                    } else {
+                        None
+                    }
+                }) else {
+                    let start = chain[0];
+                    match runs.iter().position(|r| close(&start, r.last().unwrap()) || close(&start, &r[0])) {
+                        Some(k) => {
+                            let mut r = runs.swap_remove(k);
+                            if close(&start, &r[0]) {
+                                r.reverse();
+                            }
+                            r.extend(chain);
+                            chain = r;
+                            continue;
+                        }
+                        None => break,
+                    }
+                };
+                let mut r = runs.swap_remove(k);
+                if flip {
+                    r.reverse();
+                }
+                chain.extend(r);
+            }
+            chains.push(chain);
+        }
+        walks.push((chains, None));
+    }
+    let last_depth = depths.len().saturating_sub(1);
+    for (n, depth) in depths.into_iter().enumerate() {
+        let pass_no = n;
+        let step = if n < passes { clearing } else { usual };
+        let z = -(op.start_depth + depth);
+        let first = offset_at(depth) + op.allowance;
+        // Every ring of this pass, by level, then each kept with the outline ring it lies in.
+        let mut levels: Vec<Vec<Vec<P>>> = Vec::new();
+        // At the flat depth with a clearing tool, which clears the flat itself: past the first
+        // ring, rings only below the first ring's level and the clearing tool's radius, and only
+        // where that tool can't get in, the middle line nearer than that (`0x1407c1230` gives the
+        // limit L + the clearing tool's value at its +0x48, its radius; `0x1405697d0` draws the
+        // rings with `0x1407bdec0` in mode 2, edges kept by `0x1407c05c0`), as for an end mill.
+        let clearing_limit = op.clearance_tool.as_ref().filter(|_| n >= passes && op.flat_depth > 0.0).map(|ct| first + ct.dia / 2.0);
+        let reached = clearing_limit.map(|limit| middle_reach(&field, first + step, limit));
+        let mut level = first;
+        loop {
+            let found: Vec<Vec<P>> = match (clearing_limit, &reached) {
+                (Some(limit), Some(reached)) if level > first => {
+                    if level >= limit {
+                        break;
+                    }
+                    let mut band = field.clone();
+                    for (i, v) in band.d.iter_mut().enumerate() {
+                        *v = (*v - level as f32).min(limit as f32 - reached[i]);
+                    }
+                    band.contours(0.0).into_iter().filter(|l| l.len() >= 3).collect()
+                }
+                _ => field.contours(level).into_iter().filter(|l| l.len() >= 3).collect(),
+            };
+            if found.is_empty() && clearing_limit.is_none() {
+                break;
+            }
+            // Specks the grid leaves where a level just touches the middle (a ring shorter than
+            // two steps round): the ring a step further out covers them. Burin's choice, as for
+            // pockets; the original's exact offsets don't make them.
+            let found: Vec<Vec<P>> = if level > first { found.into_iter().filter(|r| ring_length(r) >= 2.0 * step).collect() } else { found };
+            levels.push(found);
+            level += step;
+        }
+        let mut outlines = roots(first);
+        // The first level's other rings go round holes in the shapes (a letter's inside): cut
+        // with the outline they lie in, last before it.
+        if let Some(found) = levels.first_mut() {
+            found.retain(|r| !outlines.iter().any(|o| o.len() == r.len() && o[0] == r[0]));
+        }
+        while !outlines.is_empty() {
+            let last = e.last();
+            let near = |r: &Vec<P>| r.iter().map(|q| (q[0] - last[0]).hypot(q[1] - last[1])).fold(f64::MAX, f64::min);
+            let i = (0..outlines.len()).min_by(|a, b| near(&outlines[*a]).total_cmp(&near(&outlines[*b]))).unwrap();
+            let outline = outlines.swap_remove(i);
+            let around = [Path::closed(outline.clone())];
+            // From the inside out, each ring from its point nearest the tool, going on at depth
+            // from the ring before when it is within a step.
+            let mut group: Vec<Vec<P>> = Vec::new();
+            for found in levels.iter_mut().rev() {
+                let (inside, rest): (Vec<Vec<P>>, Vec<Vec<P>>) = found.drain(..).partition(|r| inside_even_odd(around.iter(), r[0]));
+                *found = rest;
+                group.extend(inside);
+            }
+            let inner = group.len();
+            group.push(outline);
+            let mut started = false;
+            for (g, ring) in group.into_iter().enumerate() {
+                let is_outline = g == inner;
+                let at_full = pass_no == last_depth;
+                let mut pts = oriented(ring, op.climb);
+                let last = e.last();
+                let far = |q: &P| (q[0] - last[0]).hypot(q[1] - last[1]);
+                // From the place on the ring nearest the tool, between its points if need be: its
+                // points are a grid cell apart, so the nearest point can be further than the ring.
+                let here = [last[0], last[1]];
+                let (seg, foot) = (0..pts.len())
+                    .map(|k| {
+                        let (a, b) = (pts[k], pts[(k + 1) % pts.len()]);
+                        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+                        let t = (((here[0] - a[0]) * dx + (here[1] - a[1]) * dy) / (dx * dx + dy * dy).max(1e-18)).clamp(0.0, 1.0);
+                        (k, [a[0] + dx * t, a[1] + dy * t])
+                    })
+                    .min_by(|x, y| far(&x.1).total_cmp(&far(&y.1)))
+                    .unwrap_or((0, pts[0]));
+                let n = pts.len();
+                pts.rotate_left((seg + 1) % n);
+                if (pts[pts.len() - 1][0] - foot[0]).hypot(pts[pts.len() - 1][1] - foot[1]) > 1e-9 && (pts[0][0] - foot[0]).hypot(pts[0][1] - foot[1]) > 1e-9 {
+                    pts.insert(0, foot);
+                } else if (pts[0][0] - foot[0]).hypot(pts[0][1] - foot[1]) > 1e-9 {
+                    pts.rotate_right(1);
+                }
+                // Also on, at depth, when the straight way stays in the flat, where the V's sides
+                // can't reach an outline: the original's sorter goes on when the way crosses no
+                // ring (switch 0x142e67651); in a flat everything the way crosses is cleared to
+                // that depth anyway. Not with a clearing tool: the person's plates then lift between
+                // their rings (26 traces saved).
+                let in_flat = |a: P, b: P| {
+                    let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+                    let n = (len / (field.cell * 0.5)).ceil().max(1.0) as usize;
+                    (0..=n).all(|i| {
+                        let t = i as f64 / n as f64;
+                        field.sample(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t) >= first - field.cell * 0.5
+                    })
+                };
+                if started && (last[2] - z).abs() < 1e-9 && (far(&pts[0]) <= step * RING_LINK_STEPS + field.cell * 0.1 || (capped && pass_no == last_depth && op.clearance_tool.is_none() && in_flat([last[0], last[1]], pts[0]))) {
+                    e.feed(pts[0][0], pts[0][1], z);
+                } else {
+                    e.go_to(pts[0][0], pts[0][1], z);
+                }
+                // At the full depth, the outline's ring takes in the walk's pieces that reach it
+                // (out along the middle line into a corner and back), going on without lifting:
+                // the original's ring and corner pieces come as one cut.
+                let spliced: Vec<(usize, f64, P, Vec<P>)> = if is_outline && at_full && capped {
+                    // The ring's piece nearest a point, how far along it, the foot and the distance.
+                    let near_ring = |q: &P| {
+                        (0..pts.len())
+                            .map(|k| {
+                                let (a, b) = (pts[k], pts[(k + 1) % pts.len()]);
+                                let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+                                let t = (((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / (dx * dx + dy * dy).max(1e-18)).clamp(0.0, 1.0);
+                                let f = [a[0] + dx * t, a[1] + dy * t];
+                                (k, t, f, (f[0] - q[0]).hypot(f[1] - q[1]))
+                            })
+                            .min_by(|a, b| a.3.total_cmp(&b.3))
+                            .filter(|x| x.3 <= join)
+                    };
+                    let mut taken = Vec::new();
+                    for (chains, _) in walks.iter_mut() {
+                        let mut k = 0;
+                        while k < chains.len() {
+                            let c = &chains[k];
+                            match (near_ring(&c[0]), near_ring(c.last().unwrap())) {
+                                (Some((at, t, f, _)), Some(_)) if c.len() >= 2 => taken.push((at, t, f, chains.swap_remove(k))),
+                                _ => k += 1,
+                            }
+                        }
+                    }
+                    taken.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+                    taken
+                } else {
+                    Vec::new()
+                };
+                if spliced.is_empty() {
+                    walk(e, &pts, true, z, op, None, None);
+                } else {
+                    let mut next = 0;
+                    for k in 0..=pts.len() {
+                        let q = pts[k % pts.len()];
+                        e.feed(q[0], q[1], z);
+                        if k == pts.len() {
+                            break;
+                        }
+                        while next < spliced.len() && spliced[next].0 == k {
+                            let (_, _, foot, run) = &spliced[next];
+                            e.feed(foot[0], foot[1], z);
+                            for r in run {
+                                e.feed(r[0], r[1], walk_z(r));
+                            }
+                            e.feed(foot[0], foot[1], z);
+                            next += 1;
+                        }
+                    }
+                }
+                started = true;
+            }
+            e.retract();
+        }
+    }
+    // What is left of the walk, outline by outline.
+    for (mut chains, plunge) in walks {
+        if let Some(c) = plunge {
+            e.go_to(c[0], c[1], walk_z(&c));
+            e.retract();
+            continue;
+        }
+        if chains.is_empty() {
+            continue;
+        }
+        // From the piece nearest the tool, then each nearest the last.
+        while !chains.is_empty() {
+            let l = e.last();
+            let far = |q: &P| (q[0] - l[0]).hypot(q[1] - l[1]);
+            let (k, flip) = chains
+                .iter()
+                .enumerate()
+                .flat_map(|(k, c)| [(k, false, far(&c[0])), (k, true, far(c.last().unwrap()))])
+                .min_by(|a, b| a.2.total_cmp(&b.2))
+                .map(|(k, f, _)| (k, f))
+                .unwrap();
+            let mut run = chains.swap_remove(k);
+            if flip {
+                run.reverse();
+            }
+            if l[2] < 0.0 && far(&run[0]) <= join {
+                e.join(run[0][0], run[0][1], walk_z(&run[0]));
+            } else {
+                e.go_to(run[0][0], run[0][1], walk_z(&run[0]));
+            }
+            for q in run.iter().skip(1) {
+                e.feed(q[0], q[1], walk_z(q));
+            }
+        }
+        e.retract();
     }
 }
 
@@ -4251,6 +5577,7 @@ pub fn blank_op(kind: OpKind, name: String, tool: Tool, depth: f64, paths: Vec<P
         tab_length: 0.5 * unit,
         tab_thickness: 0.125 * unit,
         tab_count: 4,
+        tab_spots: Vec::new(),
         ramp: false,
         ramp_distance: 1.0 * k,
         lead: false,
@@ -4582,6 +5909,175 @@ mod tests {
         assert!(nearest <= step + 1e-6, "{nearest}");
     }
 
+    /// A lead also stops short of the toolpath's other loops (`0x140842ba0`): coming in from
+    /// outside a square, it is cut where a neighbouring loop lies across its way.
+    #[test]
+    fn a_lead_stops_short_of_another_loop_of_the_toolpath() {
+        let mut o = op(OpKind::Profile, vec![]);
+        o.lead = true;
+        o.lead_distance = 4.0;
+        o.lead_circular = false;
+        o.lead_angle = 90.0;
+        let own = crate::geom::rect([0.0, 0.0], 4.0, 4.0, 0.0);
+        let own = if signed_area(&own) > 0.0 { own } else { own.into_iter().rev().collect() };
+        let side_sign = away_from_part(&own, true, Side::Outside);
+        let alone = fitted_lead(&own, &[], Side::Outside, side_sign, &o);
+        assert_eq!(alone, Some(4.0));
+        // Where the lead goes: the far end of a lead at the loop's start.
+        let start = own[0];
+        let next = own[1];
+        let len = (next[0] - start[0]).hypot(next[1] - start[1]);
+        let t = [(next[0] - start[0]) / len, (next[1] - start[1]) / len];
+        let far = lead_points_for(start, t, side_sign, &o, false, 4.0)[0];
+        // A small loop around the point 2.5 mm out along the lead: the 6th point (2.22) is still
+        // short of it, the 7th (2.67) inside, so 5 tenths are kept.
+        let mid = [start[0] + (far[0] - start[0]) * 0.625, start[1] + (far[1] - start[1]) * 0.625];
+        let neighbour = crate::geom::circle(mid, 0.2);
+        assert_eq!(fitted_lead(&own, &[&neighbour], Side::Outside, side_sign, &o), Some(2.0));
+    }
+
+    /// A hole exactly as wide as the tool is still cut by a pocket, as the original does (a tiny
+    /// circle round its middle, from a saved test job), though no ring a radius in fits.
+    #[test]
+    fn a_pocket_cuts_a_hole_just_as_wide_as_the_tool() {
+        let mut o = op(OpKind::Pocket, vec![Path::closed(crate::geom::circle([5.0, 5.0], 0.0))]);
+        let r = o.tool.dia / 2.0;
+        o.paths = vec![Path::closed(crate::geom::circle([5.0, 5.0], r))];
+        let cuts: Vec<[f64; 3]> = generate(&o, M, &J, None).unwrap().iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| m.p).collect();
+        assert!(!cuts.is_empty(), "the hole is cut");
+        assert!(cuts.iter().all(|p| (p[0] - 5.0).hypot(p[1] - 5.0) < r * 0.05), "in its middle");
+        // A hole a little narrower than the tool isn't: nothing fits.
+        o.paths = vec![Path::closed(crate::geom::circle([5.0, 5.0], r * 0.9))];
+        assert!(generate(&o, M, &J, None).is_err());
+    }
+
+    /// A round pocket whose last ring leaves its middle uncut, more than the tool's radius past the
+    /// ring, is cleared by a plunge in the middle once all the rings are cut, as the saved
+    /// connector pockets have (a 25 mm hole, a 3.175 mm tool, rings 2.96 mm apart: the rings
+    /// from the inside out in one go, then a lift and a plunge in the middle).
+    #[test]
+    fn a_round_pocket_ends_with_a_plunge_in_its_middle() {
+        let mut o = op(OpKind::Pocket, vec![Path::closed(crate::geom::circle([20.0, 20.0], 12.5))]);
+        o.tool.dia = 3.175;
+        o.stepover = 2.96;
+        o.cut_depth = 3.0;
+        o.tool.pass_depth = 3.0;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let cuts: Vec<&Move> = moves.iter().filter(|m| m.p[2] < 0.0).collect();
+        let last = cuts.last().unwrap();
+        assert!((last.p[0] - 20.0).hypot(last.p[1] - 20.0) < 0.1, "it ends in the middle: {:?}", last.p);
+        // Reached by a lift: the move down into the middle comes straight from above it.
+        let down = moves.iter().position(|m| std::ptr::eq(m, *cuts.iter().rev().find(|m| (m.p[0] - 20.0).hypot(m.p[1] - 20.0) < 0.1 && !m.rapid).unwrap())).unwrap();
+        assert!(moves[..down].iter().rev().take_while(|m| !m.rapid).all(|m| (m.p[0] - 20.0).hypot(m.p[1] - 20.0) < 0.1), "a plunge of its own");
+        // The rings come first and cut nothing near the middle.
+        let first = cuts.first().unwrap();
+        assert!((first.p[0] - 20.0).hypot(first.p[1] - 20.0) > 1.0, "a ring first: {:?}", first.p);
+    }
+
+    /// Where a band widens in a bend, too narrow there for a second ring but wider than the first
+    /// one clears, the original runs along its middle, out and back; a pocket that's only a
+    /// ring's width everywhere gets nothing more.
+    #[test]
+    fn a_wider_bend_in_a_band_gets_a_stroke_along_its_middle() {
+        let r = 3.175 / 2.0;
+        let plain = |pts: Vec<P>| {
+            let mut o = op(OpKind::Pocket, vec![Path::closed(pts)]);
+            o.tool.dia = 3.175;
+            o.stepover = 2.96;
+            o.cut_depth = 3.0;
+            o.tool.pass_depth = 3.0;
+            generate(&o, M, &J, None).unwrap().iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| m.p).collect::<Vec<_>>()
+        };
+        // A strip 6 mm wide: one ring 1.59 mm in clears it all, and nothing runs along the middle.
+        let strip = plain(vec![[0.0, 0.0], [40.0, 0.0], [40.0, 6.0], [0.0, 6.0]]);
+        assert!(strip.iter().all(|p| (p[1] - 3.0).abs() > 1.0), "only the ring");
+        // A square bulge 7 mm wide in its middle: 3.5 mm in, past the 3.18 the ring clears.
+        let bulge = plain(vec![[0.0, 0.0], [40.0, 0.0], [40.0, 6.0], [23.5, 6.0], [23.5, 7.0], [16.5, 7.0], [16.5, 6.0], [0.0, 6.0]]);
+        let middle: Vec<&[f64; 3]> = bulge.iter().filter(|p| (p[1] - 3.5).abs() < 0.3 && (p[0] - 20.0).abs() < 3.0).collect();
+        assert!(!middle.is_empty(), "a stroke along the middle of the bulge");
+        let _ = r;
+    }
+
+    /// A V-bit carving a round hole wider than it, in passes, as in the person's saved test job
+    /// (a 3.8 mm hole, a 60 degree 3.175 mm V-bit, 2 mm passes, clearing stepover 0.794): rings at
+    /// 2, 4 and 6 mm from the edge ring inwards, then a plunge in the middle to 3.8 / tan 30.
+    #[test]
+    fn a_vbit_carves_a_wide_hole_in_passes_then_plunges_in_its_middle() {
+        let mut o = op(OpKind::VCarve, vec![Path::closed(crate::geom::circle([10.0, 10.0], 3.8))]);
+        o.tool.kind = ToolKind::VBit;
+        o.tool.dia = 3.175;
+        o.tool.angle = 60.0;
+        o.tool.pass_depth = 2.0;
+        o.tool.clear_step = 0.794;
+        o.flat_depth = 0.0;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let cuts: Vec<[f64; 3]> = moves.iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| m.p).collect();
+        let r = |p: &[f64; 3]| (p[0] - 10.0).hypot(p[1] - 10.0);
+        let at = |z: f64| cuts.iter().filter(|p| (p[2] + z).abs() < 1e-6).map(r).collect::<Vec<f64>>();
+        let outer = |z: f64| at(z).into_iter().fold(0.0, f64::max);
+        let half = 30f64.to_radians().tan();
+        for z in [2.0, 4.0, 6.0] {
+            assert!((outer(z) - (3.8 - z * half)).abs() < 0.1, "the edge ring at {z} mm: {}", outer(z));
+        }
+        // Inside the first pass's edge ring, rings a clearing step apart.
+        let first = at(2.0);
+        assert!(first.iter().any(|r| (r - (3.8 - 2.0 * half - 0.794)).abs() < 0.1), "a ring one step in");
+        let deepest = cuts.iter().map(|p| p[2]).fold(0.0, f64::min);
+        assert!((deepest + 3.8 / half).abs() < 0.15, "the plunge: {deepest}");
+        let last = cuts.last().unwrap();
+        assert!(r(last) < 0.1, "in the middle");
+    }
+
+    /// A ball nose carves no deeper than its radius (the original's ball-nose profile,
+    /// `0x1408666f0`): a shape wider than it is cleared at that depth by rings its stepover apart,
+    /// and its corners are carved up the ball's curve, as in the person's saved job (2 mm ball,
+    /// stepover 0.2: rings 0.2 apart at 1.0 mm).
+    #[test]
+    fn a_ball_nose_carves_down_to_its_radius_and_clears_the_rest_there() {
+        let mut o = op(OpKind::VCarve, vec![Path::closed(crate::geom::rect([15.0, 15.0], 6.0, 6.0, 0.0))]);
+        o.tool.kind = ToolKind::BallNose;
+        o.tool.dia = 2.0;
+        o.tool.angle = 0.0;
+        o.tool.stepover = 0.1;
+        o.tool.clear_step = 0.4;
+        o.tool.pass_depth = 1.5;
+        o.flat_depth = 0.0;
+        let cuts: Vec<[f64; 3]> = generate(&o, M, &J, None).unwrap().iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| m.p).collect();
+        let deepest = cuts.iter().map(|p| p[2]).fold(0.0, f64::min);
+        assert!((deepest + 1.0).abs() < 1e-6, "no deeper than the ball: {deepest}");
+        // Rings 0.2 apart at the full depth: a square ring a step inside the first.
+        let ring = |inset: f64| cuts.iter().any(|p| (p[2] + 1.0).abs() < 1e-6 && ((p[0] - 15.0).abs().max((p[1] - 15.0).abs()) - (3.0 - inset)).abs() < 0.05);
+        assert!(ring(1.0) && ring(1.2) && ring(1.4), "rings at 1.0, 1.2, 1.4 in");
+        // Into the corners, coming up the ball's curve.
+        let corner = cuts.iter().map(|p| (p[0] - 12.0).hypot(p[1] - 12.0)).fold(f64::MAX, f64::min);
+        assert!(corner < 0.6, "into the corner: {corner}");
+    }
+
+    /// The middle line of a square is its two diagonals: a V-bit goes deepest in the middle and
+    /// into every corner, coming up as the corner closes in.
+    #[test]
+    fn a_vbit_follows_the_middle_line_into_every_corner() {
+        let mut o = op(OpKind::VCarve, vec![Path::closed(crate::geom::rect([15.0, 15.0], 10.0, 10.0, 0.0))]);
+        o.tool.kind = ToolKind::VBit;
+        o.tool.dia = 12.0;
+        o.tool.angle = 60.0;
+        o.tool.pass_depth = 20.0;
+        o.flat_depth = 0.0;
+        let cuts: Vec<[f64; 3]> = generate(&o, M, &J, None).unwrap().iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| m.p).collect();
+        for c in [[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]] {
+            let near = cuts.iter().map(|p| (p[0] - c[0]).hypot(p[1] - c[1])).fold(f64::MAX, f64::min);
+            assert!(near < 0.6, "into the corner {c:?}: {near}");
+        }
+        // Every cut on a diagonal, as deep as its distance from the sides allows.
+        let half = 30f64.to_radians().tan();
+        for p in &cuts {
+            let off = ((p[0] - 15.0).abs() - (p[1] - 15.0).abs()).abs();
+            assert!(off < 0.3, "on a diagonal: {p:?}");
+            let inside = (p[0] - 10.0).min(20.0 - p[0]).min(p[1] - 10.0).min(20.0 - p[1]);
+            assert!((-p[2] - inside / half).abs() < 0.3, "its depth: {p:?}");
+        }
+    }
+
     /// The original's lead fitting (`0x1408437a0`): ten points at ninths of the lead, cut to
     /// (k - 1) tenths at the first one across the loop. The saved jobs' four cases, and a 4 mm lead,
     /// which comes in by tenths of 4 (0.4 mm), not by 0.25 mm steps, or not at all when its middle
@@ -4597,7 +6093,7 @@ mod tests {
             let pts = crate::geom::circle([0.0, 0.0], loop_r);
             let pts = if signed_area(&pts) > 0.0 { pts } else { pts.into_iter().rev().collect() };
             let side_sign = away_from_part(&pts, true, Side::Inside);
-            fitted_lead(&pts, Side::Inside, side_sign, &o)
+            fitted_lead(&pts, &[], Side::Inside, side_sign, &o)
         };
         let close = |a: Option<f64>, b: f64| a.is_some_and(|a| (a - b).abs() < 1e-9);
         assert!(close(lead_in(1.9125, 2.5), 2.5));
@@ -5568,6 +7064,67 @@ mod tests {
         }
     }
 
+    /// Ramps in passes as the original makes them (`0x1408575e0`, `0x1408566f0`, `0x140857ce0`):
+    /// the tool never leaves the loop's line between passes; a straight ramp's next pass ramps on
+    /// from where the last ended; a zig-zag goes along the loop and back; a spiral comes down with
+    /// no lap between depths and one at the bottom.
+    #[test]
+    fn ramps_stay_on_the_loop_and_follow_on_from_pass_to_pass() {
+        let on_square = |p: &[f64; 3]| {
+            let (dx, dy) = ((p[0] - 5.0).abs(), (p[1] - 5.0).abs());
+            (dx.max(dy) - 2.0).abs() < 1e-6
+        };
+        let length = |c: &[[f64; 3]]| c.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum::<f64>();
+        for kind in [RampKind::Smooth, RampKind::ZigZag, RampKind::Spiral] {
+            let mut o = ring_op();
+            o.start_at = StartAt::Keep;
+            o.tool.pass_depth = 1.0;
+            o.cut_depth = 3.0;
+            o.ramp = true;
+            o.ramp_kind = kind;
+            o.ramp_distance = 5.0;
+            o.overcut = 0.0;
+            let c = cuts(&generate(&o, M, &J, None).unwrap());
+            // Every point on the square, and every move along one of its sides.
+            assert!(c.iter().all(on_square), "{kind:?} left the loop");
+            assert!(c.windows(2).all(|w| (w[0][0] - w[1][0]).abs() < 1e-9 || (w[0][1] - w[1][1]).abs() < 1e-9), "{kind:?} cut across");
+            let expected = match kind {
+                // Each pass a ramp of 5 then a lap of 16.
+                RampKind::Smooth => 3.0 * (5.0 + 16.0),
+                // Each pass 5 there and 5 back, then a lap.
+                RampKind::ZigZag => 3.0 * (10.0 + 16.0),
+                // Three laps down, one at the bottom.
+                RampKind::Spiral => 4.0 * 16.0,
+            };
+            assert!((length(&c) - expected).abs() < 1e-6, "{kind:?}: {} against {expected}", length(&c));
+        }
+    }
+
+    /// Tabs put on the drawing stand where they were put, centred on the loop at the place
+    /// nearest each, tab length plus the tool's width long; a loop starting on one comes down
+    /// only to its top there.
+    #[test]
+    fn tabs_put_on_the_drawing_stand_where_they_were_put() {
+        let mut o = ring_op();
+        o.start_at = StartAt::Keep;
+        o.cut_depth = 0.5;
+        o.tabs = true;
+        o.tab_length = 0.5;
+        o.tab_thickness = 0.1;
+        o.tab_spots = vec![[5.0, 3.0], [3.0, 3.2]];
+        let c = cuts(&generate(&o, M, &J, None).unwrap());
+        let up: Vec<&[f64; 3]> = c.iter().filter(|p| (p[2] + 0.4).abs() < 1e-9).collect();
+        assert!(!up.is_empty());
+        let tab_reach = o.tab_length + o.tool.dia;
+        for p in &up {
+            let near_first = (p[1] - 3.0).abs() < 1e-9 && (p[0] - 5.0).abs() <= tab_reach / 2.0 + 1e-9;
+            let near_second = (p[0] - 3.0).abs() < 1e-9 && (p[1] - 3.2).abs() <= tab_reach / 2.0 + 1e-9 || (p[1] - 3.0).abs() < 1e-9 && p[0] <= 3.0 + tab_reach / 2.0;
+            assert!(near_first || near_second, "up at {p:?}, away from the tabs put");
+        }
+        // Down to full depth elsewhere.
+        assert!(c.iter().any(|p| (p[2] + 0.5).abs() < 1e-9 && (p[1] - 7.0).abs() < 1e-9));
+    }
+
     #[test]
     fn square_corners_give_way_where_they_would_cut_into_the_part() {
         // A notch 0.1 wide, in a shape cut with a 0.25 tool.
@@ -5778,6 +7335,222 @@ mod tests {
         o.tool.pass_depth = 100.0;
         o.cut_depth = 1.0;
         o
+    }
+
+    /// Where a ring along the outline meets one round an island, the corner is sharp, as the
+    /// original's exact offsets make it: the person's islands job, a 90 by 70 pocket with a round
+    /// island of radius 10 at (40, 50), the ring 12.6 in meets the island's at (37, 27.6).
+    #[test]
+    fn a_ring_meets_an_islands_ring_at_a_sharp_corner() {
+        let outer = Path::closed(rect([60.0, 50.0], 90.0, 70.0, 0.0));
+        let island = Path::closed(circle([40.0, 50.0], 10.0));
+        let o = pocket_of(vec![outer, island], 6.0, 0.4);
+        let moves = generate(&o, M, &J, None).unwrap();
+        let near = moves.iter().filter(|m| !m.rapid).map(|m| (m.p[0] - 37.0).hypot(m.p[1] - 27.6)).fold(f64::MAX, f64::min);
+        assert!(near < 0.05, "the corner is cut {near} short");
+    }
+
+    /// A wide stepover leaves the corners between rings: each ring after the first reaches into
+    /// its corners, out to where the ring before stopped clearing, as the saved slot pockets do
+    /// (a 94% stepover with a 3.175 mm tool: ears 1.96 mm long, their tips 3.18 from the walls).
+    #[test]
+    fn a_wide_stepover_reaches_into_the_corners() {
+        let mut o = pocket_of(vec![Path::closed(rect([50.0, 50.0], 40.0, 20.0, 0.0))], 3.175, 0.94);
+        o.cut_depth = 1.0;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let r = 3.175 / 2.0;
+        let step = 3.175 * 0.94;
+        // The corner of the second ring, and where its ear ends: 3.18 in from both walls.
+        let tip = [30.0 + 2.0 * r, 40.0 + 2.0 * r];
+        let near = moves.iter().filter(|m| !m.rapid).map(|m| (m.p[0] - tip[0]).hypot(m.p[1] - tip[1])).fold(f64::MAX, f64::min);
+        assert!(near < 0.02, "the ear ends {near} from where it should");
+        let corner = [30.0 + r + step, 40.0 + r + step];
+        assert!(moves.iter().any(|m| !m.rapid && (m.p[0] - corner[0]).hypot(m.p[1] - corner[1]) < 0.02));
+    }
+
+    /// What the ring before leaves and the next ring's reach misses, in a lobe the next ring
+    /// doesn't go into, is cut along its middle: a slot whose end narrows to a point beyond a
+    /// round part, with a 94% stepover.
+    #[test]
+    fn a_lobe_the_next_ring_misses_is_cut_along_its_middle() {
+        // A wide body with a narrow nose at its right: the second ring stays in the body.
+        let shape = vec![[0.0, 0.0], [30.0, 0.0], [30.0, 2.0], [45.0, 6.0], [30.0, 10.0], [30.0, 12.0], [0.0, 12.0]];
+        let mut o = pocket_of(vec![Path::closed(shape.clone())], 3.175, 0.94);
+        o.cut_depth = 1.0;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let field = Field::build(&o.paths, o.tool.dia, 400).unwrap();
+        let r = 3.175 / 2.0;
+        // Somewhere in the nose further from the walls than the first ring's reach is reached.
+        let reach = |q: P| moves.windows(2).filter(|w| !w[1].rapid).any(|w| crate::geom::dist2_seg(q, [w[0].p[0], w[0].p[1]], [w[1].p[0], w[1].p[1]]) <= r * r * 1.0001);
+        let spots: Vec<P> = (0..300).map(|k| [30.0 + k as f64 * 0.05, 6.0]).filter(|q| field.sample(q[0], q[1]) > 2.0 * r + 0.05).collect();
+        assert!(!spots.is_empty());
+        assert!(spots.iter().all(|q| reach(*q)), "left in the nose: {:?}", spots.iter().find(|q| !reach(**q)));
+    }
+
+    /// A little step in a ring's side, which goes on straight either side of it, gets no ear.
+    #[test]
+    fn a_step_in_a_straight_side_gets_no_ear() {
+        let mut ring = vec![[0.0, 0.0], [20.0, 0.0], [20.0, 0.3], [40.0, 0.3], [40.0, 10.0], [0.0, 10.0]];
+        let mut pieces = Vec::new();
+        let out = with_corner_ears(std::mem::take(&mut ring), 0.4, &[], &mut pieces, 1.6, 0.05);
+        // The four corners of the box get ears (two points each); the step's two corners none.
+        assert_eq!(out.len(), 6 + 4 * 2, "{out:?}");
+    }
+
+    /// Tabs go with their shapes: moved, a tab stays at the same place along its shape; with
+    /// more points, at the same share of the way round.
+    #[test]
+    fn tabs_go_where_their_shapes_go() {
+        let square = Path::closed(vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]);
+        let moved = Path::closed(square.pts.iter().map(|q| [q[0] + 5.0, q[1] * 2.0]).collect());
+        let tabs = carry_tabs(&[square.clone()], &[moved], &[[10.0, 4.0], [3.0, 0.0]]);
+        assert!((tabs[0][0] - 15.0).abs() < 1e-9 && (tabs[0][1] - 8.0).abs() < 1e-9, "{tabs:?}");
+        assert!((tabs[1][0] - 8.0).abs() < 1e-9 && tabs[1][1].abs() < 1e-9, "{tabs:?}");
+        // Drawn again with a point more: a quarter of the way round stays a quarter of the way.
+        let more = Path::closed(vec![[0.0, 0.0], [5.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]);
+        let tabs = carry_tabs(&[square], &[more], &[[10.0, 0.0]]);
+        assert!((tabs[0][0] - 10.0).abs() < 1e-9 && tabs[0][1].abs() < 1e-9, "{tabs:?}");
+    }
+
+    /// A V-bit V-carve with a flat depth and a clearing tool: the ring where the V meets the flat
+    /// goes round the shape and round its hole too, and the flat itself is left to the clearing
+    /// tool, as on the person's plates (a 90 degree V-bit, 1 mm flat: 28 traces, 1,766 mm, against
+    /// 31 and 1,765 saved, where Burin swept in levels before: 361 and 37.9 m).
+    #[test]
+    fn a_v_bit_with_a_clearing_tool_rings_the_flat_and_its_holes() {
+        let outer = Path::closed(rect([50.0, 50.0], 40.0, 30.0, 0.0));
+        let hole = Path::closed(rect([50.0, 50.0], 10.0, 8.0, 0.0));
+        let mut o = op(OpKind::VCarve, vec![outer, hole]);
+        o.tool.kind = ToolKind::VBit;
+        o.tool.angle = 90.0;
+        o.tool.dia = 22.0;
+        o.tool.stepover = 0.04;
+        o.tool.pass_depth = 1.0;
+        o.flat_depth = 1.0;
+        let mut clear = o.tool.clone();
+        clear.kind = ToolKind::EndMill;
+        clear.angle = 0.0;
+        clear.dia = 3.175;
+        o.clearance_tool = Some(clear);
+        let moves = generate(&o, M, &J, None).unwrap();
+        let cut: Vec<&Move> = moves.iter().filter(|m| !m.rapid).collect();
+        // Round the hole, 1 mm out from it (the V's offset at the flat depth).
+        let passes_by = |q: P| moves.windows(2).any(|w| !w[1].rapid && (w[1].p[2] + 1.0).abs() < 1e-6 && crate::geom::dist2_seg(q, [w[0].p[0], w[0].p[1]], [w[1].p[0], w[1].p[1]]) < 0.05 * 0.05);
+        assert!(passes_by([44.0, 50.0]), "no ring round the hole");
+        // Nothing in the middle of the flat, which is the clearing tool's.
+        assert!(!cut.iter().any(|m| (m.p[0] - 37.0).abs() < 1.0 && (m.p[1] - 50.0).abs() < 1.0), "the flat was swept");
+    }
+
+    /// The person's flat V-Carve test (a 90° V-bit, a flat bottom, no clearing tool): the original
+    /// cuts the outer ring at the flat and the trips up into the corners as one cut, the tool going
+    /// out along the middle line and back onto the ring without lifting. The flat is still ringed
+    /// all the way in.
+    #[test]
+    fn a_flat_v_carve_goes_into_the_corners_from_its_outer_ring() {
+        let outer = Path::closed(rect([50.0, 50.0], 40.0, 30.0, 0.0));
+        let mut o = op(OpKind::VCarve, vec![outer]);
+        o.tool.kind = ToolKind::VBit;
+        o.tool.angle = 90.0;
+        o.tool.dia = 31.75;
+        o.tool.stepover = 0.4 / 31.75;
+        o.tool.pass_depth = 12.7;
+        o.flat_depth = 5.0;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let mut traces: Vec<Vec<[f64; 3]>> = Vec::new();
+        for w in moves.windows(2) {
+            if w[1].rapid {
+                continue;
+            }
+            if w[0].rapid || traces.is_empty() {
+                traces.push(vec![w[0].p]);
+            }
+            traces.last_mut().unwrap().push(w[1].p);
+        }
+        let flat = |p: &[f64; 3]| (p[2] + 5.0).abs() < 1e-6;
+        // Each corner is reached (nearly to the outline, so nearly to the top)...
+        for c in [[30.0, 35.0], [70.0, 35.0], [70.0, 65.0], [30.0, 65.0]] {
+            assert!(moves.iter().any(|m| !m.rapid && (m.p[0] - c[0]).hypot(m.p[1] - c[1]) < 1.0 && m.p[2] > -1.0), "corner {c:?} not reached");
+        }
+        // ...from a cut that also runs along the flat: no corner trip is a cut of its own.
+        for t in &traces {
+            if t.iter().any(|p| p[2] > -1.0) {
+                assert!(t.iter().filter(|p| flat(p)).count() > 10, "a corner trip on its own");
+            }
+        }
+        // The middle of the flat is cut.
+        assert!(moves.windows(2).any(|w| !w[1].rapid && flat(&w[0].p) && flat(&w[1].p) && crate::geom::dist2_seg([50.0, 50.0], [w[0].p[0], w[0].p[1]], [w[1].p[0], w[1].p[1]]) < 1.0), "the middle of the flat was left");
+    }
+
+    /// Without a clearing tool the flat of a letter is ringed in one go: from ring to ring the tool
+    /// stays down while the way stays in the flat (the person's test: 14 cuts for "test" in the
+    /// original). An L shape's two arms meet at a corner where the rings split.
+    #[test]
+    fn a_flat_v_carve_rings_its_flat_without_lifting() {
+        let l = Path::closed(vec![[20.0, 20.0], [100.0, 20.0], [100.0, 50.0], [50.0, 50.0], [50.0, 100.0], [20.0, 100.0]]);
+        let mut o = op(OpKind::VCarve, vec![l]);
+        o.tool.kind = ToolKind::VBit;
+        o.tool.angle = 90.0;
+        o.tool.dia = 31.75;
+        o.tool.stepover = 1.0 / 31.75;
+        o.tool.pass_depth = 12.7;
+        o.flat_depth = 5.0;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let lifts = moves.windows(2).filter(|w| w[1].rapid && !w[0].rapid).count();
+        let flat_cut: f64 = moves.windows(2).filter(|w| !w[1].rapid && (w[0].p[2] + 5.0).abs() < 1e-6 && (w[1].p[2] + 5.0).abs() < 1e-6).map(|w| (w[1].p[0] - w[0].p[0]).hypot(w[1].p[1] - w[0].p[1])).sum();
+        assert!(flat_cut > 500.0, "{flat_cut}");
+        assert!(lifts <= 3, "{lifts} lifts");
+    }
+
+    /// A waist between two holes of a letter, narrower than the flat's ring (the person's 80 cm plates'
+    /// 8-like letters): the walk goes through it, above the flat, though it never reaches the
+    /// letter's outer outline; with a clearing tool the corners still aren't walked.
+    #[test]
+    fn a_waist_between_two_holes_is_carved() {
+        let outer = Path::closed(rect([50.0, 50.0], 30.0, 50.0, 0.0));
+        let low = Path::closed(rect([50.0, 39.3], 14.0, 20.0, 0.0));
+        let high = Path::closed(rect([50.0, 60.7], 14.0, 20.0, 0.0));
+        let mut o = op(OpKind::VCarve, vec![outer, low, high]);
+        o.tool.kind = ToolKind::VBit;
+        o.tool.angle = 90.0;
+        o.tool.dia = 22.0;
+        o.tool.stepover = 0.04;
+        o.tool.pass_depth = 3.0;
+        o.flat_depth = 1.0;
+        let mut clear = o.tool.clone();
+        clear.kind = ToolKind::EndMill;
+        clear.angle = 0.0;
+        clear.dia = 3.175;
+        o.clearance_tool = Some(clear);
+        let moves = generate(&o, M, &J, None).unwrap();
+        // The holes are 1.4 apart: the waist's middle is 0.7 from each, so cut 0.7 deep there.
+        assert!(moves.iter().any(|m| !m.rapid && (m.p[1] - 50.0).abs() < 0.3 && (m.p[0] - 50.0).abs() < 5.0 && m.p[2] > -0.99), "the waist wasn't carved");
+        // No trip into the outer corners.
+        assert!(!moves.iter().any(|m| !m.rapid && (m.p[0] - 35.0).abs() < 0.8 && (m.p[1] - 25.0).abs() < 0.8), "a corner was walked");
+    }
+
+    /// A stroke's trip into a corner is made once, though both sides of the loop land on it.
+    #[test]
+    fn a_trip_made_twice_is_made_once() {
+        let pts = vec![[0.0, 0.0], [0.0, 5.0], [1.0, 6.0], [0.0, 5.0], [1.0, 6.0], [0.0, 5.0], [-1.0, 6.0], [0.0, 5.0]];
+        assert_eq!(without_repeats(pts, 0.01), vec![[0.0, 0.0], [0.0, 5.0], [1.0, 6.0], [0.0, 5.0], [-1.0, 6.0], [0.0, 5.0]]);
+    }
+
+    /// Where a pocket is exactly twice a ring's level wide, that ring has no width and isn't cut:
+    /// the person's islands job, two bars 30 high joined by a 7 wide neck, cut with a 6 mm tool at
+    /// 40%: the ring 15 in is only the bump at the neck, not the whole middle of each bar.
+    #[test]
+    fn a_ring_with_no_width_is_not_cut() {
+        let shape = vec![[120.0, 15.0], [185.0, 15.0], [185.0, 45.0], [156.0, 45.0], [156.0, 55.0], [185.0, 55.0], [185.0, 85.0], [120.0, 85.0], [120.0, 55.0], [149.0, 55.0], [149.0, 45.0], [120.0, 45.0]];
+        let o = pocket_of(vec![Path::closed(shape)], 6.0, 0.4);
+        let moves = generate(&o, M, &J, None).unwrap();
+        let along_middle = moves.windows(2).filter(|w| !w[1].rapid).filter(|w| {
+            let mid = [(w[0].p[0] + w[1].p[0]) / 2.0, (w[0].p[1] + w[1].p[1]) / 2.0];
+            (w[0].p[1] - w[1].p[1]).abs() < 0.01 && ((mid[1] - 30.0).abs() < 0.05 || (mid[1] - 70.0).abs() < 0.05) && (mid[0] < 145.0 || mid[0] > 160.0)
+        });
+        let found: Vec<_> = along_middle.map(|w| (w[0].p, w[1].p)).collect();
+        assert!(found.is_empty(), "nothing along the bars' middle lines away from the neck: {found:?}");
+        // The bump at the neck is still cut.
+        assert!(moves.iter().any(|m| !m.rapid && (m.p[1] - 30.4).abs() < 0.1 && (m.p[0] - 152.5).abs() < 0.5));
     }
 
     /// A ring pocket starts on the side where its shape starts, as the saved jobs do: the innermost
@@ -6131,10 +7904,13 @@ mod tests {
         let mut pts = rect([50.0, 50.0], 80.0, 20.0, 0.0);
         start_near(&mut pts, [0.0, 100.0]);
         assert_eq!(pts[0], [10.0, 60.0]);
-        // On a round shape, whichever point is nearest.
+        // On a round shape, whichever of its quarter points is nearest.
         let mut round = circle([50.0, 50.0], 10.0);
         start_near(&mut round, [200.0, 50.0]);
-        assert!((round[0][0] - 60.0).abs() < 0.1 && (round[0][1] - 50.0).abs() < 2.0, "{:?}", round[0]);
+        assert!((round[0][0] - 60.0).abs() < 1e-9 && (round[0][1] - 50.0).abs() < 1e-9, "{:?}", round[0]);
+        let mut round = circle([50.0, 50.0], 10.0);
+        start_near(&mut round, [0.0, 70.0]);
+        assert!((round[0][0] - 40.0).abs() < 1e-9 && (round[0][1] - 50.0).abs() < 1e-9, "the left one, not the nearest point: {:?}", round[0]);
     }
 
     #[test]

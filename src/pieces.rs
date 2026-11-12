@@ -22,6 +22,22 @@ pub fn file_stem_of(name: &str) -> String {
     if stem.is_empty() { "toolpaths".to_string() } else { stem.to_string() }
 }
 
+/// A name nothing has yet: the path itself when it is free, else the same name with -2, -3...
+/// before its extension (`pieces` → `pieces-2`, `pieces.step` → `pieces-2.step`). Nothing is ever
+/// written over.
+pub fn unused_path(path: std::path::PathBuf) -> std::path::PathBuf {
+    if !path.exists() {
+        return path;
+    }
+    let stem = path.file_stem().map_or(String::new(), |s| s.to_string_lossy().to_string());
+    let extension = path.extension().map(|e| format!(".{}", e.to_string_lossy()));
+    let parent = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+    (2..)
+        .map(|n| parent.join(format!("{stem}-{n}{}", extension.as_deref().unwrap_or(""))))
+        .find(|p| !p.exists())
+        .unwrap_or(path)
+}
+
 /// A file chosen with no extension gets the one the post processor writes.
 pub fn with_extension(path: std::path::PathBuf, extension: &str) -> std::path::PathBuf {
     if path.extension().is_some() { path } else { path.with_extension(extension) }
@@ -177,7 +193,8 @@ impl App {
         let wanted = self.toolpaths_cutting(shapes);
         let tasks: Vec<_> = self.follow_tasks().into_iter().filter(|(i, _)| wanted.contains(i)).collect();
         let background = self.background_recalc;
-        self.run_tasks(tasks, crate::recalc::Finish::All { unchanged: 0, no_shapes: 0, warn: true }, background);
+        let queued = tasks.iter().map(|(_, op)| op.name.clone()).collect();
+        self.run_tasks(tasks, crate::recalc::Finish::All { unchanged: 0, no_shapes: 0, warn: true, queued }, background);
     }
 
     /// These toolpaths worked out again for only this piece's shapes. Nothing in the project changes.
@@ -347,5 +364,21 @@ mod output_choice_tests {
         assert_eq!(OutputChoices::from_text(r#"{"blend": true}"#), OutputChoices { blend: true, ..OutputChoices::default() });
         let odd = OutputChoices::from_text(r#"{"blend_mm": 50.0, "corner_share": 0.0}"#);
         assert_eq!((odd.blend_mm, odd.corner_share), (OutputChoices::default().blend_mm, OutputChoices::default().corner_share));
+    }
+}
+
+#[cfg(test)]
+mod unused_path_tests {
+    /// A taken name gets the first free number, for a folder as for a file; a free one stays.
+    #[test]
+    fn a_taken_name_gets_the_next_free_number() {
+        let dir = std::env::temp_dir().join(format!("burin-unused-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("pieces")).unwrap();
+        std::fs::create_dir_all(dir.join("pieces-2")).unwrap();
+        std::fs::write(dir.join("part.step"), "x").unwrap();
+        assert_eq!(super::unused_path(dir.join("pieces")), dir.join("pieces-3"));
+        assert_eq!(super::unused_path(dir.join("part.step")), dir.join("part-2.step"));
+        assert_eq!(super::unused_path(dir.join("free")), dir.join("free"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -93,6 +93,31 @@ impl App {
         }
     }
 
+    /// When a V-Carve with a flat depth and a clearing tool comes with a clearing toolpath that
+    /// cuts nothing (the first of `made`), takes that toolpath out and says why
+    /// (`0x1405680a0`): the depth the carving reached, below its start depth, is compared with the
+    /// flat depth. Reached: the flats are all too narrow for the clearing tool. Not reached: the
+    /// flat depth is never got to, with both depths, to 3 decimals in millimetres and 4 in inches.
+    pub fn empty_flat_clearing(&self, form: &toolpath::Op, made: &mut Vec<(toolpath::Op, std::sync::Arc<Vec<toolpath::Move>>)>) -> Option<String> {
+        if form.kind != toolpath::OpKind::VCarve || form.clearance_tool.is_none() || form.flat_depth <= 0.0 || made.len() < 2 {
+            return None;
+        }
+        let cuts = |moves: &[toolpath::Move]| moves.iter().any(|m| !m.rapid && m.p[2] < -1e-9);
+        if cuts(&made[0].1) {
+            return None;
+        }
+        made.remove(0);
+        let reached = toolpath::deepest_move(&made[0].1) - form.start_depth;
+        let unit = self.doc.job.unit();
+        let places = if self.doc.job.units == Units::Mm { 3 } else { 4 };
+        let show = |v: f64| format!("{v:.places$} {unit}");
+        Some(if form.flat_depth <= reached + 1e-9 {
+            tf!("No flat area is wide enough for the clearing tool, so it has nothing to cut. The carving tool reaches the flat depth on its own ({}); try a smaller clearing tool.", show(form.flat_depth))
+        } else {
+            tf!("The carving never gets down to the flat depth ({}): it goes {} deep at most, so the clearing tool has nothing to cut. Try a smaller flat depth.", show(form.flat_depth), show(reached.max(0.0)))
+        })
+    }
+
     /// The toolpaths that would go through the material as it is now.
     pub fn too_deep_toolpaths(&self, queue: &[usize]) -> Vec<(String, f64)> {
         let allowed = self.doc.job.deepest_allowed();

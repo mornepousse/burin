@@ -3142,10 +3142,32 @@ impl App {
                     labelled(ui, crate::i18n::tr("Length"), 0.0, &mut op.tab_length, 44.0, unit);
                     labelled(ui, crate::i18n::tr("Thickness"), 0.0, &mut op.tab_thickness, 44.0, unit);
                 });
-                ui.horizontal(|ui| {
-                    ui.label(crate::i18n::tr("Tabs per shape"));
-                    count_box(ui, &mut op.tab_count, 44.0);
+                if op.tab_spots.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.label(crate::i18n::tr("Tabs per shape"));
+                        count_box(ui, &mut op.tab_count, 44.0);
+                    });
+                } else {
+                    ui.label(RichText::new(tf!("{} tabs put on the shapes", op.tab_spots.len())).size(11.5).color(MUTED()));
+                }
+                // As the original's Edit Tabs: on the drawing, a click on a shape puts a tab there,
+                // a click on a tab takes it off, and a tab dragged slides along its shape.
+                ui.horizontal_wrapped(|ui| {
+                    let label = if self.placing_tabs { crate::i18n::tr("Done placing") } else { crate::i18n::tr("Place by hand") };
+                    if ui.button(label).on_hover_text(crate::i18n::tr("Click a shape to put a tab there, click a tab to take it off, drag a tab to slide it along")).clicked() {
+                        self.placing_tabs = !self.placing_tabs;
+                        if self.placing_tabs && op.tab_spots.is_empty() {
+                            op.tab_spots = crate::toolpath::spread_tabs(&op.paths, op.tab_count);
+                        }
+                    }
+                    if !op.tab_spots.is_empty() && ui.button(crate::i18n::tr("Spread evenly")).on_hover_text(crate::i18n::tr("Back to the number of tabs per shape, spread evenly")).clicked() {
+                        op.tab_spots.clear();
+                        self.placing_tabs = false;
+                    }
                 });
+                if self.placing_tabs {
+                    ui.label(RichText::new(crate::i18n::tr("Click a shape to put a tab there, click a tab to take it off, drag a tab to slide it along")).size(11.5).color(MUTED()));
+                }
             }
         });
         // The rarer choices, one section open at a time.
@@ -3402,6 +3424,12 @@ explain(ui, [Pic::StartDrawn, Pic::StartNearest, Pic::StartPoint][chosen], match
                 }
                 if worded_button(ui, true, Icon::Save, crate::i18n::tr("Save picture...")).clicked() {
                     self.save_preview = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png"]).set_file_name("preview.png").save_file();
+                }
+                if worded_button(ui, !self.doc.toolpaths.is_empty(), Icon::Export, crate::i18n::tr("Export pieces (STEP, STL)..."))
+                    .on_hover_text(crate::i18n::tr("Each part the toolpaths cut out, as a solid in millimetres, in a new folder of the name you give (STEP and STL), named after its piece in the drawing: its outline from the drawing, less its holes, pockets, drillings and grooves cut flat to their depth, as a CAD program models it. A name already taken gets a number, nothing is written over. V-carves and 3D are left out. Not in the original."))
+                    .clicked()
+                {
+                    self.export_carved_pieces();
                 }
             });
             ui.horizontal(|ui| {

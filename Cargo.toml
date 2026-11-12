@@ -15,6 +15,8 @@ serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 roxmltree = "0.20"
 i_overlay = "9.1.0"
+# Cutting flat faces with holes into triangles, for the carved pieces' STL, keeping every edge.
+spade = "2"
 # The same clock on a computer and in a web browser, where the standard one doesn't work.
 web-time = "1"
 

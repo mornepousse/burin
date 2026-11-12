@@ -25,12 +25,16 @@ impl Default for Camera {
 
 impl Camera {
     pub fn iso() -> Self {
-        Camera { yaw: (-26f32).to_radians(), tilt: 30f32.to_radians(), zoom: 1.0, pan: vec2(0.0, 25.0) }
+        Camera { yaw: (-26f32).to_radians(), tilt: 30f32.to_radians(), zoom: 1.0, pan: vec2(0.0, 0.0) }
     }
     pub fn look(yaw: f32, tilt: f32) -> Self {
         Camera { yaw: yaw.to_radians(), tilt: tilt.to_radians(), zoom: 1.0, pan: egui::Vec2::ZERO }
     }
 }
+
+/// How much of the 3D view the board takes when the view is fitted, along the side that limits it
+/// (the original's 3D view: 642 of 953 pixels; estimated from that one picture).
+const VIEW_FILL: f32 = 0.67;
 
 /// Turns job positions into screen positions.
 #[derive(Clone, Copy)]
@@ -48,16 +52,27 @@ pub struct Projection {
 impl Projection {
     pub fn new(cam: Camera, rect: Rect, width: f64, height: f64) -> Self {
         let size = width.max(height) as f32;
-        Projection {
-            centre: rect.center() + cam.pan,
+        let mut p = Projection {
+            centre: pos2(0.0, 0.0),
             mid: [width as f32 / 2.0, height as f32 / 2.0],
             sin: cam.yaw.sin(),
             cos: cam.yaw.cos(),
             tilt_sin: cam.tilt.sin(),
             tilt_cos: cam.tilt.cos(),
-            scale: 0.52 * rect.width().min(rect.height()) / size.max(1e-6) * cam.zoom,
+            scale: 1.0,
             distance: size * 3.5,
-        }
+        };
+        // The board as it is turned, fitted to the view and centred in it, as the original frames
+        // its 3D view: the board's outline takes about two thirds of the view (642 of 953 pixels
+        // high in its 3D view of a 10 x 10 inch job).
+        let (w, h) = (width as f32, height as f32);
+        let corners = [p.project(0.0, 0.0, 0.0), p.project(w, 0.0, 0.0), p.project(0.0, h, 0.0), p.project(w, h, 0.0)];
+        let (lo, hi) = corners.iter().fold((pos2(f32::MAX, f32::MAX), pos2(f32::MIN, f32::MIN)), |(lo, hi), q| (lo.min(*q), hi.max(*q)));
+        let (bw, bh) = ((hi.x - lo.x).max(1e-6), (hi.y - lo.y).max(1e-6));
+        p.scale = VIEW_FILL * (rect.width() / bw).min(rect.height() / bh) * cam.zoom;
+        let middle = vec2((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0) * p.scale;
+        p.centre = rect.center() + cam.pan - middle;
+        p
     }
 
     pub fn project(&self, x: f32, y: f32, z: f32) -> Pos2 {

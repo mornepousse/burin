@@ -11,6 +11,7 @@ mod i18n;
 mod platform;
 mod formula;
 mod modeltools;
+mod solid;
 mod fonts;
 mod variables;
 mod printing;
@@ -86,6 +87,9 @@ struct Program {
     engine: startup::Engine,
     drawn: u32,
     crash_later: Option<String>,
+    /// BURIN_CARVE_FRAMES: how many steps of the carving to save as pictures of the 3D view, and
+    /// how many are saved, all in one window so they match (for the website's animation).
+    carve_frames: Option<(u32, u32)>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -133,7 +137,26 @@ impl eframe::App for Program {
         if self.screenshot.is_some() {
             self.frames += 1;
             ctx.request_repaint();
-            if self.frames >= 120 && !self.requested {
+            // Every few frames, the carving moves on a step and the 3D view is saved as
+            // <picture>-NN.png beside the picture asked for.
+            if let (Some((total, done)), Some(path)) = (self.carve_frames, self.screenshot.clone()) {
+                if done <= total && self.frames >= 40 + done * 10 {
+                    self.app.carve_to(done as f64 / total as f64);
+                    let stem = path.with_extension("");
+                    let shot = PathBuf::from(format!("{}-{done:02}.png", stem.display()));
+                    let area = self.app.view_rect;
+                    let ppp = ctx.pixels_per_point();
+                    // The picture is taken once the step above is drawn.
+                    if self.frames >= 45 + done * 10 {
+                        ctx.request_screenshot(move |image| {
+                            let _ = write_png(&shot, &image.region(&area, Some(ppp)));
+                        });
+                        self.carve_frames = Some((total, done + 1));
+                    }
+                }
+            }
+            let carving = self.carve_frames.is_some_and(|(total, done)| done <= total);
+            if self.frames >= 120 && !self.requested && !carving {
                 self.requested = true;
                 let path = self.screenshot.clone().unwrap();
                 ctx.request_screenshot(move |image| match write_png(&path, &image) {
@@ -244,7 +267,13 @@ fn open_state(app: &mut App, state: &str) {
         let started = crate::platform::Instant::now();
         app.preview(all);
         app.message = None;
-        app.finish_preview();
+        // BURIN_CARVE_SHARE stops the carving part way, the tool where it got to.
+        // BURIN_CARVE_FRAMES leaves it uncarved: the pictures carve it a step at a time.
+        match std::env::var("BURIN_CARVE_SHARE").ok().and_then(|v| v.parse::<f64>().ok()) {
+            Some(share) => app.carve_share(share),
+            None if std::env::var("BURIN_CARVE_FRAMES").is_ok() => app.carve_share(0.0),
+            None => app.finish_preview(),
+        }
         eprintln!("carved in {:?}, {} cells", started.elapsed(), app.sim.as_ref().map_or(0, |s| s.grid.data.len()));
         for t in &mut app.doc.toolpaths {
             t.visible = false;
@@ -1587,7 +1616,8 @@ fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Opti
                     }
                 }
             }
-            Ok(Box::new(Program { app, screenshot, frames: 0, requested: false, engine, drawn: 0, crash_later }))
+            let carve_frames = std::env::var("BURIN_CARVE_FRAMES").ok().and_then(|v| v.parse::<u32>().ok()).filter(|n| *n > 0 && screenshot.is_some()).map(|n| (n, 0));
+            Ok(Box::new(Program { app, screenshot, frames: 0, requested: false, engine, drawn: 0, crash_later, carve_frames }))
         }),
     )
 }

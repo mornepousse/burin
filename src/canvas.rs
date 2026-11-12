@@ -36,6 +36,8 @@ pub enum Drag {
     Envelope(usize),
     Guide(usize),
     Sketch { elem: crate::constraints::Elem, last: P },
+    /// A tab of the toolpath form being slid along its shape.
+    Tab(usize),
 }
 
 /// A corner's new place when the shape keeps its proportions: the shorter way wins (`0x140a70f40`).
@@ -450,6 +452,10 @@ impl App {
 
         let pointer = response.interact_pointer_pos().or(hover);
         if matches!(self.drag, Drag::Guide(_)) {
+            return;
+        }
+        if self.placing_tabs && matches!(&self.right, crate::app::RightMode::Op { op, .. } if op.tabs) {
+            self.place_tabs(response, press, pointer);
             return;
         }
         // An existing guide can be picked up, unless a tool or a shape comes first.
@@ -904,10 +910,21 @@ impl App {
                 // within a panel can be selected without moving the panel.
                 let hit = self.pick_edge(p).or_else(|| self.pick(p).filter(|id| self.selected.contains(id)));
                 match hit {
-                    Some(id) => {
-                        if !self.selected.contains(&id) {
-                            self.selected = vec![id];
-                        }
+                    // A shape not selected yet is only selected by the first press, even if the
+                    // pointer then moves: it takes a second press to move it, so a shape isn't
+                    // moved by mistake while choosing it (as the original does, seen by the person).
+                    Some(id) if !self.selected.contains(&id) => {
+                        self.handles_on = None;
+                        self.selected = vec![id];
+                        self.drag = Drag::None;
+                    }
+                    // Selected but without its handles (the first mode): no move either. The
+                    // original offers the inside of the selection to drag only with the select
+                    // tool's handles on (flag +0x108, hit test `0x140a71300`, kind 3).
+                    Some(_) if self.handles_on.as_deref() != Some(self.selected.as_slice()) => {
+                        self.drag = Drag::None;
+                    }
+                    Some(_) => {
                         self.checkpoint();
                         let at = self.snapped(self.to_world(p));
                         self.drag = Drag::Move { last: at, start: at };
@@ -1256,6 +1273,68 @@ impl App {
     }
 
     /// Each visible path as a thin line, with arrows for its direction and a mark where it starts.
+    /// Putting tabs on the toolpath form's shapes by hand, as the original's tab tool does
+    /// (`0x140a83540`, `0x140a83900`): a click on a shape puts a tab there, or takes off the tab
+    /// nearest the click when one is close enough (`0x140a18e10`); a tab pressed and moved slides
+    /// along its shape, to the place on it nearest the pointer. A press counts as a click when it
+    /// moves no more than 4 pixels (`0x142101038`), as egui tells clicks from drags.
+    fn place_tabs(&mut self, response: &egui::Response, press: Option<Pos2>, pointer: Option<Pos2>) {
+        let reach = (TAB_PICK_PIXELS / self.scale) as f64;
+        let (press, pointer) = (press.map(|p| self.to_world(p)), pointer.map(|p| self.to_world(p)));
+        let drag = std::mem::take(&mut self.drag);
+        let crate::app::RightMode::Op { op, .. } = &mut self.right else {
+            self.drag = drag;
+            return;
+        };
+        let nearest_tab = |spots: &[P], at: P| spots.iter().enumerate().map(|(i, s)| (i, (s[0] - at[0]).hypot(s[1] - at[1]))).filter(|(_, d)| *d <= reach).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i);
+        if let Some(at) = press {
+            if let Some(i) = nearest_tab(&op.tab_spots, at) {
+                self.drag = Drag::Tab(i);
+            }
+            return;
+        }
+        if let Drag::Tab(i) = drag {
+            if let Some(at) = pointer {
+                if let (Some((q, _)), Some(spot)) = (crate::toolpath::nearest_on_paths(&op.paths, at), op.tab_spots.get_mut(i)) {
+                    *spot = q;
+                }
+            }
+            if !response.drag_stopped() {
+                self.drag = Drag::Tab(i);
+            }
+            return;
+        }
+        self.drag = drag;
+        if response.clicked() {
+            let Some(at) = pointer else { return };
+            if let Some(i) = nearest_tab(&op.tab_spots, at) {
+                op.tab_spots.remove(i);
+            } else if let Some((q, d)) = crate::toolpath::nearest_on_paths(&op.paths, at) {
+                if d <= reach {
+                    op.tab_spots.push(q);
+                }
+            }
+        }
+    }
+
+    /// The tabs put on the drawing, as small bars across the shape where each one stands, its
+    /// length along the shape there (the original keeps them with the shapes, and its 2D view
+    /// marks them on the vectors).
+    fn paint_tabs(&self, painter: &egui::Painter, op: &crate::toolpath::Op, view: Rect) {
+        let half = (op.tab_length / 2.0) as f32 * self.scale;
+        for spot in &op.tab_spots {
+            let c = self.to_screen(*spot);
+            if !view.contains(c) {
+                continue;
+            }
+            let along = op.paths.iter().filter_map(|path| tab_direction(path, *spot)).min_by(|a, b| a.0.total_cmp(&b.0)).map_or(vec2(1.0, 0.0), |d| vec2(d.1[0] as f32, -d.1[1] as f32));
+            let across = vec2(-along.y, along.x);
+            let size = half.max(3.0);
+            let corners = [c - along * size - across * 3.0, c + along * size - across * 3.0, c + along * size + across * 3.0, c - along * size + across * 3.0];
+            painter.add(egui::Shape::convex_polygon(corners.to_vec(), TAB_FILL, Stroke::new(1.0, theme::SHEET_INK)));
+        }
+    }
+
     fn paint_toolpaths_2d(&self, painter: &egui::Painter) {
         const SPACING: f32 = 72.0;
         let line = Stroke::new(1.0, Color32::from_rgb(196, 96, 96));
@@ -1282,6 +1361,12 @@ impl App {
                 if run.len() >= 2 {
                     painter.add(egui::Shape::line(run, Stroke::new(width, fill)));
                 }
+            }
+        }
+        // The tabs of the toolpath being set up, while they are put by hand.
+        if let crate::app::RightMode::Op { op, .. } = &self.right {
+            if op.tabs && self.placing_tabs {
+                self.paint_tabs(painter, op, view);
             }
         }
         for tp in self.doc.toolpaths.iter().filter(|t| t.visible && self.doc.toolpath_on_side(t)) {
@@ -1338,6 +1423,9 @@ impl App {
                 run = along - len;
             }
             flush(&mut line_points);
+            if tp.op.tabs {
+                self.paint_tabs(painter, &tp.op, view);
+            }
             if let Some(i) = tp.moves.iter().position(|m| !m.rapid) {
                 let start = tp.moves[i.saturating_sub(1)].p;
                 let r = Rect::from_center_size(self.to_screen([start[0], start[1]]), vec2(8.0, 8.0));
@@ -1511,6 +1599,16 @@ pub(crate) fn off_to_one_side(p: Pos2, q: Pos2, view: Rect) -> bool {
 
 #[cfg(test)]
 mod line_tests {
+    /// A tab is drawn along the shape it stands on: its direction is the nearest side's.
+    #[test]
+    fn a_tab_lies_along_its_shape() {
+        let square = crate::geom::Path::closed(vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]);
+        let (_, d) = super::tab_direction(&square, [10.0, 4.0]).unwrap();
+        assert!(d[0].abs() < 1e-9 && (d[1] - 1.0).abs() < 1e-9, "{d:?}");
+        let (_, d) = super::tab_direction(&square, [5.0, 0.1]).unwrap();
+        assert!((d[0] - 1.0).abs() < 1e-9, "{d:?}");
+    }
+
     use super::*;
 
     #[test]
@@ -1652,3 +1750,21 @@ const HANDLE_OUT: [Vec2; 8] = [
 
 /// How near a gap between letters a click has to be, in pixels on screen.
 const TEXT_GAP_REACH: f32 = 4.0;
+
+/// How near the pointer must be to a tab or a shape to pick it while putting tabs, in pixels.
+const TAB_PICK_PIXELS: f32 = 8.0;
+
+/// The colour a tab is marked in on the drawing.
+const TAB_FILL: Color32 = Color32::from_rgb(232, 170, 60);
+
+/// How far a shape passes from `spot`, and its direction there (a unit vector in the job's
+/// coordinates).
+fn tab_direction(path: &crate::geom::Path, spot: crate::geom::P) -> Option<(f64, [f64; 2])> {
+    path.segments()
+        .filter_map(|(a, b)| {
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let len = dx.hypot(dy);
+            (len > 1e-9).then(|| (crate::geom::dist2_seg(spot, a, b), [dx / len, dy / len]))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+}

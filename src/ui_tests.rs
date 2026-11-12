@@ -114,11 +114,14 @@ fn select_move_and_undo_with_the_mouse() {
     let edge = h.state().to_screen([3.0, 2.0]);
     click_at(&mut h, edge);
     assert_eq!(h.state().selected.len(), 1);
+    // A second click shows its handles: only then can it be dragged.
+    click_at(&mut h, edge);
+    assert!(h.state().handles_on.is_some());
 
     // Drag it by one unit to the right.
     let (from, to) = {
         let s = h.state();
-        (s.to_screen([3.0, 2.0]), s.to_screen([4.0, 2.0]))
+        (s.to_screen([2.5, 2.0]), s.to_screen([3.5, 2.0]))
     };
     drag(&mut h, from, to);
     let (lo, _) = h.state().selected_bbox().unwrap();
@@ -433,6 +436,7 @@ fn dragging_a_shape_keeps_its_rule() {
     let (from, to) = (h.state().to_screen([centre[0] + r, centre[1]]), h.state().to_screen([centre[0] + r + 2.0, centre[1] - 1.0]));
     click_at(&mut h, from);
     h.state_mut().selected = vec![ids[1]];
+    h.state_mut().handles_on = Some(vec![ids[1]]);
     drag(&mut h, from, to);
     let centres: Vec<_> = h.state().doc.vectors.iter().map(|v| crate::bulk::as_circle(&v.paths[0]).unwrap().0).collect();
     assert!((centres[1][0] - centre[0] - 2.0).abs() < 0.1, "the dragged circle went where it was dragged: {centres:?}");
@@ -978,6 +982,8 @@ fn a_shape_dragged_by_its_corner_lands_on_another_shapes_corner() {
     h.state_mut().snap = false;
     let other = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([7.7, 7.7], 1.0, 1.0, 0.0))], Prim::Free);
     let _ = other;
+    let sel = h.state().selected.clone();
+    h.state_mut().handles_on = Some(sel);
     h.run();
     let from = h.state().to_screen([4.3, 4.3]) + vec2(-2.0, 2.0);
     let to = h.state().to_screen([7.2, 7.2]) + vec2(3.0, -3.0);
@@ -1120,8 +1126,9 @@ fn a_box_from_inside_a_shape_selects_what_is_within_and_leaves_the_outer_shape_a
     h.run();
     box_drag(&mut h, [3.5, 3.5], [7.0, 7.0]);
     assert_eq!(h.state().selected, vec![hole]);
-    // A click inside it still selects it, and once selected it can be dragged from inside.
+    // A click inside it still selects it, and once its handles show it can be dragged from inside.
     h.state_mut().selected = vec![panel];
+    h.state_mut().handles_on = Some(vec![panel]);
     h.run();
     box_drag(&mut h, [2.0, 2.0], [2.5, 2.0]);
     let after = crate::geom::bbox(&h.state().doc.vectors[1].paths).unwrap();
@@ -1963,6 +1970,10 @@ fn cut_right_edge(h: &Harness<'static, App>) -> f64 {
 fn a_toolpath_stays_as_it_is_when_its_shape_is_dragged_until_recalculate() {
     let mut h = square_with_profile();
     let before = cut_right_edge(&h);
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().selected = vec![id];
+    h.state_mut().handles_on = Some(vec![id]);
+    h.run();
     let (from, to) = {
         let a = h.state();
         (a.to_screen([4.0, 3.0]), a.to_screen([6.0, 3.0]))
@@ -2408,7 +2419,7 @@ fn a_bar_shows_how_far_it_has_gone_and_nothing_else_can_be_touched() {
     let (mut h, _) = profile_of_square();
     let op = h.state().doc.toolpaths[0].op.clone();
     let x = square_left(&h);
-    let send = hold_recalc(&mut h, Finish::All { unchanged: 0, no_shapes: 0, warn: false });
+    let send = hold_recalc(&mut h, Finish::All { unchanged: 0, no_shapes: 0, warn: false, queued: vec!["Contour 1".into(), "Poche 2".into(), "Trous".into()] });
     h.step();
     h.step();
     h.get_by_label_contains("Toolpath 1 of 3: Contour 1");
@@ -2449,7 +2460,7 @@ fn stopping_keeps_the_old_moves_of_what_isnt_finished() {
     use crate::recalc::Finish;
     let (mut h, _) = profile_of_square();
     let before = h.state().doc.toolpaths[0].moves.clone();
-    let send = hold_recalc(&mut h, Finish::All { unchanged: 0, no_shapes: 0, warn: true });
+    let send = hold_recalc(&mut h, Finish::All { unchanged: 0, no_shapes: 0, warn: true, queued: vec!["Contour 1".into(), "Poche 2".into(), "Trous".into()] });
     h.step();
     h.step();
     h.get_by_label("Stop").click();
@@ -2459,6 +2470,17 @@ fn stopping_keeps_the_old_moves_of_what_isnt_finished() {
     assert!(std::sync::Arc::ptr_eq(&before, &h.state().doc.toolpaths[0].moves));
     assert!(h.state().status.contains("Stopped"), "{}", h.state().status);
     assert!(send.send(crate::recalc::Message::Starting(String::new())).is_err(), "the work is told to stop");
+    // As the original, a box names the toolpaths left unrecalculated.
+    let told = h.state().message.clone().unwrap_or_default();
+    assert!(told.contains("cancelled") && told.contains("Contour 1") && told.contains("Trous"), "{told}");
+}
+
+/// With no toolpaths, Recalculate says there is nothing to recalculate, as the original does.
+#[test]
+fn recalculating_with_no_toolpaths_says_so() {
+    let mut a = App::default();
+    a.recalculate_all();
+    assert!(a.message.as_deref().is_some_and(|m| m.contains("No toolpaths to recalculate")), "{:?}", a.message);
 }
 
 #[test]
@@ -3669,7 +3691,7 @@ fn a_huge_dashed_outline_draws_only_what_shows() {
 }
 
 #[test]
-fn with_handles_a_side_stretches_one_way_and_without_them_it_only_moves() {
+fn with_handles_a_side_stretches_one_way_and_without_them_nothing_moves() {
     let mut h = job_with_square([5.0, 5.0]);
     let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
     let (w, tall) = (hi[0] - lo[0], hi[1] - lo[1]);
@@ -3680,15 +3702,15 @@ fn with_handles_a_side_stretches_one_way_and_without_them_it_only_moves() {
         (a, b[0] - a[0], b[1] - a[1])
     };
     let id = h.state().doc.vectors[0].id;
-    // Selected, no handles: dragging there moves it, keeping its size.
+    // Selected, no handles (the first selection mode): dragging there changes nothing, as the
+    // original only lets a selection be dragged with its handles on (`0x140a71300`).
     h.state_mut().selected = vec![id];
     h.state_mut().handles_on = None;
     h.run();
     drag(&mut h, side, further);
     let (at, nw, nh) = size(&h);
     assert!((nw - w).abs() < 1e-6 && (nh - tall).abs() < 1e-6, "same size");
-    assert!(at[0] > lo[0] + 0.5, "moved");
-    h.state_mut().do_undo();
+    assert!((at[0] - lo[0]).abs() < 1e-9, "not moved");
     h.state_mut().selected = vec![id];
     h.run();
     // With them: the left side stays, and only the width changes.
@@ -7002,13 +7024,15 @@ fn vcarve_flat_against_saved_jobs() {
     for file in files {
         let mut app = App::default();
         if app.open_project(&file).is_err() { continue }
+        if std::env::var("BURIN_ANY").is_ok() { println!("  vectors {} paths {}", app.doc.vectors.len(), app.doc.vectors.iter().map(|v| v.paths.len()).sum::<usize>()); }
         for t in &app.doc.toolpaths {
+            if std::env::var("BURIN_ANY").is_ok() { println!("  op paths {} source {:?}", t.op.paths.len(), t.op.source); }
             if std::env::var("BURIN_WHERE").is_ok() { println!("  [{}] {:?} {} dia {:.2} angle {:.1} kept {}", file.file_name().unwrap().to_string_lossy(), t.op.kind, t.op.name, t.op.tool.dia, t.op.tool.angle, t.kept_moves.as_ref().map_or(0, |m| m.len())); }
-            if t.op.kind != crate::toolpath::OpKind::VCarve || t.op.tool.angle >= crate::toolpath::FLAT_TOOL_ANGLE { continue }
+            if t.op.kind != crate::toolpath::OpKind::VCarve || (std::env::var("BURIN_ANY").is_err() && t.op.tool.angle >= crate::toolpath::FLAT_TOOL_ANGLE) { continue }
             let Some(saved) = &t.kept_moves else { continue };
-            let mut op = t.op.clone();
-            op.clearance_tool = app.doc.toolpaths.iter().find(|o| o.op.kind == crate::toolpath::OpKind::Pocket && o.op.name == t.op.name).map(|o| o.op.tool.clone());
-            let mine = crate::toolpath::generate(&op, app.doc.machine_on_job(), &crate::toolpath::JobSize { width: app.doc.job.width, height: app.doc.job.height, thickness: app.doc.job.thickness }, None).unwrap_or_default();
+            let op = t.op.clone();
+            if std::env::var("BURIN_ANY").is_err() { assert!(op.clearance_tool.is_some(), "the import pairs the V-Carve with its clearing tool"); }
+            let mine = match crate::toolpath::generate(&op, app.doc.machine_on_job(), &crate::toolpath::JobSize { width: app.doc.job.width, height: app.doc.job.height, thickness: app.doc.job.thickness }, None) { Ok(m) => m, Err(e) => { println!("   error {e:?}"); Vec::new() } };
             let traces = |m: &[crate::toolpath::Move]| -> Vec<f64> {
                 let mut out = Vec::new();
                 let mut len = 0.0;
@@ -7031,6 +7055,17 @@ fn vcarve_flat_against_saved_jobs() {
             sb.sort_by(f64::total_cmp);
             println!("{} | {} | saved {} traces {:.1} | burin {} traces {:.1}", file.file_name().unwrap().to_string_lossy(), t.op.name, a.len(), sum(&a), b.len(), sum(&b));
             println!("   saved short {:?}", sa.iter().filter(|v| **v < 20.0).map(|v| format!("{v:.1}")).collect::<Vec<_>>());
+            if std::env::var("BURIN_ANY").is_ok() {
+                let zs = |m: &[crate::toolpath::Move]| { let mut h = std::collections::BTreeMap::new(); for v in m.iter().filter(|v| !v.rapid) { *h.entry((v.p[2] * 2.0).round() as i64).or_insert(0usize) += 1; } h };
+                let per = |m: &[crate::toolpath::Move]| { let mut out = Vec::new(); let mut cur: Vec<[f64; 3]> = Vec::new(); for w in m.windows(2) { if !w[1].rapid { if cur.is_empty() { cur.push(w[0].p) } cur.push(w[1].p) } else if !cur.is_empty() { out.push(std::mem::take(&mut cur)) } } if !cur.is_empty() { out.push(cur) } out };
+                for (name, m) in [("saved", &saved[..]), ("burin", &mine[..])] { for (k, c) in per(m).iter().enumerate().take(80) { let len: f64 = c.windows(2).map(|q| (q[1][0]-q[0][0]).hypot(q[1][1]-q[0][1])).sum(); let flat = c.windows(2).filter(|q| q[0][2] < -4.99 && q[1][2] < -4.99).map(|q| (q[1][0]-q[0][0]).hypot(q[1][1]-q[0][1])).sum::<f64>(); let zmax = c.iter().map(|p| p[2]).fold(f64::MIN, f64::max); println!("   {name} {k}: len {len:.1} flat {flat:.1} zmax {zmax:.2} from ({:.1},{:.1}) n {}", c[0][0], c[0][1], c.len()); } }
+                if let Some(f) = crate::geom::Field::build(&t.op.paths, t.op.tool.dia, 900) { for w in saved.windows(2) { if !w[1].rapid && w[1].p[2] > -0.9 * t.op.flat_depth.max(0.1) { println!("   high saved ({:.2},{:.2},{:.3}) d {:.2} prev ({:.2},{:.2},{:.3})", w[1].p[0], w[1].p[1], w[1].p[2], f.sample(w[1].p[0], w[1].p[1]), w[0].p[0], w[0].p[1], w[0].p[2]); } } }
+                if let Ok(at) = std::env::var("BURIN_NEAR") { let v: Vec<f64> = at.split(',').map(|x| x.parse().unwrap()).collect(); for (k, p) in t.op.paths.iter().enumerate() { let near = p.pts.iter().map(|q| (q[0] - v[0]).hypot(q[1] - v[1])).fold(f64::MAX, f64::min); if near < 4.0 { println!("   path {k} closed {} n {} nearest {near:.2} area {:.1}", p.closed, p.pts.len(), crate::geom::signed_area(&p.pts)); for q in p.pts.iter().filter(|q| (q[0] - v[0]).hypot(q[1] - v[1]) < 3.0) { print!(" ({:.2},{:.2})", q[0], q[1]); } println!(); } } }
+                for m in mine.iter().filter(|m| !m.rapid && m.p[2] > -0.9 * t.op.flat_depth.max(0.1)) { println!("   high burin ({:.2},{:.2},{:.3})", m.p[0], m.p[1], m.p[2]); }
+                println!("   saved z/0.5 {:?}", zs(saved));
+                println!("   burin z/0.5 {:?}", zs(&mine));
+                println!("   tool {} dia {:.2} angle {:.1} flat {:.3} step {:.3} clear {:?} clear_flat {}", t.op.tool.name, t.op.tool.dia, t.op.tool.angle, t.op.flat_depth, t.op.stepover, t.op.clearance_tool.as_ref().map(|c| c.dia), t.op.clear_flat);
+            }
             println!("   burin short {:?}", sb.iter().filter(|v| **v < 20.0).map(|v| format!("{v:.1}")).collect::<Vec<_>>());
             if std::env::var("BURIN_WHERE").is_ok() {
                 let f = crate::geom::Field::build(&t.op.paths, t.op.tool.dia, 900).unwrap();
@@ -7062,7 +7097,7 @@ fn vcarve_flat_against_saved_jobs() {
 /// the repository, so the test passes quietly without it.)
 #[test]
 fn the_test_drawing_for_the_original_reads_back() {
-    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/essais-burin.dxf");
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/01-entrees-et-vcarve.dxf");
     let Ok(text) = std::fs::read_to_string(file) else { return };
     let paths = crate::geom::dxf_read(&text);
     assert_eq!(paths.len(), 20);
@@ -7074,4 +7109,447 @@ fn the_test_drawing_for_the_original_reads_back() {
     holes.sort_by(f64::total_cmp);
     assert_eq!(holes.len(), 15);
     assert!((holes[0] - 4.8).abs() < 0.02 && (holes[14] - 7.6).abs() < 0.02, "{holes:?}");
+    // The rest of the series reads back too, every shape closed, as many as were drawn.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais");
+    for (name, count) in [("02-rampes.dxf", 6), ("03-attaches.dxf", 3), ("04-poche-balayage.dxf", 3), ("05-poche-ilots.dxf", 4)] {
+        let text = std::fs::read_to_string(dir.join(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let paths = crate::geom::dxf_read(&text);
+        assert_eq!(paths.len(), count, "{name}");
+        assert!(paths.iter().all(|p| p.closed), "{name}");
+    }
+}
+
+/// A shape not selected yet is only selected by the first press, even dragged: it doesn't move.
+/// Selected, it still doesn't move until a click shows its handles (the second selection mode);
+/// only then does a drag move it. So choosing a shape never moves it by mistake.
+#[test]
+fn the_first_press_on_a_shape_only_selects_it() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let id = h.state().doc.vectors[0].id;
+    h.state_mut().selected.clear();
+    h.run();
+    let box_of = |h: &Harness<'static, App>| crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    let before = box_of(&h);
+    // From the square's left edge, 2 inches to the right.
+    let (from, to) = (h.state().to_screen([4.0, 5.0]), h.state().to_screen([6.0, 5.0]));
+    drag(&mut h, from, to);
+    assert_eq!(h.state().selected, vec![id], "the first drag selects it");
+    assert_eq!(box_of(&h), before, "and doesn't move it");
+    // Selected without its handles (the first mode): a drag still doesn't move it.
+    drag(&mut h, from, to);
+    assert_eq!(box_of(&h), before, "no move in the first selection mode");
+    // A click on it shows its handles (the second mode); then a drag moves it.
+    click_at(&mut h, from);
+    assert_eq!(h.state().handles_on.as_deref(), Some([id].as_slice()));
+    drag(&mut h, from, to);
+    let after = box_of(&h);
+    assert!((after.0[0] - before.0[0] - 2.0).abs() < 0.05, "with its handles the drag moves it: {:?} → {:?}", before, after);
+}
+
+/// A pasted copy comes selected with its handles showing, and moves with the first drag.
+#[test]
+fn a_pasted_copy_is_ready_to_move() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().copy_selected();
+    h.state_mut().paste();
+    h.run();
+    let copy = h.state().doc.vectors[1].id;
+    assert_eq!(h.state().selected, vec![copy]);
+    assert_eq!(h.state().handles_on.as_deref(), Some([copy].as_slice()), "its handles show at once");
+    let box_of = |h: &Harness<'static, App>| crate::geom::bbox(&h.state().doc.vectors[1].paths).unwrap();
+    let before = box_of(&h);
+    let edge = [before.0[0], (before.0[1] + before.1[1]) / 2.0];
+    let (from, to) = (h.state().to_screen(edge), h.state().to_screen([edge[0], edge[1] - 2.0]));
+    drag(&mut h, from, to);
+    let after = box_of(&h);
+    assert!((before.0[1] - after.0[1] - 2.0).abs() < 0.05, "the first drag moves the copy: {before:?} → {after:?}");
+}
+
+/// The arrow keys move a selection in either mode, handles showing or not: the original's key
+/// handler (`0x140a6edc0`) nudges any non-empty selection, its handles flag (+0x108) only widening
+/// what is redrawn. Only dragging waits for the handles.
+#[test]
+fn the_arrows_move_a_selection_without_its_handles() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().handles_on = None;
+    h.run();
+    let before = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    let after = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    assert!(after.0[0] > before.0[0], "moved right: {before:?} → {after:?}");
+}
+
+/// Every toolpath of the projects in a folder, made again and compared with the saved moves, in
+/// XY and with depths: BURIN_SERIES=<folder> cargo test series_against_saved -- --nocapture
+#[test]
+fn series_against_saved_projects() {
+    let Ok(dir) = std::env::var("BURIN_SERIES") else { return };
+    let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "crv3d")).collect();
+    files.sort();
+    use crate::toolpath::Move;
+    let traces = |m: &[Move]| -> Vec<Vec<[f64; 3]>> {
+        let mut out = Vec::new();
+        let mut cur: Vec<[f64; 3]> = Vec::new();
+        for w in m.windows(2) {
+            if !w[1].rapid && w[1].p[2] < -1e-6 && w[0].p[2] < -1e-6 {
+                if cur.is_empty() { cur.push(w[0].p) }
+                cur.push(w[1].p);
+            } else if !cur.is_empty() { out.push(std::mem::take(&mut cur)) }
+        }
+        if !cur.is_empty() { out.push(cur) }
+        out
+    };
+    let seg_xy = |p: [f64; 3], tr: &[Vec<[f64; 3]>]| -> f64 {
+        let mut best = f64::MAX;
+        for t in tr { for w in t.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let d = [b[0]-a[0], b[1]-a[1]];
+            let l2 = d[0]*d[0]+d[1]*d[1];
+            let k = if l2 > 0.0 { (((p[0]-a[0])*d[0]+(p[1]-a[1])*d[1])/l2).clamp(0.0,1.0) } else { 0.0 };
+            best = best.min((p[0]-a[0]-d[0]*k).hypot(p[1]-a[1]-d[1]*k));
+        }}
+        best
+    };
+    let seg_d = |p: [f64; 3], tr: &[Vec<[f64; 3]>]| -> f64 {
+        let mut best = f64::MAX;
+        for t in tr { for w in t.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let d = [b[0]-a[0], b[1]-a[1], b[2]-a[2]];
+            let l2 = d[0]*d[0]+d[1]*d[1]+d[2]*d[2];
+            let k = if l2 > 0.0 { (((p[0]-a[0])*d[0]+(p[1]-a[1])*d[1]+(p[2]-a[2])*d[2])/l2).clamp(0.0,1.0) } else { 0.0 };
+            best = best.min(((p[0]-a[0]-d[0]*k).powi(2)+(p[1]-a[1]-d[1]*k).powi(2)+(p[2]-a[2]-d[2]*k).powi(2)).sqrt());
+        }}
+        best
+    };
+    for file in files {
+        let mut app = App::default();
+        if let Err(e) = app.open_project(&file) { println!("## {}: {e}", file.display()); continue }
+        println!("## {} — job {}x{}x{} shapes {}", file.file_name().unwrap().to_string_lossy(), app.doc.job.width, app.doc.job.height, app.doc.job.thickness, app.doc.vectors.len());
+        for t in &app.doc.toolpaths {
+            let o = &t.op;
+            println!("== {:?} '{}' tool '{}' kind {:?} dia {:.3} angle {:.1} step {:.2} cut {:.3} pass {:.3} side {:?} ramp {} {:?} {:.2} tabs {} n{} len {:.2} thick {:.2} raster {} angle {:.0} profile {:?} climb {} lead {} {:.2} flat {:.2} clear {:?} sources {}",
+                o.kind, o.name, o.tool.name, o.tool.kind, o.tool.dia, o.tool.angle, o.tool.stepover, o.cut_depth, o.tool.pass_depth, o.side, o.ramp, o.ramp_kind, o.ramp_distance, o.tabs, o.tab_count, o.tab_length, o.tab_thickness, o.raster, o.raster_angle, o.profile_pass, o.climb, o.lead, o.lead_distance, o.flat_depth, o.clearance_tool.as_ref().map(|c| c.dia), o.source.len());
+            let Some(saved) = &t.kept_moves else { continue };
+            let mine = match crate::toolpath::generate(o, app.doc.machine_on_job(), &crate::toolpath::JobSize { width: app.doc.job.width, height: app.doc.job.height, thickness: app.doc.job.thickness }, None) { Ok(m) => m, Err(e) => {
+                println!("   burin error: {e} (paths {}, closed {}, source ids {:?})", o.paths.len(), o.paths.iter().filter(|p| p.closed).count(), &o.source[..o.source.len().min(5)]);
+                for id in &o.source { if let Some(v) = app.doc.vectors.iter().find(|v| v.id == *id) { println!("     source {id}: {} paths box {:?}", v.paths.len(), crate::geom::bbox(&v.paths)); } }
+                let xs: Vec<[f64; 3]> = saved.iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| m.p).collect();
+                let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]); for q in &xs { lo = [lo[0].min(q[0]), lo[1].min(q[1])]; hi = [hi[0].max(q[0]), hi[1].max(q[1])]; }
+                println!("     saved moves box {lo:?} {hi:?}");
+                for t in traces(saved) { let (mut a, mut b) = ([f64::MAX; 2], [f64::MIN; 2]); for q in &t { a = [a[0].min(q[0]), a[1].min(q[1])]; b = [b[0].max(q[0]), b[1].max(q[1])]; } println!("     trace {:.1},{:.1} {:.1},{:.1} n {}", a[0], a[1], b[0], b[1], t.len()); }
+                for id in &o.source { if let Some(v) = app.doc.vectors.iter().find(|v| v.id == *id) { for p in &v.paths { let (a, b) = crate::geom::bbox(std::slice::from_ref(p)).unwrap(); println!("     shape {id} {:.1},{:.1} {:.1},{:.1}", a[0], a[1], b[0], b[1]); } } else { println!("     shape {id} missing"); } }
+                Vec::new() } };
+            let (a, b) = (traces(saved), traces(&mine));
+            let len = |tr: &[Vec<[f64; 3]>]| tr.iter().map(|t| t.windows(2).map(|w| ((w[1][0]-w[0][0]).powi(2)+(w[1][1]-w[0][1]).powi(2)).sqrt()).sum::<f64>()).sum::<f64>();
+            let fa: Vec<f64> = a.iter().flat_map(|t| t.iter().map(|p| seg_d(*p, &b))).collect();
+            let fb: Vec<f64> = b.iter().flat_map(|t| t.iter().map(|p| seg_d(*p, &a))).collect();
+            let xa: Vec<f64> = a.iter().flat_map(|t| t.iter().map(|p| seg_xy(*p, &b))).collect();
+            let xb: Vec<f64> = b.iter().flat_map(|t| t.iter().map(|p| seg_xy(*p, &a))).collect();
+            let worst = |v: &[f64]| v.iter().cloned().fold(0.0, f64::max);
+            let over2 = |v: &[f64], lim: f64| v.iter().filter(|d| **d > lim).count();
+            if let Ok(at) = std::env::var("BURIN_AT") { let v: Vec<f64> = at.split(',').map(|x| x.parse().unwrap()).collect(); for (nm, tr) in [("saved", &a), ("burin", &b)] { for t in tr.iter() { if t.iter().any(|p| (p[0]-v[0]).hypot(p[1]-v[1]) < 4.0) { let pts: Vec<String> = t.iter().take(8).map(|p| format!("({:.3},{:.3},{:.2})", p[0], p[1], p[2])).collect(); println!("     {nm} trace n {} starts {}", t.len(), pts.join(" ")); break; } } } }
+            if std::env::var("BURIN_FAR").is_ok() { for t in &a { for p in t { let d = seg_xy(*p, &b); if d > 0.05 { println!("     far saved ({:.3},{:.3},{:.3}) {d:.3}", p[0], p[1], p[2]); } } } }
+            println!("   XY only: saved→burin worst {:.3} (>0.05: {}) | burin→saved worst {:.3} (>0.05: {})", worst(&xa), over2(&xa, 0.05), worst(&xb), over2(&xb, 0.05));
+            let over = |v: &[f64], lim: f64| v.iter().filter(|d| **d > lim).count();
+            println!("   saved {} traces {:.1} mm, {} pts | burin {} traces {:.1} mm, {} pts | saved→burin worst {:.3} (>{:.2}: {}) | burin→saved worst {:.3} (>{:.2}: {})",
+                a.len(), len(&a), fa.len(), b.len(), len(&b), fb.len(), worst(&fa), 0.05, over(&fa, 0.05), worst(&fb), 0.05, over(&fb, 0.05));
+        }
+    }
+}
+
+
+/// A centred word on one of the person's plates (text set to 2, the middle): its contour, cut on the
+/// letters, follows them once they're read where the original puts them, so it isn't shown as
+/// needing Recalculate, and Burin's cut lies on the saved one. (The job stays out of the
+/// repository; the test passes quietly without it.)
+#[test]
+fn a_centred_text_is_cut_where_the_original_cut_it() {
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/texte-centre.crv3d");
+    if !file.exists() { return }
+    let mut app = App::default();
+    app.open_project(&file).unwrap();
+    // The contour cut on the word: on its lines, 1 mm deep.
+    let t = app.doc.toolpaths.iter().find(|t| t.op.kind == crate::toolpath::OpKind::Profile && t.op.side == crate::toolpath::Side::On && (t.op.cut_depth - 1.0).abs() < 1e-6).unwrap();
+    assert!(t.op.paths.len() >= 9, "the contour lost its letters");
+    let saved = t.kept_moves.as_ref().unwrap();
+    let mine = crate::toolpath::generate(&t.op, app.doc.machine_on_job(), &crate::toolpath::JobSize { width: app.doc.job.width, height: app.doc.job.height, thickness: app.doc.job.thickness }, None).unwrap();
+    let cut: Vec<[f64; 2]> = mine.windows(2).filter(|w| !w[1].rapid && w[1].p[2] < 0.0).map(|w| [w[1].p[0], w[1].p[1]]).collect();
+    for m in saved.iter().filter(|m| !m.rapid && m.p[2] < 0.0) {
+        let near = cut.windows(2).map(|w| crate::geom::dist2_seg([m.p[0], m.p[1]], w[0], w[1])).fold(f64::MAX, f64::min).sqrt();
+        assert!(near < 0.05 || cut.iter().any(|q| (q[0] - m.p[0]).hypot(q[1] - m.p[1]) < 0.05), "a saved cut point {:?} is {near:.3} from Burin's", m.p);
+    }
+}
+
+/// The 60 plate's two groups of 12 holes: their shapes carry no layer's mark in their heads,
+/// and their circles are drawn with few points. The contour on them finds every hole, and its
+/// leads go straight to the holes' middles as the original's do: every saved cut lies on
+/// Burin's. (The job stays out of the repository; the test passes quietly without it.)
+#[test]
+fn grouped_holes_are_found_and_led_into_as_the_original_does() {
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/trous-en-groupe.crv3d");
+    if !file.exists() { return }
+    let mut app = App::default();
+    app.open_project(&file).unwrap();
+    // The contour round the holes: inside, 13.5 mm deep in passes of 2.
+    let t = app.doc.toolpaths.iter().find(|t| t.op.kind == crate::toolpath::OpKind::Profile && t.op.side == crate::toolpath::Side::Inside && (t.op.cut_depth - 13.5).abs() < 1e-6 && (t.op.tool.pass_depth - 2.0).abs() < 1e-6).unwrap();
+    let saved = t.kept_moves.as_ref().unwrap();
+    let mine = crate::toolpath::generate(&t.op, app.doc.machine_on_job(), &crate::toolpath::JobSize { width: app.doc.job.width, height: app.doc.job.height, thickness: app.doc.job.thickness }, None).unwrap();
+    let cut: Vec<[f64; 2]> = mine.iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| [m.p[0], m.p[1]]).collect();
+    let mut worst = 0f64;
+    for m in saved.iter().filter(|m| !m.rapid && m.p[2] < 0.0) {
+        let near = cut.windows(2).map(|w| crate::geom::dist2_seg([m.p[0], m.p[1]], w[0], w[1])).fold(f64::MAX, f64::min).sqrt();
+        worst = worst.max(near);
+    }
+    assert!(worst < 0.05, "a saved cut lies {worst:.3} from Burin's");
+}
+
+/// A new V-Carve starts with a tool it can carve with, never an end mill or a drill.
+#[test]
+fn a_new_vcarve_starts_with_a_carving_tool() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().start_op(crate::toolpath::OpKind::VCarve);
+    h.run();
+    let RightMode::Op { op, .. } = &h.state().right else { panic!("the form is open") };
+    assert!(crate::panels::vcarve_can_use(op.tool.kind), "{:?}", op.tool.kind);
+}
+
+
+/// A V-Carve clears its flats with an end mill, a ball nose or an engraving tool, never a V-bit
+/// or a drill, as the original's help for the form says.
+#[test]
+fn a_vcarve_clearing_tool_is_flat_round_or_engraving() {
+    use crate::relief::ToolKind::*;
+    use crate::panels::vcarve_clearing_can_use as ok;
+    assert!(ok(EndMill) && ok(BallNose) && ok(Engraving));
+    assert!(!ok(VBit) && !ok(Drill));
+}
+
+/// Which saved contours show as needing Recalculate when opened, because their moves were made
+/// from other shapes: BURIN_JOBS=<folder> cargo test contours_behind_on_open -- --nocapture
+#[test]
+fn contours_behind_on_open_in_saved_jobs() {
+    let Ok(dir) = std::env::var("BURIN_JOBS") else { return };
+    let mut files = Vec::new();
+    let mut todo = vec![std::path::PathBuf::from(dir)];
+    while let Some(d) = todo.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() { todo.push(p) } else if p.extension().is_some_and(|x| x == "crv3d") { files.push(p) }
+        }
+    }
+    files.sort();
+    let (mut contours, mut behind) = (0, 0);
+    for file in files {
+        let mut app = App::default();
+        if app.open_project(&file).is_err() { continue }
+        let late: Vec<String> = app.follow_tasks().into_iter().map(|(i, _)| app.doc.toolpaths[i].op.name.clone()).collect();
+        contours += app.doc.toolpaths.iter().filter(|t| matches!(t.op.kind, crate::toolpath::OpKind::Profile) && !t.op.source.is_empty()).count();
+        behind += late.len();
+        if !late.is_empty() {
+            println!("{}: {:?}", file.file_name().unwrap().to_string_lossy(), late);
+        }
+    }
+    println!("{behind} of {contours} contours made from their shapes are behind");
+}
+
+/// A saved contour follows its shape when its cut runs a tool radius away all round, and doesn't
+/// when it was made from a shape somewhere else.
+#[test]
+fn a_saved_contour_made_from_another_shape_is_told_apart() {
+    use crate::geom::Path;
+    use crate::toolpath::Move;
+    let square = Path::closed(vec![[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [0.0, 20.0]]);
+    let around = |dx: f64| -> Vec<Move> {
+        let mut m = vec![Move { p: [-1.5 + dx, -1.5, 5.0], rapid: true, join: false }];
+        for q in [[-1.5, -1.5], [21.5, -1.5], [21.5, 21.5], [-1.5, 21.5], [-1.5, -1.5]] {
+            m.push(Move { p: [q[0] + dx, q[1], -3.0], rapid: false, join: false });
+        }
+        m
+    };
+    assert!(crate::app::kept_moves_follow(&[square.clone()], &around(0.0), 1.5 + 1.0));
+    assert!(!crate::app::kept_moves_follow(&[square.clone()], &around(3.5), 1.5 + 1.0));
+    // A hole too narrow for the tool isn't cut at all, and that's no sign of another drawing.
+    let hole = Path::closed(crate::geom::circle([50.0, 50.0], 1.0));
+    assert!(crate::app::kept_moves_follow(&[square, hole], &around(0.0), 1.5 + 1.0));
+}
+
+/// A 20 mm square cut out by a profile right through, with a pocket 3 mm deep and a hole drilled
+/// through, as a project to export parts from.
+fn part_with_pocket_and_hole() -> App {
+    use crate::toolpath::{blank_op, default_tools, OpKind, Side};
+    let mut a = App::default();
+    a.doc.job.width = 100.0;
+    a.doc.job.height = 100.0;
+    a.doc.job.thickness = 10.0;
+    a.doc.job.units = crate::app::Units::Mm;
+    let square = crate::geom::Path::closed(crate::geom::rect([50.0, 50.0], 20.0, 20.0, 0.0));
+    let id = a.doc.add_vector(vec![square.clone()], Prim::Free);
+    a.doc.vectors.iter_mut().find(|v| v.id == id).unwrap().piece = Some(77);
+    a.doc.piece_names.insert(77, "Couvercle".into());
+    let tool = default_tools().into_iter().find(|t| t.kind == crate::relief::ToolKind::EndMill && t.metric).unwrap();
+    let mut cut = blank_op(OpKind::Profile, "Contour".into(), tool.clone(), 10.0, vec![square]);
+    cut.side = Side::Outside;
+    let pocket = blank_op(OpKind::Pocket, "Poche".into(), tool.clone(), 3.0, vec![crate::geom::Path::closed(crate::geom::rect([46.0, 50.0], 6.0, 6.0, 0.0))]);
+    let drill = blank_op(OpKind::Drill, "Trou".into(), tool, 10.0, vec![crate::geom::Path::closed(crate::geom::circle([55.0, 55.0], 1.0))]);
+    for op in [cut, pocket, drill] {
+        a.doc.toolpaths.push(crate::app::Toolpath { op, visible: true, color: [0, 0, 0], moves: Default::default(), kept_moves: None, kept_steps: None, face: 0, sheet: 0 });
+    }
+    a
+}
+
+/// The parts come out one file each, named after the drawing's piece, as closed solids: in the STL
+/// every edge is met once each way, and the volume is the square less the pocket and the hole.
+#[test]
+fn a_machined_part_comes_out_as_a_closed_solid_named_after_its_piece() {
+    let a = part_with_pocket_and_hole();
+    let files = a.carved_piece_files_as("pieces", false);
+    let names: Vec<&str> = files.iter().map(|(f, _)| f.as_str()).collect();
+    assert_eq!(names, ["pieces-Couvercle"], "the part only, not the waste around it");
+    let stl = &files[0].1;
+    let n = u32::from_le_bytes(stl[80..84].try_into().unwrap()) as usize;
+    assert_eq!(stl.len(), 84 + n * 50);
+    let mut edges: std::collections::HashMap<([u32; 3], [u32; 3]), i32> = std::collections::HashMap::new();
+    let mut volume = 0.0f64;
+    for t in 0..n {
+        let at = 84 + t * 50 + 12;
+        let p: Vec<[f32; 3]> = (0..3).map(|k| std::array::from_fn(|j| f32::from_le_bytes(stl[at + k * 12 + j * 4..at + k * 12 + j * 4 + 4].try_into().unwrap()))).collect();
+        let (a, b, c) = (p[0].map(f64::from), p[1].map(f64::from), p[2].map(f64::from));
+        volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6.0;
+        for k in 0..3 {
+            let (u, v) = (p[k].map(f32::to_bits), p[(k + 1) % 3].map(f32::to_bits));
+            let key = if u < v { (u, v) } else { (v, u) };
+            *edges.entry(key).or_default() += if u < v { 1 } else { -1 };
+        }
+    }
+    assert!(edges.values().all(|v| *v == 0), "closed, its faces turned the same way");
+    // The square, less the pocket and the drilled hole (the drill's size; its circle a polygon close to it).
+    let r = a.doc.toolpaths[2].op.tool.dia / 2.0;
+    let expected = 20.0 * 20.0 * 10.0 - 6.0 * 6.0 * 3.0 - std::f64::consts::PI * r * r * 10.0;
+    assert!((volume - expected).abs() < 0.01 * expected, "volume {volume:.1} against {expected:.1}");
+}
+
+/// The same part as a STEP solid: a closed shell of faces in millimetres, the drilled hole a
+/// cylinder bounded by true circles, every edge met by two faces, once each way.
+#[test]
+fn a_machined_part_comes_out_as_a_step_solid() {
+    let a = part_with_pocket_and_hole();
+    let files = a.carved_piece_files_as("pieces", true);
+    assert_eq!(files.len(), 1);
+    let (name, bytes) = &files[0];
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(text.starts_with("ISO-10303-21;") && text.trim_end().ends_with("END-ISO-10303-21;"));
+    assert!(text.contains("CLOSED_SHELL") && text.contains(&format!("MANIFOLD_SOLID_BREP('{name}'")));
+    assert!(text.contains("SI_UNIT(.MILLI.,.METRE.)"));
+    // Top, pocket floor, underside, four sides, four pocket walls, and the hole in two halves,
+    // each wall from top to bottom though the pocket's floor is a level between.
+    assert_eq!(text.matches("CYLINDRICAL_SURFACE(").count(), 2, "the hole a cylinder, in two halves");
+    assert_eq!(text.matches("ADVANCED_FACE(").count(), 3 + 4 + 4 + 2);
+    assert_eq!(text.matches("CIRCLE(").count(), 4, "two half circles at the top, two at the bottom");
+    let mut uses: std::collections::HashMap<&str, i32> = std::collections::HashMap::new();
+    let mut count: std::collections::HashMap<&str, i32> = std::collections::HashMap::new();
+    for line in text.lines().filter(|l| l.contains("ORIENTED_EDGE")) {
+        let inside = line.split("ORIENTED_EDGE('',*,*,").nth(1).unwrap();
+        let (edge, way) = inside.split_once(',').unwrap();
+        *uses.entry(edge).or_default() += if way.starts_with(".T.") { 1 } else { -1 };
+        *count.entry(edge).or_default() += 1;
+    }
+    let curves = text.matches("EDGE_CURVE(").count();
+    assert_eq!(count.len(), curves, "every edge in use");
+    assert!(count.values().all(|v| *v == 2) && uses.values().all(|v| *v == 0), "every edge met by two faces, once each way");
+}
+
+
+
+
+
+
+
+
+
+
+
+/// Tabs put by hand, as with the original's tab tool: "Place by hand" starts from the tabs spread
+/// evenly; a click on the shape puts one there, a click on a tab takes it off, and a tab dragged
+/// slides along the shape.
+#[test]
+fn tabs_are_put_on_taken_off_and_slid_by_hand() {
+    let (mut h, _) = profile_of_square();
+    h.state_mut().show_advanced = true;
+    h.state_mut().edit_toolpath();
+    h.run();
+    if let RightMode::Op { op, .. } = &mut h.state_mut().right {
+        op.tabs = true;
+        op.tab_count = 2;
+    }
+    h.run();
+    click(&mut h, "Place by hand");
+    let spots = |h: &Harness<'static, App>| match &h.state().right {
+        RightMode::Op { op, .. } => (op.tab_spots.clone(), op.paths.clone()),
+        _ => panic!("the form is open"),
+    };
+    let (start, paths) = spots(&h);
+    assert_eq!(start.len(), 2, "two tabs spread evenly to start from");
+    // A place on the shape away from both tabs: a corner.
+    let corner = paths[0].pts[0];
+    let at = h.state().to_screen(corner);
+    click_at(&mut h, at);
+    let (now, _) = spots(&h);
+    assert_eq!(now.len(), 3, "a tab put at the corner");
+    assert!((now[2][0] - corner[0]).hypot(now[2][1] - corner[1]) < 0.05);
+    // A click on it takes it off again.
+    click_at(&mut h, at);
+    assert_eq!(spots(&h).0.len(), 2);
+    // Dragged, the first tab slides to the place on the shape nearest the pointer.
+    let from = h.state().to_screen(start[0]);
+    let target = paths[0].pts[1];
+    let to = h.state().to_screen([target[0] + 0.3, target[1] + 0.3]);
+    drag(&mut h, from, to);
+    let (moved, _) = spots(&h);
+    assert!((moved[0][0] - target[0]).hypot(moved[0][1] - target[1]) < 0.35, "{:?} against {target:?}", moved[0]);
+    assert!(crate::toolpath::nearest_on_paths(&paths, moved[0]).unwrap().1 < 1e-6, "still on the shape");
+}
+
+/// Tabs put on a shape go with it when it is moved and the toolpath recalculated.
+#[test]
+fn tabs_put_on_a_shape_follow_it_when_it_moves() {
+    let (mut h, _) = profile_of_square();
+    let edge = h.state().doc.toolpaths[0].op.paths[0].pts.clone();
+    let mid = [(edge[0][0] + edge[1][0]) / 2.0, (edge[0][1] + edge[1][1]) / 2.0];
+    {
+        let a = h.state_mut();
+        a.doc.toolpaths[0].op.tabs = true;
+        a.doc.toolpaths[0].op.tab_spots = vec![mid];
+        for q in a.doc.vectors[0].paths.iter_mut().flat_map(|p| p.pts.iter_mut()) {
+            q[0] += 1.0;
+            q[1] += 2.0;
+        }
+    }
+    h.run();
+    h.get_by_label("Recalculate all toolpaths").click();
+    h.run();
+    for _ in 0..200 {
+        if h.state().recalc.is_none() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        h.run();
+    }
+    let spots = &h.state().doc.toolpaths[0].op.tab_spots;
+    assert_eq!(spots.len(), 1);
+    assert!((spots[0][0] - mid[0] - 1.0).abs() < 1e-9 && (spots[0][1] - mid[1] - 2.0).abs() < 1e-9, "{spots:?} from {mid:?}");
+}
+
+
+/// All the parts in one STEP assembly, each a product of its own used once by the assembly, so a
+/// CAD program opens them as separate components.
+#[test]
+fn the_parts_come_out_together_as_one_step_assembly() {
+    let a = part_with_pocket_and_hole();
+    let text = String::from_utf8(a.carved_assembly_step("pieces").unwrap()).unwrap();
+    assert!(text.starts_with("ISO-10303-21;"));
+    assert_eq!(text.matches("NEXT_ASSEMBLY_USAGE_OCCURRENCE(").count(), 1);
+    assert_eq!(text.matches("MANIFOLD_SOLID_BREP(").count(), 1);
+    assert!(text.contains("PRODUCT('pieces','pieces'") && text.contains("PRODUCT('pieces-Couvercle'"));
+    assert!(text.contains("CONTEXT_DEPENDENT_SHAPE_REPRESENTATION("));
 }
