@@ -130,6 +130,10 @@ Unsaved work is copied every two minutes and offered at the next start if Burin 
 opens in your browser: you see everything in it, and it only goes if you confirm it. Your work, its file
 names and the name of your home folder are never in it.
 
+On its start page, Burin asks once whether to look for a new version each time it starts (also in
+Preferences). Only if you say yes does it ask GitHub for the number of the project's latest release, and
+show a link when a newer one is out. Nothing about you or your work goes with it.
+
 <img src="docs/retour.png" alt="The window to send feedback" width="640">
 
 ## Still missing
