@@ -425,7 +425,10 @@ pub fn text_paths(text: &str, height: f64, origin: P) -> Vec<Path> {
     crate::fonts::text_paths(text, height, origin, &crate::fonts::TextStyle::default())
 }
 
-/// Reads LINE, ARC, CIRCLE, LWPOLYLINE and POLYLINE entities. Touching lines stay separate paths.
+/// How far a step drawn for an arc may stray from it: half the original's default toolpath
+/// tolerance (0.01 mm).
+pub const ARC_SAG: f64 = 0.005;
+
 /// The points between two ends of a bowed side. A bulge is the tangent of a quarter of the
 /// angle the side turns through, positive turning anticlockwise.
 pub fn bow_points(a: P, b: P, bulge: f64) -> Vec<P> {
@@ -441,7 +444,12 @@ pub fn bow_points(a: P, b: P, bulge: f64) -> Vec<P> {
     let (nx, ny) = (-(b[1] - a[1]) / chord, (b[0] - a[0]) / chord);
     let c = [mid[0] + nx * back, mid[1] + ny * back];
     let start = (a[1] - c[1]).atan2(a[0] - c[0]);
-    let steps = ((turn.abs() / (TAU / 128.0)).ceil() as usize).max(2);
+    // Steps of at most 1/128 of a turn, and short enough that a step strays no more than
+    // `ARC_SAG` from the arc: on a wide, gentle arc (a plate's side of radius 700) steps of a turn's
+    // 1/128 are centimetres long and miss the arc by 0.13 mm in their middle.
+    let by_sag = if radius > ARC_SAG { 2.0 * (1.0 - ARC_SAG / radius).acos() } else { TAU / 128.0 };
+    let step = (TAU / 128.0).min(by_sag).max(1e-4);
+    let steps = ((turn.abs() / step).ceil() as usize).clamp(2, 4096);
     (1..steps)
         .map(|s| {
             let t = start + turn * s as f64 / steps as f64;
@@ -643,6 +651,22 @@ pub fn dxf_write(paths: &[Path]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A wide, gentle arc (a plate's side, radius 700, 3° of it) is drawn with steps that stay
+    /// within `ARC_SAG` of it; a small one keeps steps of 1/128 of a turn.
+    #[test]
+    fn an_arc_is_drawn_close_to_its_curve_however_wide() {
+        let (r, turn) = (700.0f64, 3f64.to_radians());
+        let (a, b) = ([r, 0.0], [r * turn.cos(), r * turn.sin()]);
+        let pts: Vec<P> = std::iter::once(a).chain(bow_points(a, b, (turn / 4.0).tan())).chain(std::iter::once(b)).collect();
+        for w in pts.windows(2) {
+            let mid = [(w[0][0] + w[1][0]) / 2.0, (w[0][1] + w[1][1]) / 2.0];
+            let off = r - mid[0].hypot(mid[1]);
+            assert!(off <= ARC_SAG + 1e-9, "a step strays {off:.4} from the arc");
+        }
+        let small = bow_points([1.0, 0.0], [-1.0, 0.0], 1.0);
+        assert_eq!(small.len(), 63, "half a turn of a small circle: 64 steps");
+    }
 
     #[test]
     fn offset_of_a_circle_has_the_right_radius() {
