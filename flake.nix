@@ -13,10 +13,10 @@
         libGL
         libxkbcommon
         wayland
-        xorg.libX11
-        xorg.libXcursor
-        xorg.libXi
-        xorg.libXrandr
+        libx11
+        libxcursor
+        libxi
+        libxrandr
         vulkan-loader
       ];
     in
@@ -70,7 +70,8 @@
       apps = forAll (pkgs: {
         default = {
           type = "app";
-          program = "${self.packages.${pkgs.system}.burin}/bin/burin";
+          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.burin}/bin/burin";
+          meta.description = "Run Burin";
         };
       });
 
