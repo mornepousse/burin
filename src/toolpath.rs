@@ -1543,6 +1543,8 @@ fn start_at_corner_arc(pts: &mut Vec<P>, start: P, before: P, after: P) {
         }
         best.1
     };
+    // Both ends are as near the start: on two copies of one shape (the 80 cm plates' accessory
+    // holes, 200 mm apart) the original starts one at each end, so its choice can't be told.
     for (first, second) in [(e1, e2), (e2, e1)] {
         let mut trial = pts.clone();
         start_loop_near_point(&mut trial, first);
