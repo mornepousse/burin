@@ -7248,6 +7248,7 @@ fn series_against_saved_projects() {
             let xb: Vec<f64> = b.iter().flat_map(|t| t.iter().map(|p| seg_xy(*p, &a))).collect();
             let worst = |v: &[f64]| v.iter().cloned().fold(0.0, f64::max);
             let over2 = |v: &[f64], lim: f64| v.iter().filter(|d| **d > lim).count();
+            if std::env::var("BURIN_DIST").is_ok() { if let Some(f) = crate::geom::Field::build(&o.paths, o.tool.dia, 900) { for (nm, tr) in [("saved", &a), ("burin", &b)] { let mut h = std::collections::BTreeMap::new(); for t in tr.iter() { for p in t { *h.entry((f.sample(p[0], p[1]) * 10.0).round() as i64).or_insert(0usize) += 1; } } let v: Vec<String> = h.iter().take(12).map(|(k, n)| format!("{:.1}:{n}", *k as f64 / 10.0)).collect(); println!("     {nm} distance from the outline {}", v.join(" ")); } } }
             if let Ok(at) = std::env::var("BURIN_NEAR") { let v: Vec<f64> = at.split(',').map(|x| x.parse().unwrap()).collect(); for (k, p) in o.paths.iter().enumerate() { let near = p.pts.iter().map(|q| (q[0] - v[0]).hypot(q[1] - v[1])).fold(f64::MAX, f64::min); if near < 5000.0 { let (lo, hi) = crate::geom::bbox(std::slice::from_ref(p)).unwrap(); println!("     path {k} closed {} n {} near {near:.2} box {lo:?} {hi:?} first {:?}", p.closed, p.pts.len(), &p.pts[..p.pts.len().min(4)]); } } println!("     paths {} source {:?}", o.paths.len(), o.source); for t in traces(saved) { let (mut a, mut b) = ([f64::MAX; 2], [f64::MIN; 2]); for q in &t { a = [a[0].min(q[0]), a[1].min(q[1])]; b = [b[0].max(q[0]), b[1].max(q[1])]; } println!("     saved trace {:.2},{:.2} {:.2},{:.2} n {} z {:.2}", a[0], a[1], b[0], b[1], t.len(), t[0][2]); } }
             if let Ok(at) = std::env::var("BURIN_AT") { let v: Vec<f64> = at.split(',').map(|x| x.parse().unwrap()).collect(); for (nm, tr) in [("saved", &a), ("burin", &b)] { for t in tr.iter() { if t.iter().any(|p| (p[0]-v[0]).hypot(p[1]-v[1]) < 4.0) { let pts: Vec<String> = t.iter().take(8).map(|p| format!("({:.3},{:.3},{:.2})", p[0], p[1], p[2])).collect(); println!("     {nm} trace n {} starts {}", t.len(), pts.join(" ")); break; } } } }
             if std::env::var("BURIN_FAR").is_ok() { for t in &a { for p in t { let d = seg_xy(*p, &b); if d > 0.05 { println!("     far saved ({:.3},{:.3},{:.3}) {d:.3}", p[0], p[1], p[2]); } } } }
@@ -7303,6 +7304,30 @@ fn grouped_holes_are_found_and_led_into_as_the_original_does() {
         worst = worst.max(near);
     }
     assert!(worst < 0.05, "a saved cut lies {worst:.3} from Burin's");
+}
+
+/// A V-Carve saved with a clearing tool comes as two toolpaths; the clearing one clears the flat,
+/// which starts where the V reaches the flat depth. Opened, it keeps that far off the letters, as
+/// the saved rings do (a 90° V-bit at a 1 mm flat: 1 mm, then the clearing tool's radius), and
+/// Burin's cut lies on the saved one. (The job stays out of the repository.)
+#[test]
+fn a_vcarve_clearing_pocket_keeps_off_the_letters_by_the_flat() {
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/vcarve-degagement.crv3d");
+    if !file.exists() { return }
+    let mut app = App::default();
+    app.open_project(&file).unwrap();
+    let carve = app.doc.toolpaths.iter().find(|t| t.op.kind == crate::toolpath::OpKind::VCarve && t.op.clearance_tool.is_some()).unwrap();
+    let t = app.doc.toolpaths.iter().find(|t| t.op.kind == crate::toolpath::OpKind::Pocket && t.op.name == carve.op.name).unwrap();
+    assert!((t.op.allowance - 1.0).abs() < 1e-6, "{}", t.op.allowance);
+    let saved = t.kept_moves.as_ref().unwrap();
+    let mine = crate::toolpath::generate(&t.op, app.doc.machine_on_job(), &crate::toolpath::JobSize { width: app.doc.job.width, height: app.doc.job.height, thickness: app.doc.job.thickness }, None).unwrap();
+    let kept: Vec<[f64; 2]> = saved.iter().filter(|m| !m.rapid && m.p[2] < 0.0).map(|m| [m.p[0], m.p[1]]).collect();
+    let mut worst = 0f64;
+    for m in mine.iter().filter(|m| !m.rapid && m.p[2] < 0.0) {
+        let near = kept.windows(2).map(|w| crate::geom::dist2_seg([m.p[0], m.p[1]], w[0], w[1])).fold(f64::MAX, f64::min).sqrt();
+        worst = worst.max(near);
+    }
+    assert!(worst < 0.1, "a cut of Burin's lies {worst:.3} from the saved ones");
 }
 
 /// A new V-Carve starts with a tool it can carve with, never an end mill or a drill.

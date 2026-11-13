@@ -2258,6 +2258,17 @@ impl App {
                 if op.clearance_tool.is_none() {
                     op.clearance_tool = Some(tool);
                 }
+                // The clearing toolpath clears the flat, which starts where the V reaches the flat
+                // depth: as when Burin makes the pair, its pocket keeps that far off the shapes
+                // (the plates' clearing rings lie 1.0 + the tool's radius in, a 90° V-bit at a 1 mm
+                // flat).
+                let (flat, half, carve_allowance) = (op.flat_depth, (op.tool.angle.to_radians() / 2.0).tan(), op.allowance);
+                if flat > 0.0 && op.tool.angle >= toolpath::FLAT_TOOL_ANGLE {
+                    let clear = &mut doc.toolpaths[base + j].op;
+                    if clear.kind == OpKind::Pocket && clear.allowance.abs() < 1e-9 {
+                        clear.allowance = flat * half + carve_allowance;
+                    }
+                }
             }
         }
         // Last: toolpaths found their shapes by what each goes by, and still can inside a group.
