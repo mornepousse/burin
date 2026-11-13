@@ -85,6 +85,19 @@ chmod +x Burin-*-x86_64.AppImage
 Then `Help > Add to Applications Menu` puts Burin in your desktop's menu and lets it open `.burin`
 files. A project can also be given as an argument, or dropped on the window.
 
+### With Nix
+
+The repository is a flake:
+
+```sh
+nix run github:mornepousse/burin          # run it
+nix profile install github:mornepousse/burin   # install it, with its menu entry
+nix develop                                # a shell with Rust and the libraries, in the repository
+```
+
+On NixOS, `inputs.burin.url = "github:mornepousse/burin";` then `inputs.burin.packages.${system}.default`
+in `environment.systemPackages`.
+
 ### In a browser
 
 **[burin.cc/app](https://burin.cc/app/)** runs Burin in the page.
