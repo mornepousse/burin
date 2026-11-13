@@ -2097,6 +2097,72 @@ impl App {
         }
     }
 
+    /// The shapes the toolpath will cut, picked without leaving it: in the Machining workspace the
+    /// drawing tab, with its "select similar" and "several shapes" tools, is out of sight. How
+    /// many are picked; one button takes the look-alikes of those picked; and the groups of
+    /// shapes alike on the sheet, each a line to pick (Shift or Ctrl adds or takes it away).
+    fn op_shapes(&mut self, ui: &mut Ui, unit: &str) {
+        use crate::bulk::Class;
+        let open_id = egui::Id::unique("op_shape_groups_open");
+        let mut open = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+        card(ui, |ui| {
+            // One line: how many are picked, the look-alikes, and the groups of shapes alike.
+            ui.horizontal(|ui| {
+                crate::ui::icon_caps(ui, Icon::Select, crate::i18n::tr("Shapes to cut"));
+                ui.label(RichText::new(tf!("{} shapes picked", self.selected.len())).color(theme::MUTED()));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let some = !self.selected.is_empty();
+                    if icon_button(ui, Icon::Bulk, crate::i18n::tr("Pick by groups of shapes alike"), true, open).clicked() {
+                        open = !open;
+                    }
+                    if icon_button(ui, Icon::Similar, crate::i18n::tr("Select similar shapes"), some, false).clicked() {
+                        let tol = self.default_similar_tolerance();
+                        self.select_similar(tol);
+                    }
+                });
+            });
+            if !open {
+                return;
+            }
+            note(ui, crate::i18n::tr("Click a line to pick its shapes; with Shift or Ctrl, to add or take them away."));
+            let groups = self.similar_groups(self.default_similar_tolerance(), false);
+            if groups.is_empty() {
+                note(ui, crate::i18n::tr("Nothing drawn yet."));
+            }
+            let adding = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+            egui::ScrollArea::vertical().max_height(160.0).id_salt("op_shape_groups_list").show(ui, |ui| {
+                for g in &groups {
+                    let all = g.ids.iter().all(|id| self.selected.contains(id));
+                    let text = format!("{} x  {}", g.ids.len(), g.class.describe(unit));
+                    let icon = match g.class {
+                        Class::Circle { .. } => Icon::Circle,
+                        Class::Rectangle { .. } => Icon::Rect,
+                        Class::Other { .. } => Icon::Curve,
+                    };
+                    let picked = ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                        crate::icons::paint(ui.painter(), r, icon, true);
+                        ui.selectable_label(all, text).clicked()
+                    }).inner;
+                    if picked {
+                        if !adding {
+                            self.selected = g.ids.clone();
+                        } else if all {
+                            self.selected.retain(|id| !g.ids.contains(id));
+                        } else {
+                            for id in &g.ids {
+                                if !self.selected.contains(id) {
+                                    self.selected.push(*id);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        });
+        ui.ctx().data_mut(|d| d.insert_temp(open_id, open));
+    }
+
     pub fn op_form(&mut self, ui: &mut Ui, mut op: Op, editing: Option<usize>, mut tab: usize, mut error: Option<String>) {
         let full = ui.available_rect_before_wrap();
         let unit = self.doc.job.unit();
@@ -2129,6 +2195,9 @@ impl App {
                         ui.add(TextEdit::singleline(&mut op.name).font(egui::FontId::proportional(15.0)).desired_width(f32::INFINITY).hint_text(crate::i18n::tr("Name")));
                     });
                 });
+                if !matches!(op.kind, OpKind::Rough3D | OpKind::Finish3D) {
+                    self.op_shapes(ui, unit);
+                }
                 self.op_depths(ui, &mut op, unit);
                 self.op_tool(ui, &mut op, unit);
                 match op.kind {

@@ -1918,6 +1918,13 @@ fn every_tab_of_the_profile_form_changes_the_cut() {
     click(&mut h, "Start point");
     click(&mut h, "Near a point");
     click(&mut h, "Start point 5");
+    // The form is taller than the window with every part open: scrolled down, as by hand.
+    let over = h.get_by_label("Start point").rect().center();
+    h.hover_at(over);
+    for _ in 0..6 {
+        h.event(egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(0.0, -120.0), phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Wheel, modifiers: Default::default() });
+        h.run();
+    }
     click(&mut h, "Corners");
     click(&mut h, "Sharp external corners");
     let RightMode::Op { op, .. } = &h.state().right else { panic!() };
@@ -2409,6 +2416,8 @@ fn hold_recalc(h: &mut Harness<'static, App>, finish: crate::recalc::Finish) -> 
         stop: Default::default(),
         started: std::time::Instant::now() - std::time::Duration::from_secs(2),
         finish: Some(finish),
+        step: None,
+        shown: 0,
     });
     send
 }
@@ -7328,6 +7337,79 @@ fn a_vcarve_clearing_pocket_keeps_off_the_letters_by_the_flat() {
         worst = worst.max(near);
     }
     assert!(worst < 0.1, "a cut of Burin's lies {worst:.3} from the saved ones");
+}
+
+/// With a toolpath's form open, the shapes to cut can still be picked: the look-alikes of the one
+/// picked, then a whole group of shapes alike, then another added with Shift and taken away again.
+#[test]
+fn the_shapes_to_cut_are_picked_from_the_toolpath_form() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let square = h.state().selected[0];
+    let holes: Vec<u64> = [[2.0, 2.0], [8.0, 2.0], [2.0, 8.0]].iter().map(|c| h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::circle(*c, 0.25))], Prim::Circle { c: *c, r: 0.25 })).collect();
+    h.state_mut().selected = vec![holes[0]];
+    h.state_mut().start_op(crate::toolpath::OpKind::Pocket);
+    h.run();
+    // The form's own button (the drawing tab may show one too).
+    let at = h.get_all_by_label("Select similar shapes").map(|n| n.rect().center()).max_by(|a, b| a.x.total_cmp(&b.x)).unwrap();
+    click_at(&mut h, at);
+    let mut picked = h.state().selected.clone();
+    picked.sort();
+    assert_eq!(picked, holes);
+    click(&mut h, "Pick by groups of shapes alike");
+    // The square's own line picks it alone.
+    let line = h.get_by_label_contains("1 x ").rect().center();
+    click_at(&mut h, line);
+    assert_eq!(h.state().selected, vec![square]);
+    // Shift adds the holes' line, then takes it away again.
+    let holes_line = h.get_by_label_contains("3 x ").rect().center();
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+    click_at(&mut h, holes_line);
+    assert_eq!(h.state().selected.len(), 4);
+    click_at(&mut h, holes_line);
+    assert_eq!(h.state().selected, vec![square]);
+    assert!(matches!(h.state().right, RightMode::Op { .. }), "the form stays open");
+    // Calculated now, the toolpath cuts the shapes picked from its form.
+    click_at(&mut h, holes_line);
+    h.state_mut().calculate_op();
+    h.run();
+    assert_eq!(h.state().doc.toolpaths.last().unwrap().op.paths.len(), 4);
+}
+
+/// On one thread, as in the web version, Calculate first puts its progress bar on the screen and
+/// only works out the toolpath on a later frame, so the page shows something instead of freezing.
+#[test]
+fn on_one_thread_the_bar_shows_before_the_work() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().one_thread = true;
+    h.state_mut().background_recalc = true;
+    h.state_mut().start_op(crate::toolpath::OpKind::Pocket);
+    h.run();
+    h.state_mut().calculate_from_form();
+    h.step();
+    h.step();
+    assert!(h.state().recalc.is_some(), "still to do");
+    assert!(h.state().doc.toolpaths.is_empty(), "nothing worked out before the bar was seen");
+    h.get_by_label("Calculating toolpaths");
+    for _ in 0..6 {
+        h.run();
+    }
+    assert!(h.state().recalc.is_none());
+    assert_eq!(h.state().doc.toolpaths.len(), 1);
+}
+
+/// In the web version, a chosen file is opened on the frame after the note saying so is drawn.
+#[test]
+fn a_chosen_file_is_opened_after_the_note() {
+    let mut h = harness();
+    h.run();
+    h.state_mut().web_opening.push(std::path::PathBuf::from("/nowhere/plaque.crv3d"));
+    h.step();
+    h.step();
+    h.get_by_label("Opening plaque.crv3d...");
+    assert_eq!(h.state().web_opening.len(), 1, "not opened before the note is seen");
+    h.step();
+    h.step();
+    assert!(h.state().web_opening.is_empty(), "taken to be opened");
 }
 
 /// A new V-Carve starts with a tool it can carve with, never an end mill or a drill.

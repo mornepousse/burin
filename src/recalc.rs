@@ -38,6 +38,11 @@ pub struct Running {
     pub stop: Arc<AtomicBool>,
     pub started: Instant,
     pub finish: Option<Finish>,
+    /// In a browser, where there is one thread: the work left, one toolpath a call, run only
+    /// once the bar has been shown, so the page never just freezes. None on a computer.
+    pub step: Option<Box<dyn FnMut() -> bool>>,
+    /// How many frames the bar has been drawn: a window shows on its second.
+    pub shown: u8,
 }
 
 impl Drop for Running {
@@ -68,6 +73,27 @@ impl App {
         let model = if needs_model { self.model.clone() } else { None };
         let stopped = stop.clone();
         let names = tasks.first().map_or(String::new(), |(_, op)| op.name.clone());
+        if self.one_thread {
+            // One toolpath each frame, after the bar is up: the browser's page shows the bar and
+            // its progress instead of freezing with nothing to see until all are done.
+            let mut queue: std::collections::VecDeque<Task> = tasks.into();
+            let step = Box::new(move || -> bool {
+                let Some((at, op)) = queue.pop_front() else { return false };
+                if stopped.load(Ordering::Relaxed) {
+                    return false;
+                }
+                let made = toolpath::generate(&op, machine, &job, model.as_ref());
+                if send.send(Message::Done(Box::new((at, op, made)))).is_err() {
+                    return false;
+                }
+                match queue.front() {
+                    Some((_, next)) => send.send(Message::Starting(next.name.clone())).is_ok(),
+                    None => false,
+                }
+            });
+            self.recalc = Some(Running { total, results: Vec::with_capacity(total), current: names, messages, stop, started: Instant::now(), finish: Some(finish), step: Some(step), shown: 0 });
+            return 0;
+        }
         crate::platform::spawn(move || {
             for (at, op) in tasks {
                 if stopped.load(Ordering::Relaxed) || send.send(Message::Starting(op.name.clone())).is_err() {
@@ -79,13 +105,22 @@ impl App {
                 }
             }
         });
-        self.recalc = Some(Running { total, results: Vec::with_capacity(total), current: names, messages, stop, started: Instant::now(), finish: Some(finish) });
+        self.recalc = Some(Running { total, results: Vec::with_capacity(total), current: names, messages, stop, started: Instant::now(), finish: Some(finish), step: None, shown: 0 });
         0
     }
 
     /// Takes in what has been finished since the last frame.
     pub(crate) fn poll_recalc(&mut self) {
         let Some(running) = &mut self.recalc else { return };
+        // In a browser: the next toolpath, once the bar is on the screen. With none left, the
+        // work (and what it sends with) goes, and the results are taken in below.
+        if running.shown >= 2 {
+            if let Some(step) = running.step.as_mut() {
+                if !step() {
+                    running.step = None;
+                }
+            }
+        }
         loop {
             match running.messages.try_recv() {
                 Ok(Message::Starting(name)) => running.current = name,
@@ -220,16 +255,18 @@ impl App {
 
     /// The bar, over a program that can't be touched until it is done or stopped.
     pub(crate) fn recalc_window(&mut self, ctx: &egui::Context) {
-        let Some(running) = &self.recalc else { return };
+        let Some(running) = &mut self.recalc else { return };
         ctx.request_repaint_after(Duration::from_millis(40));
-        // Even before the bar shows, clicks must not reach what is being worked on.
+        // Even before the bar shows, clicks must not reach what is being worked on. In a browser
+        // it shows at once: the work waits for it.
         let waited = running.started.elapsed();
-        if waited < SHOW_AFTER {
+        if waited < SHOW_AFTER && !self.one_thread {
             egui::Modal::new(Id::NULL.with("recalc-wait")).backdrop_color(Color32::TRANSPARENT).frame(egui::Frame::NONE).show(ctx, |ui| {
                 ui.allocate_space(vec2(1.0, 1.0));
             });
             return;
         }
+        running.shown = running.shown.saturating_add(1);
         let (done, total, name) = (running.results.len(), running.total, running.current.clone());
         let mut stop = false;
         egui::Modal::new(Id::NULL.with("recalc")).show(ctx, |ui| {

@@ -56,7 +56,12 @@ impl App {
     /// A project's file dropped on the window opens as if chosen from the menu. In the web version a
     /// dropped file has no place on disk: its bytes are kept, and any kind Burin reads is opened.
     pub(crate) fn files_dropped(&mut self, ctx: &egui::Context) {
-        for path in crate::platform::picked() {
+        // Each opened on the frame after the note "Opening..." has been drawn, so the page shows
+        // something while it works instead of freezing.
+        self.web_opening.extend(crate::platform::picked());
+        if !self.web_opening.is_empty() && self.web_opening_shown >= 2 {
+            let path = self.web_opening.remove(0);
+            self.web_opening_shown = 0;
             self.open_picked(path);
         }
         let dropped = ctx.input(|i| i.raw.dropped_files.first().cloned());
@@ -80,6 +85,22 @@ impl App {
         }
         self.recent_wanted = Some(path);
         self.leave_for(Leave::Recent);
+    }
+
+    /// The web version's note while a chosen file waits to be opened.
+    pub(crate) fn opening_window(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.web_opening.first() else { return };
+        let name = path.file_name().map_or(String::new(), |n| n.to_string_lossy().to_string());
+        egui::Modal::new(egui::Id::NULL.with("web-opening")).show(ctx, |ui| {
+            ui.set_width(320.0);
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new().size(20.0));
+                ui.label(egui::RichText::new(tf!("Opening {}...", name)).strong());
+            });
+            ui.label(egui::RichText::new(tr("A large project can take a few seconds in the browser.")).size(11.5).color(crate::theme::MUTED()));
+        });
+        self.web_opening_shown = self.web_opening_shown.saturating_add(1);
+        ctx.request_repaint();
     }
 
     pub(crate) fn support_window(&mut self, ctx: &egui::Context) {
