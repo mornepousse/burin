@@ -2694,10 +2694,39 @@ fn row_spans(row: (P, P, f64), sample: f64, inside: &dyn Fn(f64, f64) -> bool) -
     spans
 }
 
+/// The stretches of a row inside `loops` (even-odd), from where it crosses their sides: exact
+/// to the offsets, as the original clips its rows to its offset outline (`0x140820030`), where
+/// samples a grid cell apart would end a row up to a cell short.
+fn row_spans_exact(row: (P, P, f64), loops: &[Vec<P>]) -> Vec<(P, P)> {
+    let (start, dir, len) = row;
+    let across = |q: P| (q[0] - start[0]) * -dir[1] + (q[1] - start[1]) * dir[0];
+    let along = |q: P| (q[0] - start[0]) * dir[0] + (q[1] - start[1]) * dir[1];
+    let mut hits: Vec<f64> = Vec::new();
+    for l in loops.iter().filter(|l| l.len() >= 3) {
+        for k in 0..l.len() {
+            let (a, b) = (l[k], l[(k + 1) % l.len()]);
+            let (na, nb) = (across(a), across(b));
+            if (na > 0.0) != (nb > 0.0) {
+                let t = na / (na - nb);
+                hits.push(along(a) + (along(b) - along(a)) * t);
+            }
+        }
+    }
+    hits.sort_by(f64::total_cmp);
+    let at = |u: f64| [start[0] + dir[0] * u, start[1] + dir[1] * u];
+    hits.chunks(2)
+        .filter(|c| c.len() == 2)
+        .map(|c| (c[0].max(0.0), c[1].min(len)))
+        .filter(|(u0, u1)| u1 - u0 > 1e-9)
+        .map(|(u0, u1)| (at(u0), at(u1)))
+        .collect()
+}
+
 /// Cuts every row back and forth at height `z`.
-fn cut_rows(e: &mut Emit, rows: Vec<(P, P, f64)>, sample: f64, z: f64, edges: &[Vec<P>], inside: &dyn Fn(f64, f64) -> bool) {
-    // The stretches of each row, in the row's own direction.
-    let rows: Vec<Vec<(P, P)>> = rows.into_iter().map(|row| row_spans(row, sample, inside)).collect();
+fn cut_rows(e: &mut Emit, rows: Vec<(P, P, f64)>, sample: f64, z: f64, edges: &[Vec<P>], inside: &dyn Fn(f64, f64) -> bool, exact: bool) {
+    // The stretches of each row, in the row's own direction: where it crosses the edges when
+    // these are exact offsets, else sampled.
+    let rows: Vec<Vec<(P, P)>> = rows.into_iter().map(|row| if exact { row_spans_exact(row, edges) } else { row_spans(row, sample, inside) }).collect();
     let edge = Edge::new(edges, rows.iter().flatten().flat_map(|(a, b)| [*a, *b]), 2.0 * sample);
     let mut done: Vec<Vec<bool>> = rows.iter().map(|r| vec![false; r.len()]).collect();
     let mut forward = true;
@@ -3360,19 +3389,26 @@ fn pocket_set(e: &mut Emit, op: &Op) {
             let clear = radius + extra;
             // The rows' box is this pocket's own outline offset by that much (`0x140820030` makes the
             // offset outline, `0x1408cf270` takes its box), checked against saved jobs pocket by pocket.
-            let offset: Vec<Path> = field.contours(clear).into_iter().map(Path::closed).collect();
+            // Exact offsets when every shape is closed, as for the rings: the rows then end right
+            // on the outline the original clips them to.
+            let offset: Vec<Path> = if exact.is_some() {
+                area_contours(&field, clear, toolpath_tolerance(op), exact).into_iter().map(Path::closed).collect()
+            } else {
+                field.contours(clear).into_iter().map(Path::closed).collect()
+            };
+            let rows_exact = exact.is_some();
             let (box_lo, box_hi) = bbox(&offset).unwrap_or(([lo[0] + clear, lo[1] + clear], [hi[0] - clear, hi[1] - clear]));
             let rows = pocket_rows(box_lo, box_hi, op.raster_angle, step);
             // Rows may come short of the full distance by a hair, as the original offsets by the distance
             // less its tolerance (`0x140820030`): a row that just touches the edge is still cut, as in saved jobs.
             let reach = clear - field.cell * RASTER_TOLERANCE_CELLS;
             let edges: Vec<Vec<P>> = offset.iter().map(|p| p.pts.clone()).collect();
-            cut_rows(e, rows, field.cell, *z, &edges, &|x, y| field.sample(x, y) >= reach);
+            cut_rows(e, rows, field.cell, *z, &edges, &|x, y| field.sample(x, y) >= reach, rows_exact);
             // A second set of rows across the first, in the same box, added after them (`0x140820030`
             // joins the rows at the angle + 90 degrees, `0x1420fbc08`, to the first set).
             if op.raster_second {
                 let across = pocket_rows(box_lo, box_hi, op.raster_angle + 90.0, step);
-                cut_rows(e, across, field.cell, *z, &edges, &|x, y| field.sample(x, y) >= reach);
+                cut_rows(e, across, field.cell, *z, &edges, &|x, y| field.sample(x, y) >= reach, rows_exact);
             }
             if op.profile_pass == ProfilePass::Last {
                 ring(e, radius, *z, *z);
@@ -4087,7 +4123,7 @@ fn engrave(e: &mut Emit, op: &Op) {
                     angles.push(op.raster_angle + 90.0);
                 }
                 for a in angles {
-                    cut_rows(e, scan_rows(lo, hi, a, step), field.cell, z, &[], &|x, y| field.sample(x, y) >= 0.0);
+                    cut_rows(e, scan_rows(lo, hi, a, step), field.cell, z, &[], &|x, y| field.sample(x, y) >= 0.0, false);
                 }
             } else {
                 let mut level = step;
@@ -7357,6 +7393,30 @@ mod tests {
         let moves = generate(&o, M, &J, None).unwrap();
         let near: Vec<f64> = moves.iter().filter(|m| !m.rapid && m.p[2] < -1e-6).map(|m| (m.p[0] - c[0]).hypot(m.p[1] - c[1])).filter(|d| *d < 1.0).collect();
         assert!(near.iter().any(|d| (d - 0.2125).abs() < 0.03), "no ring 0.21 from the middle: {:?}", &near[..near.len().min(8)]);
+    }
+
+    /// Raster rows end right on the outline they're clipped to, the tool's radius and the raster
+    /// allowance in, as the saved raster pockets' do, not up to a grid cell short or past it.
+    #[test]
+    fn raster_rows_end_exactly_on_their_outline() {
+        let mut o = pocket_of(vec![Path::closed(rect([50.0, 50.0], 40.0, 30.0, 0.0))], 3.175, 0.88);
+        o.raster = true;
+        o.profile_pass = ProfilePass::Last;
+        o.raster_allowance = 0.56;
+        let moves = generate(&o, M, &J, None).unwrap();
+        let clear = 3.175 / 2.0 + 0.56;
+        let (left, right) = (30.0 + clear, 70.0 - clear);
+        // Every end of a row across (a cut along x at depth) on the left or right of the clipped box.
+        let mut ends = 0;
+        // (The last pass round the wall, the tool's radius in, isn't a row.)
+        let wall = |y: f64| (y - (35.0 + 3.175 / 2.0)).abs() < 1e-6 || (y - (65.0 - 3.175 / 2.0)).abs() < 1e-6;
+        for w in moves.windows(2).filter(|w| !w[1].rapid && (w[0].p[1] - w[1].p[1]).abs() < 1e-9 && !wall(w[0].p[1]) && (w[1].p[0] - w[0].p[0]).abs() > 5.0 && w[1].p[2] < 0.0) {
+            for x in [w[0].p[0], w[1].p[0]] {
+                assert!((x - left).abs() < 2e-3 || (x - right).abs() < 2e-3, "a row ends at {x:.4}, not {left:.4} or {right:.4}");
+                ends += 1;
+            }
+        }
+        assert!(ends >= 8, "{ends}");
     }
 
     /// A round hole hardly wider than the tool, pocketed: its one ring, the tool's radius in, is
