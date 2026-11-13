@@ -111,7 +111,7 @@ pub fn band(path: &[P], closed: bool, width: f64) -> Vec<Vec<P>> {
 
 /// The union of several regions, each read even-odd on its own: overlapping regions stay
 /// removed where they overlap (put together as loops, even-odd would cancel the overlap).
-fn union_all<'a>(regions: impl IntoIterator<Item = &'a Vec<Vec<P>>>) -> Vec<Vec<P>> {
+pub(crate) fn union_all<'a>(regions: impl IntoIterator<Item = &'a Vec<Vec<P>>>) -> Vec<Vec<P>> {
     let mut acc: Vec<Vec<P>> = Vec::new();
     for r in regions {
         let own = loops_of(&overlay(r, &[], OverlayRule::Subject));
@@ -343,9 +343,9 @@ pub fn part_solid(outline: &Shapes, removals: &[Removal], thickness: f64, scale:
 
 /// A circle the drawing's points lie on, in millimetres.
 #[derive(Clone, Copy, Debug)]
-struct Circle {
-    c: P,
-    r: f64,
+pub(crate) struct Circle {
+    pub c: P,
+    pub r: f64,
 }
 
 /// The circle through three points, if they aren't in a line.
@@ -372,7 +372,7 @@ const ARC_WIDEST: f64 = 10_000.0;
 
 /// For each edge of a closed outline (from point k to k + 1), the circle it runs along: runs of
 /// at least four short edges turning one way, every point on one circle within `tol`.
-fn ring_arcs(pts: &[P], tol: f64) -> Vec<Option<Circle>> {
+pub(crate) fn ring_arcs(pts: &[P], tol: f64) -> Vec<Option<Circle>> {
     let n = pts.len();
     let mut out = vec![None; n];
     if n <= ARC_LEAST_EDGES {

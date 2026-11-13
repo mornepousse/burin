@@ -1322,6 +1322,13 @@ impl App {
         crate::crash::set_job(self.doc.vectors.len(), self.doc.toolpaths.len(), self.doc.toolpaths.iter().map(|t| t.moves.len() as u64).sum());
         self.recalc_question(&ctx);
         self.poll_recalc();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.poll_solidcraft();
+            if self.solidcraft_job.is_some() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            }
+        }
         self.keyboard(ui);
         self.maintain_constraints();
         if self.anim.playing {
@@ -3477,6 +3484,13 @@ explain(ui, [Pic::StartDrawn, Pic::StartNearest, Pic::StartPoint][chosen], match
                     .clicked()
                 {
                     self.export_carved_pieces();
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if worded_button(ui, !self.doc.toolpaths.is_empty() && self.solidcraft_job.is_none(), Icon::Export, crate::i18n::tr("Open in SolidCraft..."))
+                    .on_hover_text(crate::i18n::tr("The same parts as a SolidCraft design you can change: a thickness parameter and one per depth, each part a component with its outline sketched in lines, arcs and circles and extruded, its pockets, drillings and grooves sketched and cut down from the top. Change a parameter in SolidCraft and the parts follow. Opens in SolidCraft when it is on this computer. Not in the original."))
+                    .clicked()
+                {
+                    self.open_in_solidcraft();
                 }
             });
             ui.horizontal(|ui| {

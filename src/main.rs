@@ -12,6 +12,7 @@ mod platform;
 mod formula;
 mod modeltools;
 mod solid;
+mod solidcraft;
 mod fonts;
 mod variables;
 mod printing;
