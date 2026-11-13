@@ -70,6 +70,19 @@ chmod +x Burin-*-x86_64.AppImage
 Ensuite, `Aide > Ajouter au menu des applications` place Burin dans le menu de votre bureau et lui
 fait ouvrir les fichiers `.burin`. Un projet peut aussi être donné en argument, ou glissé sur la fenêtre.
 
+### Avec Nix
+
+Le dépôt est un flake :
+
+```sh
+nix run github:mornepousse/burin          # le lancer
+nix profile install github:mornepousse/burin   # l'installer, avec son entrée de menu
+nix develop                                # un shell avec Rust et les bibliothèques, dans le dépôt
+```
+
+Sur NixOS : `inputs.burin.url = "github:mornepousse/burin";` puis `inputs.burin.packages.${system}.default`
+dans `environment.systemPackages`.
+
 ### Windows
 
 Lancez `Burin-*-windows-x86_64.exe`, sans installation. Il n'est pas signé : Windows peut demander une
