@@ -1181,6 +1181,13 @@ pub struct App {
     pub failed_print: Option<u64>,
     /// The toolpaths being worked out, while the progress bar is up.
     pub recalc: Option<crate::recalc::Running>,
+    /// Files chosen in the web version waiting to be opened, and whether the note saying so has
+    /// been shown: the browser has one thread, so it opens them on the frame after the note.
+    pub web_opening: Vec<PathBuf>,
+    /// Frames the note has been drawn: a window shows on its second.
+    pub web_opening_shown: u8,
+    /// Working on one thread, as in a browser: long work waits until its progress is on screen.
+    pub one_thread: bool,
     /// Work toolpaths out away from the window. The tests want each result at once.
     pub background_recalc: bool,
     /// New jobs start in millimetres. The tests' numbers are written in inches, so they ask for that.
@@ -1611,6 +1618,9 @@ impl Default for App {
             constraint_conflict: false,
             failed_print: None,
             recalc: None,
+            web_opening: Vec::new(),
+            web_opening_shown: 0,
+            one_thread: crate::platform::WEB,
             background_recalc: !cfg!(test),
             metric_by_default: !cfg!(test),
             nudging: false,

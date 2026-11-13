@@ -658,10 +658,20 @@ fn open_state(app: &mut App, state: &str) {
             f.text_style = fonts::TextStyle { font: system, bold: true, ..Default::default() };
             app.left = LeftForm::Draw(f);
         }
-        "profile" => {
+        "profile" | "op-shapes" => {
             app.new_file();
             app.left = LeftForm::None;
             circle(app);
+            if state == "op-shapes" {
+                // Holes of two sizes and a plate, the groups list open in the toolpath's form.
+                for (i, c) in [[100.0, 100.0], [200.0, 100.0], [300.0, 100.0], [100.0, 300.0], [200.0, 300.0]].into_iter().enumerate() {
+                    let r = if i < 3 { 4.0 } else { 6.0 };
+                    app.doc.add_vector(vec![geom::Path::closed(geom::circle(c, r))], Prim::Circle { c, r });
+                }
+                let first = app.doc.vectors[app.doc.vectors.len() - 5].id;
+                app.selected = vec![first];
+                app.select_similar(0.01);
+            }
             app.start_op(toolpath::OpKind::Profile);
         }
         "3d" | "cut" => {
@@ -857,7 +867,7 @@ fn open_state(app: &mut App, state: &str) {
                 std::thread::sleep(std::time::Duration::from_secs(120));
                 drop(send);
             });
-            app.recalc = Some(recalc::Running { total: names.len(), results: Vec::new(), current: names[1].into(), messages, stop: Default::default(), started: crate::platform::Instant::now() - std::time::Duration::from_secs(3), finish: None });
+            app.recalc = Some(recalc::Running { total: names.len(), results: Vec::new(), current: names[1].into(), messages, stop: Default::default(), started: crate::platform::Instant::now() - std::time::Duration::from_secs(3), finish: None, step: None, shown: 0 });
         }
         "sharp3d" | "sharp3dfar" | "toodeep" => {
             app.metric_by_default = true;

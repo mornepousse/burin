@@ -5,6 +5,15 @@
 
 pub const FR: &[(&str, &str)] = &[
     ("Travel at", "Rapide à"),
+    // The web version, while it works.
+    ("Opening {}...", "Ouverture de {}…"),
+    ("A large project can take a few seconds in the browser.", "Un gros projet peut prendre quelques secondes dans le navigateur."),
+    // The shapes a toolpath cuts, picked from its form.
+    ("Shapes to cut", "Formes à usiner"),
+    ("{} shapes picked", "choisies : {}"),
+    ("Adds every shape like those picked: same kind, same size.", "Ajoute toutes les formes comme celles choisies : même sorte, même taille."),
+    ("Pick by groups of shapes alike", "Par groupes de formes semblables"),
+    ("Click a line to pick its shapes; with Shift or Ctrl, to add or take them away.", "Cliquez une ligne pour choisir ses formes ; avec Maj ou Ctrl, pour les ajouter ou les retirer."),
     // Whether a newer version is out.
     ("Yes", "Oui"),
     ("No", "Non"),

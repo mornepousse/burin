@@ -1318,6 +1318,7 @@ impl App {
         self.palette_window(&ctx);
         self.keep_recovery();
         self.files_dropped(&ctx);
+        self.opening_window(&ctx);
         crate::crash::set_job(self.doc.vectors.len(), self.doc.toolpaths.len(), self.doc.toolpaths.iter().map(|t| t.moves.len() as u64).sum());
         self.recalc_question(&ctx);
         self.poll_recalc();
