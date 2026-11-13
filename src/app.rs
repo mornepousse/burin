@@ -1186,6 +1186,9 @@ pub struct App {
     pub web_opening: Vec<PathBuf>,
     /// Frames the note has been drawn: a window shows on its second.
     pub web_opening_shown: u8,
+    /// The parts being built into a SolidCraft design, in the background.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub solidcraft_job: Option<std::sync::mpsc::Receiver<Result<PathBuf, String>>>,
     /// Working on one thread, as in a browser: long work waits until its progress is on screen.
     pub one_thread: bool,
     /// Work toolpaths out away from the window. The tests want each result at once.
@@ -1620,6 +1623,8 @@ impl Default for App {
             recalc: None,
             web_opening: Vec::new(),
             web_opening_shown: 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            solidcraft_job: None,
             one_thread: crate::platform::WEB,
             background_recalc: !cfg!(test),
             metric_by_default: !cfg!(test),

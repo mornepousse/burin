@@ -7537,6 +7537,59 @@ fn a_machined_part_comes_out_as_a_closed_solid_named_after_its_piece() {
     assert!((volume - expected).abs() < 0.01 * expected, "volume {volume:.1} against {expected:.1}");
 }
 
+/// The same part as a SolidCraft design, when SolidCraft is on this computer: one closed body
+/// named after its piece, its volume the square less the pocket and the hole, the hole a true
+/// cylinder, the thickness and the pocket's depth parameters to change.
+#[test]
+fn a_machined_part_comes_out_as_a_solidcraft_design() {
+    let a = part_with_pocket_and_hole();
+    let script = a.solidcraft_script().unwrap();
+    let Some(_) = crate::solidcraft::command_line() else { return };
+    let folder = std::env::temp_dir().join(format!("burin-sc-test-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let design = folder.join("part.sc");
+    crate::solidcraft::write_design(&script, &design).unwrap();
+    let out = crate::solidcraft::command_line().unwrap().arg("eval").arg("--in").arg(&design).output().unwrap();
+    let _ = std::fs::remove_dir_all(&folder);
+    let text = String::from_utf8_lossy(&out.stdout);
+    let measured: serde_json::Value = serde_json::from_str(&text[text.find('{').unwrap()..]).unwrap();
+    let bodies = measured["bodies"].as_array().unwrap();
+    assert_eq!(bodies.len(), 1, "{measured}");
+    let body = &bodies[0];
+    assert_eq!(body["name"], "Couvercle");
+    assert_eq!(body["closed"], true);
+    assert_eq!(body["face_types"]["cylinder"], 1, "the drilled hole is round");
+    let r = a.doc.toolpaths[2].op.tool.dia / 2.0;
+    let expected = 20.0 * 20.0 * 10.0 - 6.0 * 6.0 * 3.0 - std::f64::consts::PI * r * r * 10.0;
+    let volume = body["volume_mm3"].as_f64().unwrap();
+    assert!((volume - expected).abs() < 0.001 * expected, "volume {volume:.1} against {expected:.1}");
+    let names: Vec<&str> = measured["params"].as_array().unwrap().iter().filter_map(|p| p["name"].as_str()).collect();
+    assert_eq!(names, ["thickness", "depth_1"]);
+}
+
+/// For trying a whole job by hand: `BURIN_SC_JOB=job.crv3d BURIN_SC_OUT=parts.json cargo test
+/// --release a_job_as_a_solidcraft_script -- --ignored` writes its SolidCraft script.
+#[test]
+#[ignore]
+fn a_job_as_a_solidcraft_script() {
+    let (Some(job), Some(out)) = (std::env::var_os("BURIN_SC_JOB"), std::env::var_os("BURIN_SC_OUT")) else { return };
+    let mut app = App::default();
+    app.open_project(std::path::Path::new(&job)).unwrap();
+    let script = app.solidcraft_script().unwrap();
+    std::fs::write(out, serde_json::to_vec_pretty(&script).unwrap()).unwrap();
+    for (name, stl) in app.carved_piece_files_as("parts", false) {
+        let n = u32::from_le_bytes(stl[80..84].try_into().unwrap()) as usize;
+        let mut volume = 0.0f64;
+        for t in 0..n {
+            let at = 84 + t * 50 + 12;
+            let p: Vec<[f64; 3]> = (0..3).map(|k| std::array::from_fn(|j| f32::from_le_bytes(stl[at + k * 12 + j * 4..at + k * 12 + j * 4 + 4].try_into().unwrap()) as f64)).collect();
+            let (a, b, c) = (p[0], p[1], p[2]);
+            volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6.0;
+        }
+        eprintln!("STL {name} volume {volume:.0}");
+    }
+}
+
 /// The same part as a STEP solid: a closed shell of faces in millimetres, the drilled hole a
 /// cylinder bounded by true circles, every edge met by two faces, once each way.
 #[test]

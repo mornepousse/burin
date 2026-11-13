@@ -607,6 +607,15 @@ impl App {
     /// Each machined part as a solid in millimetres, with its file stem.
     fn carved_part_solids(&self, stem: &str) -> Vec<(String, crate::solid::Solid)> {
         let scale = if self.doc.job.units == crate::app::Units::Mm { 1.0 } else { 25.4 };
+        self.named_parts(stem)
+            .into_iter()
+            .filter_map(|(file, _, outline, removals)| crate::solid::part_solid(&outline, &removals, self.doc.job.thickness, scale).map(|solid| (file, solid)))
+            .collect()
+    }
+
+    /// Each machined part, biggest first, with its file stem (`stem-name`, or numbered) and its
+    /// name: the drawing's piece it lies in, or "Part n".
+    fn named_parts(&self, stem: &str) -> Vec<(String, String, crate::solid::Shapes, Vec<crate::solid::Removal>)> {
         let shapes = self.doc.current_paths();
         let named: Vec<(String, Vec<Path>)> = self
             .doc
@@ -618,26 +627,82 @@ impl App {
         // Biggest first, as a person lists them.
         parts.sort_by(|a, b| crate::geom::signed_area(&b.0[0][0]).total_cmp(&crate::geom::signed_area(&a.0[0][0])));
         let count = parts.len();
-        let mut out: Vec<(String, crate::solid::Solid)> = Vec::new();
-        for (k, (outline, removals)) in parts.iter().enumerate() {
+        let mut out: Vec<(String, String, crate::solid::Shapes, Vec<crate::solid::Removal>)> = Vec::new();
+        for (k, (outline, removals)) in parts.into_iter().enumerate() {
             let ring = &outline[0][0];
             let (a, b) = (ring[0], ring[1]);
             let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
             let len = dx.hypot(dy).max(1e-12);
             let at = [(a[0] + b[0]) / 2.0 - dy / len * 1e-3, (a[1] + b[1]) / 2.0 + dx / len * 1e-3];
-            let name = named.iter().find(|(_, paths)| crate::geom::inside_even_odd(paths.iter(), at)).map(|(name, _)| crate::pieces::file_stem_of(name));
-            let mut file = match (&name, count) {
-                (Some(n), _) => format!("{stem}-{n}"),
+            let piece = named.iter().find(|(_, paths)| crate::geom::inside_even_odd(paths.iter(), at)).map(|(name, _)| name.clone());
+            let mut file = match (&piece, count) {
+                (Some(n), _) => format!("{stem}-{}", crate::pieces::file_stem_of(n)),
                 (None, 1) => stem.to_string(),
                 (None, _) => format!("{stem}-{}", k + 1),
             };
-            if out.iter().any(|(f, _)| *f == file) {
+            if out.iter().any(|(f, ..)| *f == file) {
                 file = format!("{file}-{}", k + 1);
             }
-            let Some(solid) = crate::solid::part_solid(outline, removals, self.doc.job.thickness, scale) else { continue };
-            out.push((file, solid));
+            let mut name = piece.unwrap_or_else(|| tf!("Part {}", k + 1));
+            if out.iter().any(|(_, n, ..)| *n == name) {
+                name = format!("{name} {}", k + 1);
+            }
+            out.push((file, name, outline, removals));
         }
         out
+    }
+
+    /// The machined parts as a SolidCraft script, in millimetres.
+    pub fn solidcraft_script(&self) -> Option<serde_json::Value> {
+        let scale = if self.doc.job.units == crate::app::Units::Mm { 1.0 } else { 25.4 };
+        let parts: Vec<crate::solidcraft::Part> = self.named_parts("parts").into_iter().map(|(_, name, outline, removals)| crate::solidcraft::Part { name, outline, removals }).collect();
+        (!parts.is_empty()).then(|| crate::solidcraft::script(&parts, self.doc.job.thickness, scale))
+    }
+
+    /// Asks where, then writes the parts there as a SolidCraft design and opens it in SolidCraft.
+    /// SolidCraft builds the design in the background; without its command line on this computer,
+    /// the script is kept instead, for SolidCraft to replay. Burin's own: not in the original.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_in_solidcraft(&mut self) {
+        let Some(script) = self.solidcraft_script() else {
+            self.message = Some(crate::i18n::tr("No part to export: a part is a shape cut right through by a profile.").into());
+            return;
+        };
+        let stem = self.path.as_ref().and_then(|p| p.file_stem()).map_or("parts".to_string(), |s| s.to_string_lossy().to_string());
+        if crate::solidcraft::command_line().is_none() {
+            let Some(path) = crate::platform::FileDialog::new().add_filter(tr("SolidCraft script"), &["json"]).set_file_name(&format!("{stem}.json")).save_file() else { return };
+            match crate::platform::write(&path, serde_json::to_vec_pretty(&script).unwrap_or_default()) {
+                Ok(()) => self.message = Some(tf!("SolidCraft isn't on this computer: the parts were saved as a SolidCraft script, {}. Once SolidCraft is installed, it turns it into a design with: solidcraft-cli run {} --save parts.sc", path.display(), path.display())),
+                Err(e) => self.message = Some(tf!("Could not write {}: {e}", path.display())),
+            }
+            return;
+        }
+        let Some(path) = crate::platform::FileDialog::new().add_filter(tr("SolidCraft design"), &["sc"]).set_file_name(&format!("{stem}.sc")).save_file() else { return };
+        let path = if path.extension().is_none() { path.with_extension("sc") } else { path };
+        let (send, receive) = std::sync::mpsc::channel();
+        self.solidcraft_job = Some(receive);
+        self.status = tf!("Building the parts in SolidCraft: {}...", path.display());
+        std::thread::spawn(move || {
+            let _ = send.send(crate::solidcraft::write_design(&script, &path).map(|()| path));
+        });
+    }
+
+    /// Once SolidCraft has built the design: opens it there, or says what went wrong.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn poll_solidcraft(&mut self) {
+        let Some(job) = &self.solidcraft_job else { return };
+        let Ok(done) = job.try_recv() else { return };
+        self.solidcraft_job = None;
+        match done {
+            Ok(path) => match crate::solidcraft::program() {
+                Some(program) => match std::process::Command::new(program).arg(&path).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+                    Ok(_) => self.status = tf!("Opened {} in SolidCraft", path.display()),
+                    Err(e) => self.message = Some(tf!("Could not open {}: {e}", path.display())),
+                },
+                None => self.status = tf!("Wrote {}", path.display()),
+            },
+            Err(why) => self.message = Some(tf!("SolidCraft could not build the parts: {why}")),
+        }
     }
 
     /// Asks where, then writes `carved_piece_files` there, one file per piece.
