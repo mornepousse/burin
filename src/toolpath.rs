@@ -2832,9 +2832,12 @@ impl<'a> Edge<'a> {
 pub const RING_LINK_STEPS: f64 = 1.001;
 
 /// An innermost pocket ring smaller than this share of the tool's diameter, across its widest, is
-/// left to the passes around it. Burin's choice: its grid makes such specks where a stroke's middle
-/// just touches a level, and the original's offsets don't.
-pub const TINY_RING_SHARE: f64 = 0.25;
+/// left to the passes around it. Burin's choice: its distance grid made such specks where a
+/// stroke's middle just touches a level. Its rings now come from exact offsets, as the original's,
+/// which keep a real small ring: a round pocket's last ring is a circle of a few tenths at its
+/// middle (the saved lock pockets: 0.21 mm). So only true specks, under 2% of the tool, are left
+/// (it was 25%: those circles went uncut).
+pub const TINY_RING_SHARE: f64 = 0.02;
 
 
 /// A loop just inside an outline drawn onto the shape's middle line: each point climbs straight
@@ -3283,7 +3286,11 @@ fn pocket_set(e: &mut Emit, op: &Op) {
                     // An innermost ring that is hardly more than a point, where the grid meets a level
                     // at the very middle of a stroke, isn't cut on its own: the passes around it
                     // reach it, and whatever they leave is cleaned from them afterwards (`tuck_spots`).
-                    let tiny = children[i][j].is_empty()
+                    // Not the first ring at the wall, which has no passes around it: in a hole
+                    // hardly wider than the tool it is the whole pocket (the saved lock pockets'
+                    // 3.6 mm holes with a 3.175 mm tool: a circle of 0.21 mm at each depth).
+                    let tiny = i > 0
+                        && children[i][j].is_empty()
                         && crate::geom::bbox(std::iter::once(&Path::closed(rings[i][j].clone()))).is_some_and(|(lo, hi)| (hi[0] - lo[0]).max(hi[1] - lo[1]) < TINY_RING_SHARE * op.tool.dia);
                     if !tiny {
                         // Only the first ring of a branch starts on the side of the shape's start;
@@ -7335,6 +7342,33 @@ mod tests {
         o.tool.pass_depth = 100.0;
         o.cut_depth = 1.0;
         o
+    }
+
+    /// A round pocket's last ring, a few tenths across at its middle, is cut as the original cuts
+    /// it: the saved lock pockets, a 29 mm hole with a 3.175 mm tool at 40%, end with a circle of
+    /// 0.2125 mm round the middle.
+    #[test]
+    fn a_round_pocket_ends_with_its_small_middle_ring() {
+        let c = [50.0, 50.0];
+        let ring: Vec<P> = (0..256).map(|k| { let a = std::f64::consts::TAU * k as f64 / 256.0; [c[0] + 14.5 * a.cos(), c[1] + 14.5 * a.sin()] }).collect();
+        let o = pocket_of(vec![Path::closed(ring)], 3.175, 0.4);
+        let moves = generate(&o, M, &J, None).unwrap();
+        let near: Vec<f64> = moves.iter().filter(|m| !m.rapid && m.p[2] < -1e-6).map(|m| (m.p[0] - c[0]).hypot(m.p[1] - c[1])).filter(|d| *d < 1.0).collect();
+        assert!(near.iter().any(|d| (d - 0.2125).abs() < 0.03), "no ring 0.21 from the middle: {:?}", &near[..near.len().min(8)]);
+    }
+
+    /// A round hole hardly wider than the tool, pocketed: its one ring, the tool's radius in, is
+    /// the whole pocket and is cut (the saved lock pockets: a 3.6 mm hole, a 3.175 mm tool, a
+    /// circle of 0.21 mm at each depth).
+    #[test]
+    fn a_hole_hardly_wider_than_the_tool_gets_its_one_ring() {
+        let c = [20.0, 20.0];
+        let ring: Vec<P> = (0..64).map(|k| { let a = std::f64::consts::TAU * k as f64 / 64.0; [c[0] + 1.8 * a.cos(), c[1] + 1.8 * a.sin()] }).collect();
+        let o = pocket_of(vec![Path::closed(ring)], 3.175, 0.4);
+        let moves = generate(&o, M, &J, None).unwrap();
+        let cut: Vec<[f64; 3]> = moves.iter().filter(|m| !m.rapid && m.p[2] < -1e-6).map(|m| m.p).collect();
+        let far = cut.iter().map(|p| (p[0] - c[0]).hypot(p[1] - c[1])).fold(0.0, f64::max);
+        assert!((far - 0.2125).abs() < 0.03, "the furthest cut is {far:.3} from the middle: {:?}", &cut[..cut.len().min(6)]);
     }
 
     /// Where a ring along the outline meets one round an island, the corner is sharp, as the
