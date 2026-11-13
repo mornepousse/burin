@@ -1099,6 +1099,18 @@ fn contour_body(d: &[u8], at: usize) -> Option<usize> {
     }
 }
 
+/// How many steps a cubic curve is drawn in: more the more it bends, and enough that each strays
+/// no more than `geom::ARC_SAG` from the curve (steps of 1/n stray at most 3/4 × the larger second
+/// difference of its points / n²; on the foot supports a 110 mm gentle side in the old 64 steps
+/// missed the curve by 0.06 mm).
+fn bezier_steps(a: P, c1: P, c2: P, b: P) -> usize {
+    let span = (a[0] - c1[0]).hypot(a[1] - c1[1]) + (c1[0] - c2[0]).hypot(c1[1] - c2[1]) + (c2[0] - b[0]).hypot(c2[1] - b[1]);
+    let chord = (a[0] - b[0]).hypot(a[1] - b[1]);
+    let second = (a[0] - 2.0 * c1[0] + c2[0]).hypot(a[1] - 2.0 * c1[1] + c2[1]).max((c1[0] - 2.0 * c2[0] + b[0]).hypot(c1[1] - 2.0 * c2[1] + b[1]));
+    let by_sag = (0.75 * second / crate::geom::ARC_SAG).sqrt().ceil() as usize;
+    ((((span - chord).max(0.0) * 8.0).sqrt().ceil() as usize + 6).min(64)).max(by_sag).min(4096)
+}
+
 /// Reads one outline at `at`, returning it and where it ends.
 /// Everything is checked, so that bytes that only look like an outline are turned down.
 fn outline_at(d: &[u8], at: usize) -> Option<(Path, usize)> {
@@ -1166,10 +1178,7 @@ fn outline_spans_at(d: &[u8], at: usize) -> Option<(Path, usize, Vec<(usize, usi
             (2, false) if version >= 5 => {
                 let (c1, c2) = (point(q)?, point(q + 16)?);
                 q += 32;
-                let span = (a[0] - c1[0]).hypot(a[1] - c1[1]) + (c1[0] - c2[0]).hypot(c1[1] - c2[1]) + (c2[0] - b[0]).hypot(c2[1] - b[1]);
-                let chord = (a[0] - b[0]).hypot(a[1] - b[1]);
-                // More steps the more it bends.
-                let steps = (((span - chord).max(0.0) * 8.0).sqrt().ceil() as usize + 6).min(64);
+                let steps = bezier_steps(a, c1, c2, b);
                 for i in 1..steps {
                     let t = i as f64 / steps as f64;
                     let u = 1.0 - t;
@@ -2201,6 +2210,24 @@ pub(crate) mod tests {
                 _ => assert!((hi[0] - (shift + 360.0 * scale)).abs() < 0.3, "{lo:?} {hi:?}"),
             }
         }
+    }
+
+    /// A long, gentle cubic (110 mm, bowing 2 mm) is drawn in steps that stay within
+    /// `geom::ARC_SAG` of it.
+    #[test]
+    fn a_long_gentle_curve_is_drawn_close_to_it() {
+        let (a, c1, c2, b) = ([0.0, 0.0], [36.0, 2.6], [74.0, 2.6], [110.0, 0.0]);
+        let n = bezier_steps(a, c1, c2, b);
+        let at = |t: f64| { let u = 1.0 - t; [u * u * u * a[0] + 3.0 * u * u * t * c1[0] + 3.0 * u * t * t * c2[0] + t * t * t * b[0], u * u * u * a[1] + 3.0 * u * u * t * c1[1] + 3.0 * u * t * t * c2[1] + t * t * t * b[1]] };
+        let mut worst = 0f64;
+        for i in 0..n {
+            let (p, q) = (at(i as f64 / n as f64), at((i + 1) as f64 / n as f64));
+            for k in 1..10 {
+                let m = at((i as f64 + k as f64 / 10.0) / n as f64);
+                worst = worst.max(crate::geom::dist2_seg(m, p, q).sqrt());
+            }
+        }
+        assert!(worst <= crate::geom::ARC_SAG + 1e-6, "{n} steps stray {worst:.4}");
     }
 
     #[test]
