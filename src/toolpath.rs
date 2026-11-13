@@ -993,7 +993,10 @@ fn lead_points_for(p: P, t: P, side_sign: f64, op: &Op, out: bool, distance: f64
         let r = op.lead_radius;
         // Never more than a quarter of the way round.
         let sweep = (distance / r).min(std::f64::consts::FRAC_PI_2);
-        let steps = ((sweep / 0.15).ceil() as usize).max(3);
+        // Steps of at most 0.15 radians, short enough to stay within `ARC_SAG` of the arc: on the
+        // panels' 25 mm leads, 0.15 radians strayed 0.07 mm from the saved arc.
+        let by_sag = if r > crate::geom::ARC_SAG { 2.0 * (1.0 - crate::geom::ARC_SAG / r).acos() } else { 0.15 };
+        let steps = ((sweep / 0.15f64.min(by_sag).max(1e-4)).ceil() as usize).clamp(3, 4096);
         (1..=steps)
             .map(|i| {
                 let a = sweep * i as f64 / steps as f64;
@@ -7417,6 +7420,29 @@ mod tests {
             }
         }
         assert!(ends >= 8, "{ends}");
+    }
+
+    /// A circular lead of a large radius is drawn within `ARC_SAG` of its arc (the panels' 25 mm
+    /// leads strayed 0.07 mm with steps of 0.15 radians).
+    #[test]
+    fn a_wide_circular_lead_stays_on_its_arc() {
+        let mut o = op(OpKind::Profile, vec![Path::closed(rect([100.0, 100.0], 80.0, 60.0, 0.0))]);
+        o.side = Side::Outside;
+        o.lead = true;
+        o.lead_circular = true;
+        o.lead_radius = 25.0;
+        o.lead_distance = 25.0;
+        let t = [1.0, 0.0];
+        let pts = lead_points_for([0.0, 0.0], t, 1.0, &o, true, 25.0);
+        let mut prev = [0.0, 0.0];
+        for q in pts {
+            // The arc's centre is 25 to the side of the start, away from the part.
+            let mid = [(prev[0] + q[0]) / 2.0, (prev[1] + q[1]) / 2.0];
+            let c = [0.0, -25.0];
+            let off = 25.0 - (mid[0] - c[0]).hypot(mid[1] - c[1]);
+            assert!(off.abs() <= crate::geom::ARC_SAG + 1e-9, "a step strays {off:.4}");
+            prev = q;
+        }
     }
 
     /// A round hole hardly wider than the tool, pocketed: its one ring, the tool's radius in, is
