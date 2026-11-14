@@ -349,7 +349,7 @@ pub(crate) struct Circle {
 }
 
 /// The circle through three points, if they aren't in a line.
-fn circle_through(a: P, b: P, c: P) -> Option<Circle> {
+pub(crate) fn circle_through(a: P, b: P, c: P) -> Option<Circle> {
     let (bx, by, cx, cy) = (b[0] - a[0], b[1] - a[1], c[0] - a[0], c[1] - a[1]);
     let d = 2.0 * (bx * cy - by * cx);
     if d.abs() < 1e-15 {
