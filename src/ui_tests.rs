@@ -7574,7 +7574,13 @@ fn a_machined_part_comes_out_as_a_solidcraft_design() {
 fn a_job_as_a_solidcraft_script() {
     let (Some(job), Some(out)) = (std::env::var_os("BURIN_SC_JOB"), std::env::var_os("BURIN_SC_OUT")) else { return };
     let mut app = App::default();
-    app.open_project(std::path::Path::new(&job)).unwrap();
+    // `coaster`, `plaque` or `box`: one of the starters instead of a file.
+    match job.to_str() {
+        Some("coaster") => app.load_starter(crate::starters::Starter::Coaster),
+        Some("plaque") => app.load_starter(crate::starters::Starter::Plaque),
+        Some("box") => app.load_starter(crate::starters::Starter::BoxPanels),
+        _ => app.open_project(std::path::Path::new(&job)).unwrap(),
+    }
     let script = app.solidcraft_script().unwrap();
     std::fs::write(out, serde_json::to_vec_pretty(&script).unwrap()).unwrap();
     for (name, stl) in app.carved_piece_files_as("parts", false) {

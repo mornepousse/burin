@@ -13,7 +13,7 @@ mkdir -p "$OUT/docs" "$OUT/app"
 sed "s/{{VERSION}}/$VERSION/g" site/index.html > "$OUT/index.html"
 cp site/style.css site/carving.webp "$OUT/"
 cp release/burin.png "$OUT/"
-for picture in apercu-3d weave sweep adaptive nesting poignees pieces fiche-de-travail preferences; do
+for picture in apercu-3d weave sweep adaptive nesting poignees pieces fiche-de-travail preferences solidcraft; do
     cp "docs/$picture.png" "$OUT/docs/"
 done
 cp dist-web/* "$OUT/app/"
