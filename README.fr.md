@@ -41,7 +41,7 @@ Linux · Windows · Navigateur · Français · English
 | **Vérifier** | Aperçu 3D de la coupe (rapides, plongées et remontées de couleurs différentes), estimation du temps, **vérification avant coupe** (vitesses à 0, outil trop court, rapides dans la matière, attaches trop fines…), fiche de travail |
 | **Reprendre** | Après un arrêt, un fichier qui repart d'un passage choisi d'un parcours |
 | **Écrire** | G-code générique, GRBL, Mach3, PlanetCNC, et vos post-processeurs `.pp` |
-| **Échanger** | Lit les projets `.crv3d` et les fichiers G-code d'autres logiciels, importe SVG, DXF, STL et images, exporte SVG, EPS, AI, PDF, STL, imprime via un PDF (format du papier, taille réelle sur plusieurs pages ou réduit à une page) |
+| **Échanger** | Lit les projets `.crv3d` et les fichiers G-code d'autres logiciels, importe SVG, DXF, STL et images, exporte SVG, EPS, AI, PDF, STL, les pièces découpées en solides STEP ou en document SolidCraft modifiable (paramètres d'épaisseur et de profondeur, esquisses aux vrais arcs), imprime via un PDF (format du papier, taille réelle sur plusieurs pages ou réduit à une page) |
 
 Le détail de ce qui manque est à la fin de cette page.
 
