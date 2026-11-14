@@ -84,7 +84,7 @@ h2 { font-family: var(--serif); font-size: 2.6rem; font-weight: 600; margin: 8px
 .step p { margin: 0; color: var(--muted); font-size: .95rem; }
 
 .shot { margin-bottom: 56px; }
-.shot img { width: 100%; display: block; border-radius: 8px; }
+.shot img { width: 100%; height: auto; display: block; border-radius: 8px; }
 
 .ops { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; padding-bottom: 54px; }
 .op { background: rgba(26,33,44,.75); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; }
@@ -100,7 +100,7 @@ h2 { font-family: var(--serif); font-size: 2.6rem; font-weight: 600; margin: 8px
 .views figcaption b { color: var(--text); font-family: var(--serif); font-size: 1.05rem; font-weight: 600; margin-right: 6px; }
 
 /* The cut-out download tickets from the workshop proposal, on the dark drawing. */
-.tickets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; padding: 10px 0 56px; }
+.tickets { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; padding: 10px 0 56px; }
 .ticket { position: relative; display: flex; flex-direction: column; text-decoration: none; color: var(--text); border: 2px dashed rgba(243,237,226,.55); border-radius: 12px; padding: 24px 22px 20px; background: rgba(23,29,39,.8); transition: border-color .2s, transform .2s; }
 .ticket:hover { border-color: var(--orange); transform: translateY(-2px); }
 .ticket::before { content: "✂"; position: absolute; top: -15px; left: 18px; background: var(--bg); padding: 0 6px; color: var(--orange); font-size: 1.1rem; }
@@ -168,3 +168,15 @@ dialog#viewer .close { position: absolute; top: 6px; right: 10px; background: no
 footer { color: var(--muted); font-size: .88rem; padding: 0 0 40px; }
 footer p { margin: 4px 0; }
 @media (max-width: 820px) { #lang { padding: 5px 8px; } }
+
+/* The Nix ticket: commands to copy rather than a file to fetch. */
+.ticket.nix code { display: block; font: .8rem var(--mono); color: var(--text); background: rgba(10,14,20,.7); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; margin: 0 0 8px; overflow-x: auto; white-space: nowrap; user-select: all; }
+.ticket.nix p.small { font-size: .84rem; margin: 6px 0 0; }
+/* The SolidCraft section: the design beside what it holds. */
+.cad { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 28px; align-items: start; padding-bottom: 56px; }
+.cad img { width: 100%; height: auto; display: block; border-radius: 8px; }
+.cadlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.cadlist li { background: rgba(26,33,44,.75); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; }
+.cadlist b { display: block; font-family: var(--serif); font-size: 1.12rem; font-weight: 600; margin-bottom: 2px; }
+.cadlist span { color: var(--muted); font-size: .92rem; }
+@media (max-width: 900px) { .cad { grid-template-columns: 1fr; } }
