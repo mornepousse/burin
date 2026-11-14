@@ -10,7 +10,10 @@ VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
 OUT=dist-site
 rm -rf "$OUT"
 mkdir -p "$OUT/docs" "$OUT/app"
-sed "s/{{VERSION}}/$VERSION/g" site/index.html > "$OUT/index.html"
+# The stylesheet asked for under a name that follows its content: a cache in front of the site
+# (hours long) then can't keep serving the old one with the new page.
+STYLE=$(sha256sum site/style.css | cut -c1-12)
+sed -e "s/{{VERSION}}/$VERSION/g" -e "s/{{STYLE}}/$STYLE/g" site/index.html > "$OUT/index.html"
 cp site/style.css site/carving.webp "$OUT/"
 cp release/burin.png "$OUT/"
 for picture in apercu-3d weave sweep adaptive nesting poignees pieces fiche-de-travail preferences solidcraft; do
