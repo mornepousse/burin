@@ -7260,6 +7260,37 @@ fn series_against_saved_projects() {
             if std::env::var("BURIN_DIST").is_ok() { if let Some(f) = crate::geom::Field::build(&o.paths, o.tool.dia, 900) { for (nm, tr) in [("saved", &a), ("burin", &b)] { let mut h = std::collections::BTreeMap::new(); for t in tr.iter() { for p in t { *h.entry((f.sample(p[0], p[1]) * 10.0).round() as i64).or_insert(0usize) += 1; } } let v: Vec<String> = h.iter().take(12).map(|(k, n)| format!("{:.1}:{n}", *k as f64 / 10.0)).collect(); println!("     {nm} distance from the outline {}", v.join(" ")); } } }
             if let Ok(at) = std::env::var("BURIN_NEAR") { let v: Vec<f64> = at.split(',').map(|x| x.parse().unwrap()).collect(); for (k, p) in o.paths.iter().enumerate() { let near = p.pts.iter().map(|q| (q[0] - v[0]).hypot(q[1] - v[1])).fold(f64::MAX, f64::min); if near < 5000.0 { let (lo, hi) = crate::geom::bbox(std::slice::from_ref(p)).unwrap(); println!("     path {k} closed {} n {} near {near:.2} box {lo:?} {hi:?} first {:?}", p.closed, p.pts.len(), &p.pts[..p.pts.len().min(4)]); if std::env::var("BURIN_PTS").is_ok() && near < 5.0 { let n = p.pts.len(); for (i, q) in p.pts.iter().enumerate() { if (q[0] - v[0]).hypot(q[1] - v[1]) < 4.0 { let (a, b) = (p.pts[(i + n - 1) % n], p.pts[(i + 1) % n]); let t = ((q[0]-a[0])*(b[1]-q[1]) - (q[1]-a[1])*(b[0]-q[0])).atan2((q[0]-a[0])*(b[0]-q[0]) + (q[1]-a[1])*(b[1]-q[1])).to_degrees(); println!("       pt {i} ({:.3},{:.3}) turn {t:.1} seg {:.3}", q[0], q[1], (b[0]-q[0]).hypot(b[1]-q[1])); } } } } } println!("     paths {} source {:?}", o.paths.len(), o.source); for t in traces(saved) { let (mut a, mut b) = ([f64::MAX; 2], [f64::MIN; 2]); for q in &t { a = [a[0].min(q[0]), a[1].min(q[1])]; b = [b[0].max(q[0]), b[1].max(q[1])]; } println!("     saved trace {:.2},{:.2} {:.2},{:.2} n {} z {:.2}", a[0], a[1], b[0], b[1], t.len(), t[0][2]); } }
             if let Ok(at) = std::env::var("BURIN_AT") { let v: Vec<f64> = at.split(',').map(|x| x.parse().unwrap()).collect(); for (nm, tr) in [("saved", &a), ("burin", &b)] { for t in tr.iter() { if t.iter().any(|p| (p[0]-v[0]).hypot(p[1]-v[1]) < 4.0) { let pts: Vec<String> = t.iter().take(if std::env::var("BURIN_ALL").is_ok() { 400 } else { 8 }).map(|p| format!("({:.3},{:.3},{:.2})", p[0], p[1], p[2])).collect(); println!("     {nm} trace n {} starts {}", t.len(), pts.join(" ")); break; } } } }
+            // Wood the original's tool takes away that Burin's doesn't, depth by depth: points on the
+            // edge of the original's tool, every 0.5 mm along its path, further than the tool's
+            // radius from Burin's path at that depth.
+            if std::env::var("BURIN_COVER").is_ok() {
+                let r = o.tool.dia / 2.0;
+                let mut zs: Vec<f64> = a.iter().flatten().map(|p| p[2]).collect();
+                zs.sort_by(f64::total_cmp);
+                zs.dedup_by(|x, y| (*x - *y).abs() < 1e-3);
+                let (mut worst, mut missed, mut tried) = ((0.0f64, [0.0; 3]), 0usize, 0usize);
+                for z in zs {
+                    let runs = |tr: &[Vec<[f64; 3]>]| -> Vec<Vec<[f64; 3]>> {
+                        let mut out = Vec::new();
+                        for t in tr { let mut run = Vec::new(); for p in t { if (p[2] - z).abs() < 1e-3 { run.push(*p); } else if !run.is_empty() { out.push(std::mem::take(&mut run)); } } if !run.is_empty() { out.push(run); } }
+                        out
+                    };
+                    let (sa, sb) = (runs(&a), runs(&b));
+                    for t in &sa { for w in t.windows(2) {
+                        let len = (w[1][0]-w[0][0]).hypot(w[1][1]-w[0][1]);
+                        let n = (len / 0.5).ceil().max(1.0) as usize;
+                        for k in 0..n { let c = [w[0][0] + (w[1][0]-w[0][0]) * k as f64 / n as f64, w[0][1] + (w[1][1]-w[0][1]) * k as f64 / n as f64];
+                            for j in 0..16 { let ang = j as f64 * std::f64::consts::TAU / 16.0; let q = [c[0] + (r - 0.02) * ang.cos(), c[1] + (r - 0.02) * ang.sin(), z];
+                                // Only wood the original's tool reaches nowhere else is counted once.
+                                tried += 1;
+                                let d = seg_xy(q, &sb) - r;
+                                if d > 0.01 { missed += 1; if d > worst.0 { worst = (d, q); } }
+                            }
+                        }
+                    }}
+                }
+                println!("     cover: {missed} of {tried} edge points of the original's cut further than the radius from Burin's, worst {:.3} at ({:.3},{:.3},{:.3})", worst.0, worst.1[0], worst.1[1], worst.1[2]);
+            }
             if std::env::var("BURIN_FAR").is_ok() { for t in &a { for p in t { let d = seg_xy(*p, &b); if d > 0.05 { println!("     far saved ({:.3},{:.3},{:.3}) {d:.3}", p[0], p[1], p[2]); } } } }
             println!("   XY only: saved→burin worst {:.3} (>0.05: {}) | burin→saved worst {:.3} (>0.05: {})", worst(&xa), over2(&xa, 0.05), worst(&xb), over2(&xb, 0.05));
             let over = |v: &[f64], lim: f64| v.iter().filter(|d| **d > lim).count();
