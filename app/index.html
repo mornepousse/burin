@@ -26,8 +26,8 @@
   // kept with a new one: they must come from the same build.
   const message = document.getElementById("message");
   try {
-    const { default: init, start } = await import("./burin.js?v=fac5d131e9e7");
-    await init({ module_or_path: "./burin_bg.wasm?v=fac5d131e9e7" });
+    const { default: init, start } = await import("./burin.js?v=e9f506db37a6");
+    await init({ module_or_path: "./burin_bg.wasm?v=e9f506db37a6" });
     start("burin");
     document.getElementById("status").classList.add("hidden");
   } catch (e) {
