@@ -1321,7 +1321,12 @@ fn read_layers(d: &[u8]) -> Vec<(usize, [u8; 16], LayerInfo)> {
                 let units: Vec<u16> = raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
                 let name = String::from_utf16_lossy(&units);
                 let after = from + len * 2;
-                if let Some(c) = d.get(after..after + 3) {
+                // Not a text's setting: its name starts with `_` (`_txtblkIsOnCurve`...) and the 16
+                // bytes before it hold a string, not a mark. Taken for layers, those put the
+                // shapes after them on layers of no name and a colour made of stray bytes (a big
+                // job of the person's had 16 of them among its dimensions).
+                let setting = name.starts_with('_') || d[i + 4..i + 20].windows(3).any(|w| w == [0xFF, 0xFE, 0xFF]);
+                if let (Some(c), false) = (d.get(after..after + 3), setting) {
                     let mut mark = [0u8; 16];
                     mark.copy_from_slice(&d[i + 4..i + 20]);
                     out.push((i, mark, LayerInfo { name, color: [c[0], c[1], c[2]] }));
@@ -2284,6 +2289,10 @@ pub(crate) mod tests {
         // The dimensions' numbers have no layer of their own: only the 25 texts are kept.
         let p = read(&bytes).unwrap();
         assert_eq!(p.texts.len(), 25);
+        // The texts' settings (`_txtblkIsOnCurve`...) look like layer records but aren't: only
+        // the job's own layers hold shapes.
+        let names: Vec<&str> = p.layers.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["Couche 1", "Dimensions", "decoupe", "contenu"]);
     }
 
     /// The same job with its text set to the right (1), then centred (2): each line sits against
@@ -2626,5 +2635,21 @@ pub(crate) mod tests {
         let mut bare = text_bytes("Niveau 1");
         bare.extend(text_bytes("Niveau 1"));
         assert_eq!(read_look(&bare), None);
+    }
+}
+
+#[cfg(test)]
+mod layer_dump {
+    /// For looking at a job's layers: BURIN_LAYER_DUMP=<file> cargo test layer_dump -- --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn layer_dump() {
+        let Ok(f) = std::env::var("BURIN_LAYER_DUMP") else { return };
+        let p = super::read(&std::fs::read(f).unwrap()).unwrap();
+        for (k, l) in p.layers.iter().enumerate() {
+            let paths: Vec<crate::geom::Path> = p.shapes.iter().filter(|(i, _)| *i == k).map(|(_, s)| s.clone()).collect();
+            let texts = p.shapes.iter().zip(&p.marks).filter(|((i, _), m)| *i == k && p.texts.contains(m)).count();
+            println!("layer {k} '{}' shapes {} text letters {} box {:?}", l.name, paths.len(), texts, crate::geom::bbox(&paths));
+        }
     }
 }
