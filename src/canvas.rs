@@ -167,6 +167,17 @@ impl App {
     /// Fits the whole sheet in `rect`, with the same small margin as the pictures.
     pub fn fit_view(&mut self, rect: Rect) {
         let (w, h) = (self.doc.job.width as f32, self.doc.job.height as f32);
+        // For pictures of a whole drawing that runs past its sheet: BURIN_FIT_ALL=1.
+        if std::env::var_os("BURIN_FIT_ALL").is_some() {
+            if let Some((lo, hi)) = geom::bbox(self.doc.vectors.iter().flat_map(|v| v.paths.iter())) {
+                let (lo, hi) = ([lo[0].min(0.0), lo[1].min(0.0)], [hi[0].max(w as f64), hi[1].max(h as f64)]);
+                let (dw, dh) = ((hi[0] - lo[0]) as f32, (hi[1] - lo[1]) as f32);
+                self.scale = (rect.width() * 0.953 / dw).min(rect.height() * 0.953 / dh);
+                let c = rect.center();
+                self.origin = pos2(c.x - (lo[0] as f32 + dw / 2.0) * self.scale, c.y + (lo[1] as f32 + dh / 2.0) * self.scale);
+                return;
+            }
+        }
         self.scale = (rect.width() * 0.953 / w).min(rect.height() * 0.953 / h);
         let c = rect.center();
         self.origin = pos2(c.x - w * self.scale / 2.0, c.y + h * self.scale / 2.0);
@@ -1074,10 +1085,20 @@ impl App {
                             pts.push(pts[0]);
                         }
                         painter.extend(dashed_within(&pts, Stroke::new(1.0, theme::CONSTRUCTION), 9.0, 4.0, painter.clip_rect()));
-                    } else if p.closed {
-                        painter.add(Shape::closed_line(pts, line));
                     } else {
-                        painter.add(Shape::line(pts, line));
+                        // On the sheet a line keeps its layer's colour, as in the original (whose
+                        // ground is white all round). Off the sheet the ground is the bench's, dark
+                        // in the dark look: a black or dark blue layer vanished there (a big job
+                        // of the person's drawn over 17 m). There the line is drawn in its colour
+                        // made readable on that ground, then again in its own colour within the sheet.
+                        let reach = pts.iter().fold(Rect::NOTHING, |r, q| r.union(Rect::from_min_max(*q, *q)));
+                        let shape = |stroke: Stroke| if p.closed { Shape::closed_line(pts.clone(), stroke) } else { Shape::line(pts.clone(), stroke) };
+                        if sheet.contains_rect(reach) {
+                            painter.add(shape(line));
+                        } else {
+                            painter.add(shape(Stroke::new(1.0, readable_on(line.color, theme::WORKSPACE()))));
+                            painter.with_clip_rect(painter.clip_rect().intersect(sheet)).add(shape(line));
+                        }
                     }
                 }
             }
@@ -1804,5 +1825,56 @@ mod zoom_tests {
             a.zoom_about(pos2(300.0, 200.0), 0.8);
         }
         assert!((a.scale - 0.2).abs() < 1e-6, "{}", a.scale);
+    }
+}
+
+/// Relative brightness as the eye sees it (WCAG), 0 black to 1 white.
+fn luminance(c: Color32) -> f32 {
+    let lin = |v: u8| {
+        let v = v as f32 / 255.0;
+        if v <= 0.039_28 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b())
+}
+
+/// How far apart two colours stand (WCAG contrast ratio, 1 to 21).
+fn contrast(a: Color32, b: Color32) -> f32 {
+    let (x, y) = (luminance(a), luminance(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+/// `colour` as it can be read on `ground`: itself when it stands out by 3 to 1 at least (WCAG's
+/// least for lines and large text), otherwise mixed toward white on a dark ground (black on a
+/// light one) just enough, so a layer's hue stays recognisable.
+pub fn readable_on(colour: Color32, ground: Color32) -> Color32 {
+    if contrast(colour, ground) >= 3.0 {
+        return colour;
+    }
+    let toward: f32 = if luminance(ground) < 0.2 { 255.0 } else { 0.0 };
+    let mix = |v: u8, t: f32| (v as f32 + (toward - v as f32) * t).round() as u8;
+    (1..=20)
+        .map(|k| k as f32 / 20.0)
+        .map(|t| Color32::from_rgb(mix(colour.r(), t), mix(colour.g(), t), mix(colour.b(), t)))
+        .find(|c| contrast(*c, ground) >= 3.0)
+        .unwrap_or(if toward > 0.0 { Color32::WHITE } else { Color32::BLACK })
+}
+
+#[cfg(test)]
+mod readable_tests {
+    use super::*;
+
+    /// On the dark bench, black and dark blue layers are lightened until they stand out; red,
+    /// which already does, is left alone. On the white sheet nothing changes for black.
+    #[test]
+    fn dark_lines_are_lightened_on_the_dark_ground_only() {
+        let bench = Color32::from_rgb(14, 17, 22);
+        for c in [Color32::BLACK, Color32::from_rgb(0, 0, 255), Color32::from_rgb(24, 26, 30)] {
+            let seen = readable_on(c, bench);
+            assert!(contrast(seen, bench) >= 3.0, "{c:?} → {seen:?}");
+        }
+        let blue = readable_on(Color32::from_rgb(0, 0, 255), bench);
+        assert!(blue.b() > blue.r() && blue.b() > blue.g(), "still blue: {blue:?}");
+        assert_eq!(readable_on(Color32::from_rgb(255, 0, 0), bench), Color32::from_rgb(255, 0, 0));
+        assert_eq!(readable_on(Color32::BLACK, theme::SHEET), Color32::BLACK);
     }
 }

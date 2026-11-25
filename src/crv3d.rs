@@ -955,7 +955,7 @@ const LINE_PITCH: f64 = 1.5;
 /// the first line's; the others go down `LINE_PITCH` times the font size apart (the original lays
 /// them out as it draws). The whole block then goes through the 2 × 3 matrix written after the
 /// base line.
-fn text_blocks(d: &[u8]) -> Vec<([u8; 16], [u8; 16], Vec<Path>)> {
+fn text_blocks(d: &[u8]) -> Vec<([u8; 16], [u8; 16], Vec<Path>, usize)> {
     let mut out = Vec::new();
     let starts = text_block_starts(d);
     for (k, &t) in starts.iter().enumerate() {
@@ -1131,7 +1131,7 @@ fn text_blocks(d: &[u8]) -> Vec<([u8; 16], [u8; 16], Vec<Path>)> {
         }
         flush(&mut placed, reach, &mut paths);
         if !paths.is_empty() {
-            out.push((mark, layer, paths));
+            out.push((mark, layer, paths, t));
         }
     }
     out
@@ -1565,11 +1565,13 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
     }
     // Text, kept as text blocks: each letter's outlines are placed along the block's base line.
     let mut texts = Vec::new();
-    for (mark, layer_mark, paths) in text_blocks(&d) {
-        // A text with no layer of its own is a dimension's number, written inside the dimension
-        // (a big job of the person's has 65 of them beside 25 texts). Burin doesn't read the
-        // dimensions' lines, so their numbers alone are left out rather than put on a layer.
-        let Some(layer) = found.iter().position(|(_, m, _)| *m == layer_mark) else { continue };
+    for (mark, layer_mark, paths, at) in text_blocks(&d) {
+        // A text with no layer of its own is a dimension's number (or its own words, "Chute"),
+        // written inside the dimension, whose head comes 165 to 177 bytes before (all 65 of a
+        // big job of the person's): it goes on the dimension's layer, with the dimension's lines.
+        // One held by nothing found is left out.
+        let holder = || objects.partition_point(|o| o.at < at).checked_sub(1).map(|k| &objects[k]).filter(|o| at - o.at < 400).map(|o| o.layer);
+        let Some(layer) = found.iter().position(|(_, m, _)| *m == layer_mark).or_else(|| holder().and_then(|l| found.iter().position(|(_, m, _)| *m == l))) else { continue };
         texts.push(mark);
         for path in paths {
             shapes.push((layer, path));
@@ -2267,7 +2269,7 @@ pub(crate) mod tests {
         assert_eq!(blocks.len(), 4, "every text");
         let marks: std::collections::HashSet<[u8; 16]> = blocks.iter().map(|b| b.0).collect();
         assert_eq!(marks.len(), 4, "each its own");
-        for (_, _, paths) in &blocks {
+        for (_, _, paths, _) in &blocks {
             assert!(paths.len() >= 4, "letters: {}", paths.len());
             let (lo, hi) = crate::geom::bbox(paths).unwrap();
             assert!(hi[0] - lo[0] > 10.0 && hi[0] - lo[0] < 300.0 && hi[1] - lo[1] < 100.0, "a line of text: {lo:?} {hi:?}");
@@ -2286,9 +2288,13 @@ pub(crate) mod tests {
         let sizes: Vec<(usize, [f64; 2])> = blocks.iter().map(|b| (b.2.len(), crate::geom::bbox(&b.2).map_or([0.0; 2], |(lo, hi)| [hi[0] - lo[0], hi[1] - lo[1]]))).collect();
         assert_eq!(blocks.len(), 90, "{sizes:?}");
         assert!(sizes.iter().all(|(n, [w, h])| *n >= 3 && *w > 10.0 && *h > 10.0), "each a line of letters: {sizes:?}");
-        // The dimensions' numbers have no layer of their own: only the 25 texts are kept.
+        // The dimensions' numbers have no layer of their own: they go on their dimension's
+        // ("Dimensions"), the 25 texts on theirs.
         let p = read(&bytes).unwrap();
-        assert_eq!(p.texts.len(), 25);
+        assert_eq!(p.texts.len(), 90);
+        let dims = p.layers.iter().position(|l| l.name == "Dimensions").unwrap();
+        let on_dims = p.texts.iter().filter(|m| p.shapes.iter().zip(&p.marks).any(|((l, _), k)| k == *m && *l == dims)).count();
+        assert_eq!(on_dims, 65);
         // The texts' settings (`_txtblkIsOnCurve`...) look like layer records but aren't: only
         // the job's own layers hold shapes.
         let names: Vec<&str> = p.layers.iter().map(|l| l.name.as_str()).collect();
