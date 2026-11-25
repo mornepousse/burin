@@ -901,6 +901,44 @@ impl<'a> Compound<'a> {
     }
 }
 
+/// Where each text block starts, as `text_blocks` reads it (the class name's position; the
+/// record's header 8 bytes on). The original's archive names a class only the first time it
+/// writes one; every later text block is brought in by the class's number instead (`0x8000` and
+/// the number), so those are found by their header (version 7 or 8, two marks, eight zeros,
+/// 0x82, 0x2a) followed by the block's own settings (`_txtAL_Version`) before any other record.
+/// A job of the person's with four texts named the class once: three of them were missing.
+fn text_block_starts(d: &[u8]) -> Vec<usize> {
+    let tag = b"txtBlock";
+    let mut starts: Vec<usize> = d.windows(tag.len()).enumerate().filter(|(_, w)| *w == tag.as_slice()).map(|(i, _)| i).collect();
+    let settings: Vec<u8> = "_txtAL_Version".encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    let mut seen = 0;
+    while let Some(found) = d.get(seen..).and_then(|rest| rest.windows(settings.len()).position(|w| w == settings.as_slice())) {
+        let at = seen + found;
+        seen = at + settings.len();
+        // A block named in full already has its start.
+        if starts.iter().any(|&t| t < at && at - t < 400) {
+            continue;
+        }
+        // The nearest header before it, within a record's head.
+        let head = (at.saturating_sub(400)..at.saturating_sub(44)).rev().find(|&a| {
+            matches!(u32_at(d, a), Some(7 | 8))
+                && d.get(a + 36..a + 44) == Some(&[0u8; 8][..])
+                && u32_at(d, a + 44) == Some(0x82)
+                && u32_at(d, a + 48) == Some(0x2a)
+                && a >= 2
+                && u16_at(d, a - 2).is_some_and(|v| v & 0x8000 != 0)
+        });
+        if let Some(a) = head {
+            let t = a - 8;
+            if !starts.contains(&t) {
+                starts.push(t);
+            }
+        }
+    }
+    starts.sort_unstable();
+    starts
+}
+
 /// How far apart lines of text are, in font sizes (estimated: on an 18-line text job of the person's the
 /// last line then sits on the text box's bottom margin to within 0.3 of 320).
 const LINE_PITCH: f64 = 1.5;
@@ -919,8 +957,7 @@ const LINE_PITCH: f64 = 1.5;
 /// base line.
 fn text_blocks(d: &[u8]) -> Vec<([u8; 16], [u8; 16], Vec<Path>)> {
     let mut out = Vec::new();
-    let tag = b"txtBlock";
-    let starts: Vec<usize> = d.windows(tag.len()).enumerate().filter(|(_, w)| *w == tag.as_slice()).map(|(i, _)| i).collect();
+    let starts = text_block_starts(d);
     for (k, &t) in starts.iter().enumerate() {
         let end = starts.get(k + 1).copied().unwrap_or(d.len());
         let (Some(mark), Some(layer)) = (d.get(t + 12..t + 28), d.get(t + 28..t + 44)) else { continue };
@@ -950,10 +987,28 @@ fn text_blocks(d: &[u8]) -> Vec<([u8; 16], [u8; 16], Vec<Path>)> {
         if line_starts.is_empty() {
             continue;
         }
-        let Some(base_tag) = find(b"txtBaseCurve") else { continue };
-        let Some((base, base_end)) = (base_tag + 12..(base_tag + 80).min(end)).find_map(|p| outline_at(d, p)) else { continue };
-        let m: Vec<f64> = (0..6).filter_map(|i| f64_at(d, base_end + 31 + 8 * i)).collect();
-        if m.len() != 6 || f64_at(d, base_end + 95) != Some(1.0) || base.pts.len() < 2 {
+        // The base line: named the first time, afterwards by its class's number (`base_line_at`).
+        let matrix = |e: usize| -> Option<Vec<f64>> {
+            let m: Vec<f64> = (0..6).filter_map(|i| f64_at(d, e + 31 + 8 * i)).collect();
+            (m.len() == 6 && f64_at(d, e + 95) == Some(1.0)).then_some(m)
+        };
+        let named = find(b"txtBaseCurve").and_then(|b| {
+            let (base, e) = (b + 12..(b + 80).min(end)).find_map(|p| outline_at(d, p))?;
+            Some((b, base, matrix(e)?))
+        });
+        let Some((base_tag, base, m)) = named.or_else(|| {
+            (t + 44..end.saturating_sub(100)).find_map(|p| {
+                if !u16_at(d, p).is_some_and(|v| v & 0x8000 != 0 && v != 0xFFFF) {
+                    return None;
+                }
+                let (base, e) = (p + 2..(p + 70).min(end)).find_map(|q| outline_at(d, q))?;
+                (base.pts.len() >= 2).then_some(())?;
+                Some((p, base, matrix(e)?))
+            })
+        }) else {
+            continue;
+        };
+        if base.pts.len() < 2 {
             continue;
         }
         // The letters, in order.
@@ -1506,8 +1561,11 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
     // Text, kept as text blocks: each letter's outlines are placed along the block's base line.
     let mut texts = Vec::new();
     for (mark, layer_mark, paths) in text_blocks(&d) {
+        // A text with no layer of its own is a dimension's number, written inside the dimension
+        // (a big job of the person's has 65 of them beside 25 texts). Burin doesn't read the
+        // dimensions' lines, so their numbers alone are left out rather than put on a layer.
+        let Some(layer) = found.iter().position(|(_, m, _)| *m == layer_mark) else { continue };
         texts.push(mark);
-        let layer = found.iter().position(|(_, m, _)| *m == layer_mark).unwrap_or(0);
         for path in paths {
             shapes.push((layer, path));
             marks.push(mark);
@@ -2178,8 +2236,11 @@ pub(crate) mod tests {
         let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/texte-18-lignes.crv3d");
         let Ok(bytes) = std::fs::read(file) else { return };
         let p = read(&bytes).unwrap();
-        assert_eq!(p.texts.len(), 1);
-        let paths: Vec<Path> = p.shapes.iter().zip(&p.marks).filter(|(_, m)| p.texts.contains(m)).map(|((_, s), _)| s.clone()).collect();
+        // The 18-line block, and eight small labels the job also has (brought in by the class's
+        // number: they were missing before, the original's preview shows them all).
+        assert_eq!(p.texts.len(), 9);
+        let first = text_blocks(&bytes)[0].0;
+        let paths: Vec<Path> = p.shapes.iter().zip(&p.marks).filter(|(_, m)| **m == first).map(|((_, s), _)| s.clone()).collect();
         assert_eq!(paths.len(), 260);
         let (lo, hi) = crate::geom::bbox(&paths).unwrap();
         // The left margin (40 of the 400 box, through the block's ×0.3311 and +134.05), and 18
@@ -2187,6 +2248,42 @@ pub(crate) mod tests {
         assert!((lo[0] - (134.0501 + 40.0 * 0.33113)).abs() < 0.05, "{lo:?}");
         let tall = (17.0 * 1.5 * 12.066365 + 12.066365) * 0.33113;
         assert!(((hi[1] - lo[1]) - tall).abs() < 1.0, "{} against {tall}", hi[1] - lo[1]);
+    }
+
+    /// A job with four texts: the archive names the text block's class (and its base line's)
+    /// only for the first; the other three come by the class's number. All four are read, each
+    /// on its own, with its letters.
+    #[test]
+    fn every_text_block_is_read_not_only_the_first() {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/quatre-textes.crv3d");
+        let Ok(bytes) = std::fs::read(file) else { return };
+        assert_eq!(text_block_starts(&bytes).len(), 4);
+        let blocks = text_blocks(&bytes);
+        assert_eq!(blocks.len(), 4, "every text");
+        let marks: std::collections::HashSet<[u8; 16]> = blocks.iter().map(|b| b.0).collect();
+        assert_eq!(marks.len(), 4, "each its own");
+        for (_, _, paths) in &blocks {
+            assert!(paths.len() >= 4, "letters: {}", paths.len());
+            let (lo, hi) = crate::geom::bbox(paths).unwrap();
+            assert!(hi[0] - lo[0] > 10.0 && hi[0] - lo[0] < 300.0 && hi[1] - lo[1] < 100.0, "a line of text: {lo:?} {hi:?}");
+        }
+        let p = read(&bytes).unwrap();
+        assert_eq!(p.texts.len(), 4);
+    }
+
+    /// A big job with 25 texts and 65 dimensions, whose numbers are text blocks too: every block is
+    /// read as a line of letters, and only the texts are kept as shapes.
+    #[test]
+    fn texts_are_read_and_dimensions_are_not_taken_for_texts() {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/textes-et-cotes.crv3d");
+        let Ok(bytes) = std::fs::read(file) else { return };
+        let blocks = text_blocks(&bytes);
+        let sizes: Vec<(usize, [f64; 2])> = blocks.iter().map(|b| (b.2.len(), crate::geom::bbox(&b.2).map_or([0.0; 2], |(lo, hi)| [hi[0] - lo[0], hi[1] - lo[1]]))).collect();
+        assert_eq!(blocks.len(), 90, "{sizes:?}");
+        assert!(sizes.iter().all(|(n, [w, h])| *n >= 3 && *w > 10.0 && *h > 10.0), "each a line of letters: {sizes:?}");
+        // The dimensions' numbers have no layer of their own: only the 25 texts are kept.
+        let p = read(&bytes).unwrap();
+        assert_eq!(p.texts.len(), 25);
     }
 
     /// The same job with its text set to the right (1), then centred (2): each line sits against
@@ -2202,7 +2299,8 @@ pub(crate) mod tests {
         for (value, check) in [(2u32, "centre"), (1, "right")] {
             bytes[at + 4..at + 8].copy_from_slice(&value.to_le_bytes());
             let p = read(&bytes).unwrap();
-            let paths: Vec<Path> = p.shapes.iter().zip(&p.marks).filter(|(_, m)| p.texts.contains(m)).map(|((_, s), _)| s.clone()).collect();
+            let first = text_blocks(&bytes)[0].0;
+            let paths: Vec<Path> = p.shapes.iter().zip(&p.marks).filter(|(_, m)| **m == first).map(|((_, s), _)| s.clone()).collect();
             assert_eq!(paths.len(), 260);
             let (lo, hi) = crate::geom::bbox(&paths).unwrap();
             match check {

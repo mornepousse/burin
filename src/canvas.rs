@@ -172,9 +172,19 @@ impl App {
         self.origin = pos2(c.x - w * self.scale / 2.0, c.y + h * self.scale / 2.0);
     }
 
+    /// The furthest out the view zooms: a tenth of the size that fits the whole sheet (or the
+    /// old 0.2 pixel per unit, when that is further), so a sheet of two metres or more can still
+    /// be seen whole with room around it in a small window.
+    fn least_scale(&self) -> f32 {
+        let (w, h) = (self.doc.job.width.max(1.0) as f32, self.doc.job.height.max(1.0) as f32);
+        let r = if self.last_rect.is_positive() { self.last_rect } else { Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0)) };
+        let fits = (r.width() / w).min(r.height() / h);
+        (fits / 10.0).min(0.2).max(1e-4)
+    }
+
     fn zoom_about(&mut self, at: Pos2, factor: f32) {
         let world = self.to_world(at);
-        self.scale = (self.scale * factor).clamp(0.2, 100_000.0);
+        self.scale = (self.scale * factor).clamp(self.least_scale(), 100_000.0);
         let now = self.to_screen(world);
         self.origin += at - now;
     }
@@ -777,7 +787,7 @@ impl App {
                 if bounds.width() > 4.0 && bounds.height() > 4.0 {
                     let factor = (rect.width() / bounds.width()).min(rect.height() / bounds.height());
                     let world = self.to_world(bounds.center());
-                    self.scale = (self.scale * factor).clamp(0.2, 100_000.0);
+                    self.scale = (self.scale * factor).clamp(self.least_scale(), 100_000.0);
                     let now = self.to_screen(world);
                     self.origin += rect.center() - now;
                     self.auto_fit = false;
@@ -1767,4 +1777,32 @@ fn tab_direction(path: &crate::geom::Path, spot: crate::geom::P) -> Option<(f64,
             (len > 1e-9).then(|| (crate::geom::dist2_seg(spot, a, b), [dx / len, dy / len]))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
+}
+
+#[cfg(test)]
+mod zoom_tests {
+    use super::*;
+
+    /// A sheet of 1.2 × 5 m in a small window: zooming out goes far enough to see it whole with
+    /// room around it (at the old floor of 0.2 pixel per unit it stayed 1,000 pixels tall).
+    #[test]
+    fn a_very_big_sheet_can_be_zoomed_out_to_see_whole() {
+        let mut a = App::default();
+        a.doc.job.width = 1200.0;
+        a.doc.job.height = 5000.0;
+        a.last_rect = Rect::from_min_size(Pos2::ZERO, vec2(600.0, 400.0));
+        a.scale = 1.0;
+        for _ in 0..40 {
+            a.zoom_about(pos2(300.0, 200.0), 0.8);
+        }
+        assert!(a.scale * 5000.0 < 400.0 * 0.5, "the whole sheet fits with room: {}", a.scale);
+        assert!(a.scale > 0.0);
+        // A small sheet keeps the old floor.
+        a.doc.job.width = 100.0;
+        a.doc.job.height = 100.0;
+        for _ in 0..40 {
+            a.zoom_about(pos2(300.0, 200.0), 0.8);
+        }
+        assert!((a.scale - 0.2).abs() < 1e-6, "{}", a.scale);
+    }
 }
