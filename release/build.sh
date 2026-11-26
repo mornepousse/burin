@@ -114,7 +114,7 @@ version: "$VERSION"
 release: 1
 section: graphics
 priority: optional
-maintainer: "Burin <burin@example.invalid>"
+maintainer: "mornepousse <48982737+mornepousse@users.noreply.github.com>"
 description: |
   Draw, model and cut for CNC carving.
   Burin draws parts, prepares the toolpaths (profiles, pockets, drilling, V-carving, 3D)
