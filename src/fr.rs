@@ -1952,7 +1952,7 @@ pub const FR: &[(&str, &str)] = &[
     ("In a few words", "En quelques mots"),
     ("Tell us more", "Dites-en plus"),
     ("Add the technical details below", "Ajouter les détails techniques ci-dessous"),
-    ("Exactly what would be in the draft", "Exactement ce que contiendrait le brouillon"),
+    ("Exactly what would be in the draft", "Exactement ce qui sera envoyé"),
     ("Burin sends nothing by itself. The draft opens in your browser and goes nowhere until you submit it. Your job and its file names are never in it.", "Burin n'envoie rien tout seul. Le brouillon s'ouvre dans votre navigateur et ne part que si vous le validez. Votre travail et ses noms de fichiers n'y figurent jamais."),
     ("Open a Draft in the Browser", "Ouvrir un brouillon dans le navigateur"),
     ("Copy the Text", "Copier le texte"),
