@@ -927,6 +927,11 @@ pub struct XformForm {
     pub rows: usize,
     pub count: usize,
     pub use_offset: bool,
+    /// The copies go left of the first rather than right, and down rather than up (the person asked for both ways).
+    pub copy_left: bool,
+    pub copy_down: bool,
+    /// The machine's X/Y zero only, from Edit > Move X/Y Zero (the Move form itself moves shapes).
+    pub zero_only: bool,
     pub shift: P,
     pub group: bool,
     pub rotate_copies: bool,
@@ -1007,6 +1012,9 @@ impl XformForm {
             rows: 2,
             count: if kind == Xform::CopyAlong { 6 } else { 12 },
             use_offset: false,
+            copy_left: false,
+            copy_down: false,
+            zero_only: false,
             shift: [0.0, 0.0],
             group: false,
             rotate_copies: true,

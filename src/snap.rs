@@ -7,6 +7,11 @@ use egui::{pos2, vec2, Color32, FontId, Painter, Rect, Shape, Stroke};
 use serde::{Deserialize, Serialize};
 
 /// What the pointer caught on.
+/// A line's direction is held at multiples of this many degrees...
+pub const LINE_ANGLE_STEP: f64 = 15.0;
+/// ...when within this many degrees of one.
+pub const LINE_ANGLE_CATCH: f64 = 3.0;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SnapKind {
     Point,
@@ -270,6 +275,31 @@ impl App {
             }
         }
         p
+    }
+
+    /// Where a line's next point lands: snapped as any point, then, when no shape's point catches
+    /// it, its direction from the last point taken to the nearest multiple of `LINE_ANGLE_STEP`
+    /// degrees (0, 15, 30, 45, 90...) within `LINE_ANGLE_CATCH`, keeping its distance along that
+    /// direction (the person asked for lines held at 0, 45, 90...). Alt frees it. Also the angle it
+    /// was held at.
+    pub(crate) fn line_point(&self, w: P, last: Option<P>) -> (P, Option<f64>) {
+        let p = self.snapped(w);
+        let Some(last) = last else { return (p, None) };
+        if self.snap_held_off || self.smart_snap(w).is_some_and(|h| !matches!(h.kind, SnapKind::Aligned | SnapKind::Guide)) {
+            return (p, None);
+        }
+        let (dx, dy) = (p[0] - last[0], p[1] - last[1]);
+        if dx.hypot(dy) < 1e-9 {
+            return (p, None);
+        }
+        let angle = dy.atan2(dx).to_degrees();
+        let held = (angle / LINE_ANGLE_STEP).round() * LINE_ANGLE_STEP;
+        if (angle - held).abs() > LINE_ANGLE_CATCH {
+            return (p, None);
+        }
+        let (c, s) = (held.to_radians().cos(), held.to_radians().sin());
+        let along = dx * c + dy * s;
+        (([last[0] + c * along, last[1] + s * along]), Some(held.rem_euclid(360.0)))
     }
 
     /// Shows what the pointer is catching on, while drawing or dragging.

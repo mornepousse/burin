@@ -92,7 +92,10 @@ impl App {
             ui.label(RichText::new(tr("Smooths the selected shapes: points closer than the tolerance to the line go, and a smooth curve passes through the rest.")).color(crate::theme::MUTED()));
             ui.horizontal(|ui| {
                 ui.label(tr("Tolerance"));
-                ui.add(egui::DragValue::new(&mut self.curve_fit_tolerance).speed(0.01).range(0.0001..=100.0).suffix(format!(" {unit}")));
+                if crate::ui::number(ui, &mut self.curve_fit_tolerance, 60.0) {
+                    self.curve_fit_tolerance = self.curve_fit_tolerance.clamp(0.0001, 100.0);
+                }
+                ui.label(unit);
             });
             if ui.add_enabled(!self.selected.is_empty(), egui::Button::new(tr("Apply"))).clicked() {
                 apply = true;

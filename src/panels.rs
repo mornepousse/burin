@@ -825,6 +825,10 @@ impl App {
             crate::ui::bold_sized(ui, if f.kind == DrawKind::Curve { crate::i18n::tr("Curve") } else { crate::i18n::tr("Lines") }, 15.0, theme::TEXT());
         });
         let last = f.points.last().copied();
+        // A box being typed in when Enter comes: Enter then adds the point typed (the person: Enter
+        // in a form must make what it says); the keyboard's own Enter, with no box, ends the line.
+        let typing = ui.ctx().text_edit_focused();
+        let mut add_typed = false;
         card(ui, |ui| {
             crate::ui::icon_caps(ui, Icon::Move, crate::i18n::tr("Next point"));
             let zero = self.doc.job.origin();
@@ -869,12 +873,15 @@ impl App {
             if changed_abs {
                 f.delta = [f.next[0] - from[0], f.next[1] - from[1]];
             }
-            if changed_abs || changed_delta {
+            // The angle and length follow the other boxes, but not when they were typed themselves:
+            // an angle typed while the length is still 0 made no step, and its angle came back 0.
+            if changed_abs || (changed_delta && !changed_polar) {
                 f.step = [f.delta[1].atan2(f.delta[0]).to_degrees(), f.delta[0].hypot(f.delta[1])];
             }
+            add_typed = typing && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if crate::ui::worded_button(ui, true, Icon::Lines, crate::i18n::tr("Add")).clicked() {
+                if crate::ui::worded_button(ui, true, Icon::Lines, crate::i18n::tr("Add")).clicked() || add_typed {
                     f.points.push(f.next);
                 }
                 if ui.add_enabled(!f.points.is_empty(), egui::Button::new(crate::i18n::tr("Undo")).min_size(vec2(56.0, 20.0))).clicked() {
@@ -949,6 +956,7 @@ impl App {
             Xform::Constraints => (Icon::Constraint, crate::i18n::tr("Dimensions and Rules")),
             Xform::Distort => (Icon::Distort, crate::i18n::tr("Distort Object")),
         };
+        let title = if f.zero_only { crate::i18n::tr("X/Y Zero") } else { title };
         // Burin's own head: the tool's icon, large, and its name.
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
@@ -957,9 +965,22 @@ impl App {
         });
         let mut apply_label = Some(crate::i18n::tr("Apply"));
         match f.kind {
+            // The machine's zero, on its own: what it is, where it is, and where to put it.
+            Xform::Move if f.zero_only => {
+                card(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    note(ui, crate::i18n::tr("The X/Y zero is the point the machine takes as X0 Y0: every position in the toolpaths' files is counted from it. Put it where you will set the machine's zero on the board: a corner, the middle, or a point of the selected shapes."));
+                    ui.horizontal(|ui| {
+                        crate::ui::icon_caps(ui, Icon::Select, crate::i18n::tr("Point of the selection"));
+                        ui.add_space(12.0);
+                        anchor_grid(ui, &mut f.anchor, crate::i18n::tr("Anchor"));
+                    });
+                });
+                self.zero_card(ui, f.anchor, unit);
+                apply_label = None;
+            }
             Xform::Move => {
                 use crate::ui::{explain, icon_caps, pictured_pills, Pic};
-                self.zero_card(ui, f.anchor, unit);
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 4.0;
                     ui.horizontal(|ui| {
@@ -1173,6 +1194,19 @@ impl App {
                         count_box(ui, &mut f.rows, 44.0);
                         ui.label(crate::i18n::tr("Columns"));
                         count_box(ui, &mut f.cols, 44.0);
+                    });
+                    icon_caps(ui, Icon::Move, crate::i18n::tr("Which way"));
+                    ui.horizontal(|ui| {
+                        ui.label(crate::i18n::tr("Columns"));
+                        if let Some(k) = pictured_pills(ui, &[(None, crate::i18n::tr("To the right")), (None, crate::i18n::tr("To the left"))], usize::from(f.copy_left)) {
+                            f.copy_left = k == 1;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(crate::i18n::tr("Rows"));
+                        if let Some(k) = pictured_pills(ui, &[(None, crate::i18n::tr("Upwards")), (None, crate::i18n::tr("Downwards"))], usize::from(f.copy_down)) {
+                            f.copy_down = k == 1;
+                        }
                     });
                     icon_caps(ui, Icon::Measure, crate::i18n::tr("Spacing"));
                     if let Some(k) = pictured_pills(ui, &[(Some(Pic::GridGap), crate::i18n::tr("Gap")), (Some(Pic::GridOffset), crate::i18n::tr("Offset"))], usize::from(f.use_offset)) {
@@ -1415,7 +1449,7 @@ impl App {
                             ui.add(egui::TextEdit::singleline(&mut text).desired_width(44.0).hint_text(if agreed { "" } else { "–" }));
                         });
                     });
-                    let wanted = if text != before { text.trim().parse::<f64>().ok().map(|v| v.round().clamp(1.0, 999.0) as u16) } else { None };
+                    let wanted = if text != before { crate::ui::typed_value(&text).map(|v| v.round().clamp(1.0, 999.0) as u16) } else { None };
                     if let (Some(copies), Some(_)) = (wanted, first) {
                         for id in self.selected.clone() {
                             if copies > 1 {
@@ -2780,7 +2814,11 @@ impl App {
                                 ui.selectable_value(&mut chosen, i, m.name());
                             }
                         });
-                        ui.add(egui::DragValue::new(&mut flutes).range(1..=6).suffix(crate::i18n::tr(" flutes")));
+                        let mut many = flutes as usize;
+                        if crate::ui::count_box(ui, &mut many, 30.0) {
+                            flutes = many.clamp(1, 6) as u32;
+                        }
+                        ui.label(crate::i18n::tr(" flutes").trim());
                         if ui.button(crate::i18n::tr("Suggest")).on_hover_text(crate::i18n::tr("Feed, plunge and pass depth from the usual chip load for this material and size. Starting points: your tool maker's figures come first.")).clicked() {
                             *t = crate::rates::suggest(t, crate::rates::MATERIALS[chosen], flutes);
                         }

@@ -2208,7 +2208,7 @@ fn arrows_need_a_selection_and_leave_typing_alone() {
     h.state_mut().selected = vec![id];
     h.state_mut().start_xform(Xform::Move);
     h.run();
-    h.get_all_by_value("0.0").next().unwrap().click();
+    h.get_all_by_role(egui::accesskit::Role::TextInput).next().unwrap().click();
     h.run();
     h.key_press(egui::Key::ArrowRight);
     h.run();
@@ -2254,7 +2254,11 @@ fn the_zero_can_go_anywhere_and_comes_back() {
 #[test]
 fn the_move_form_moves_the_zero_and_the_gcode_counts_from_it() {
     let mut h = job_with_square([5.0, 5.0]);
+    // The zero on its own, as Edit > Move X/Y Zero opens it.
     h.state_mut().start_xform(Xform::Move);
+    if let LeftForm::Xform(f) = &mut h.state_mut().left {
+        f.zero_only = true;
+    }
     h.run();
     click(&mut h, "Zero to Anchor");
     // Anchored at the middle of the square by default or its corner, it is where the anchor says.
@@ -2281,7 +2285,8 @@ fn the_zero_is_also_in_the_edit_menu() {
     let mut h = job_with_square([5.0, 5.0]);
     click(&mut h, "Edit");
     click(&mut h, "Move X/Y Zero...");
-    assert!(matches!(&h.state().left, LeftForm::Xform(f) if f.kind == Xform::Move));
+    assert!(matches!(&h.state().left, LeftForm::Xform(f) if f.kind == Xform::Move && f.zero_only));
+    h.get_by_label("Zero to Anchor");
 }
 
 #[test]
@@ -8045,4 +8050,72 @@ fn each_shapes_form_keeps_its_last_sizes_and_choices() {
     // The circle's own settings are its own.
     let circle = h.state().draw_memory.iter().find(|m| m.kind == crate::app::DrawKind::Circle).unwrap();
     assert_eq!(circle.anchor, Datum::Centre);
+}
+
+/// Sums in every value box: whole-number boxes round "8*3" to 24, as the others work it out.
+#[test]
+fn sums_are_worked_out_in_whole_number_boxes_too() {
+    assert_eq!(crate::ui::whole_number("8*3"), Some(24));
+    assert_eq!(crate::ui::whole_number("12"), Some(12));
+    assert_eq!(crate::ui::whole_number("10/4"), Some(3), "2.5 rounds up");
+    assert_eq!(crate::ui::typed_value("8*3"), Some(24.0));
+    assert_eq!(crate::canvas::typed_numbers("8*3, 2+1"), Some(vec![24.0, 3.0]));
+}
+
+/// The line form: an angle typed while the length is still 0 is kept when the length is typed,
+/// and Enter in a box adds the point typed. A line's next point is held at 0, 45, 90... degrees
+/// when within 3 of one.
+#[test]
+fn a_line_keeps_its_typed_angle_enter_adds_the_point_and_angles_catch() {
+    let mut h = harness();
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    h.state_mut().start_draw(crate::app::DrawKind::Polyline);
+    if let LeftForm::Draw(f) = &mut h.state_mut().left {
+        f.points = vec![[1.0, 1.0]];
+    }
+    h.run();
+    // The boxes in order: X, Y, then Angle and L, then dx, dy. Each one's text chosen, then typed over.
+    let type_in = |h: &mut Harness<'static, App>, k: usize, text: &str| {
+        h.get_all_by_role(egui::accesskit::Role::TextInput).nth(k).unwrap().focus();
+        h.run();
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.run();
+        h.get_all_by_role(egui::accesskit::Role::TextInput).nth(k).unwrap().type_text(text);
+        h.run();
+    };
+    type_in(&mut h, 2, "45");
+    type_in(&mut h, 3, "2");
+    let LeftForm::Draw(f) = &h.state().left else { panic!("the line form") };
+    assert!((f.step[0] - 45.0).abs() < 1e-9, "the angle stays 45: {:?}", f.step);
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let LeftForm::Draw(f) = &h.state().left else { panic!("the line form") };
+    assert_eq!(f.points.len(), 2, "Enter added the point");
+    let p = f.points[1];
+    let r = 2.0 / 2f64.sqrt();
+    assert!((p[0] - (1.0 + r)).abs() < 1e-6 && (p[1] - (1.0 + r)).abs() < 1e-6, "{p:?}");
+    // Angles catch: 2 degrees off level is level.
+    h.state_mut().snap = false;
+    let (at, held) = h.state().line_point([11.0, 1.0 + 10.0 * 2f64.to_radians().tan()], Some([1.0, 1.0]));
+    assert_eq!(held, Some(0.0));
+    assert!((at[1] - 1.0).abs() < 1e-9 && (at[0] - 11.0).abs() < 1e-9, "{at:?}");
+    let (_, free) = h.state().line_point([11.0, 1.0 + 10.0 * 8f64.to_radians().tan()], Some([1.0, 1.0]));
+    assert_eq!(free, None, "8 degrees off stays as it is");
+}
+
+/// Copies in a grid can go left and down.
+#[test]
+fn grid_copies_go_the_way_asked() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().start_xform(Xform::BlockCopy);
+    if let LeftForm::Xform(f) = &mut h.state_mut().left {
+        (f.rows, f.cols, f.dx, f.dy, f.use_offset, f.copy_left, f.copy_down) = (2, 2, 1.0, 1.0, false, true, true);
+    }
+    h.run();
+    h.state_mut().apply_xform();
+    let lows: Vec<[f64; 2]> = h.state().doc.vectors.iter().map(|v| crate::geom::bbox(&v.paths).unwrap().0).collect();
+    assert_eq!(lows.len(), 4);
+    let (minx, miny) = lows.iter().fold((f64::MAX, f64::MAX), |(a, b), p| (a.min(p[0]), b.min(p[1])));
+    assert!((minx - (4.0 - 3.0)).abs() < 1e-9 && (miny - (4.0 - 3.0)).abs() < 1e-9, "left and down by size + gap: {lows:?}");
 }

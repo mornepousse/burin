@@ -215,6 +215,8 @@ impl App {
     fn array_copy(&mut self, f: &XformForm, lo: P, hi: P) {
         self.checkpoint();
         let (w, h) = if f.use_offset { (f.dx, f.dy) } else { (hi[0] - lo[0] + f.dx, hi[1] - lo[1] + f.dy) };
+        // To the left and downwards when asked.
+        let (w, h) = (if f.copy_left { -w } else { w }, if f.copy_down { -h } else { h });
         let mut made = Vec::new();
         for row in 0..f.rows.max(1) {
             for col in 0..f.cols.max(1) {

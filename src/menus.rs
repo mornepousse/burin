@@ -1060,6 +1060,9 @@ impl App {
         }
         if entry(ui, "Move X/Y Zero...", true, None) {
             self.start_xform(Xform::Move);
+            if let LeftForm::Xform(f) = &mut self.left {
+                f.zero_only = true;
+            }
         }
         ui.separator();
         if entry(ui, "Notes", true, None) {

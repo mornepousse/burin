@@ -154,7 +154,7 @@ impl App {
                 ui.end_row();
                 for (i, (name, value)) in form.rows.iter_mut().enumerate() {
                     ui.push_id(i, |ui| ui.add_sized([140.0, 20.0], egui::TextEdit::singleline(name)));
-                    ui.push_id(("value", i), |ui| ui.add(egui::DragValue::new(value).speed(0.01).max_decimals(4)));
+                    ui.push_id(("value", i), |ui| crate::ui::number(ui, value, 80.0));
                     if ui.push_id(("remove", i), |ui| crate::ui::icon_button(ui, crate::icons::Icon::Delete, tr("Delete"), true, false)).inner.clicked() {
                         remove = Some(i);
                     }

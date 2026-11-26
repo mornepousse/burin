@@ -116,13 +116,30 @@ fn number_box(ui: &mut Ui, value: &mut f64, formula: &mut String, keep: bool, wi
     changed
 }
 
+/// A typed whole number, or a sum worked out and rounded to one (never below zero).
+pub(crate) fn whole_number(text: &str) -> Option<usize> {
+    let typed = text.trim();
+    if let Ok(v) = typed.parse::<usize>() {
+        return Some(v);
+    }
+    let v = crate::formula::evaluate(typed, &crate::formula::context()).ok()?;
+    (v.is_finite() && v >= 0.0 && v < 1e9).then(|| v.round() as usize)
+}
+
+/// A typed number, or a sum worked out ("8*3" is 24).
+pub(crate) fn typed_value(text: &str) -> Option<f64> {
+    let typed = text.trim();
+    typed.parse::<f64>().ok().or_else(|| crate::formula::evaluate(typed, &crate::formula::context()).ok()).filter(|v| v.is_finite())
+}
+
 pub(crate) fn count_box(ui: &mut Ui, value: &mut usize, width: f32) -> bool {
     let id = ui.next_auto_id();
     let mut text: String = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| value.to_string());
     let resp = ui.add(TextEdit::singleline(&mut text).id(id).desired_width(width).margin(vec2(3.0, 1.0)));
     let mut changed = false;
     if resp.has_focus() {
-        if let Ok(v) = text.trim().parse::<usize>() {
+        // A whole number, or a sum worked out and rounded ("8*3" is 24), as in the other boxes.
+        if let Some(v) = whole_number(&text) {
             changed = v != *value;
             *value = v;
         }

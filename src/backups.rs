@@ -229,7 +229,10 @@ impl App {
             ui.checkbox(&mut s.on, tr("Keep the earlier version each time a project is saved"));
             ui.horizontal(|ui| {
                 ui.label(tr("At most, for each project (MB)"));
-                ui.add(egui::DragValue::new(&mut s.most_mb).range(10..=10000));
+                let mut most = s.most_mb as usize;
+                if crate::ui::count_box(ui, &mut most, 60.0) {
+                    s.most_mb = most.clamp(10, 10000) as u64;
+                }
             });
             if s != self.backup_settings {
                 self.backup_settings = s;

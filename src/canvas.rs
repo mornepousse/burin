@@ -565,7 +565,11 @@ impl App {
                 self.finish_line(false);
             } else if response.clicked() {
                 if let Some(p) = pointer {
-                    let world = self.snapped(self.to_world(p));
+                    let last = match &self.left {
+                        LeftForm::Draw(f) => f.points.last().copied(),
+                        _ => None,
+                    };
+                    let world = self.line_point(self.to_world(p), last).0;
                     let first = match &self.left {
                         LeftForm::Draw(f) => f.points.first().copied(),
                         _ => None,
@@ -1251,7 +1255,13 @@ impl App {
             if !f.points.is_empty() {
                 let mut pts: Vec<P> = if f.kind == DrawKind::Curve { geom::smooth_curve(&f.points) } else { f.points.clone() };
                 if let Some(c) = self.cursor {
-                    pts.push(c);
+                    // Where the click would put the next point, its angle said when it is held.
+                    let (at, held) = self.line_point(c, f.points.last().copied());
+                    pts.push(at);
+                    if let Some(a) = held {
+                        let label = self.to_screen(at) + vec2(14.0, -18.0);
+                        painter.text(label, Align2::LEFT_BOTTOM, format!("{}°", crate::toolpath::trim(a)), FontId::proportional(12.0), theme::ACCENT);
+                    }
                 }
                 painter.add(Shape::line(pts.iter().map(|q| self.to_screen(*q)).collect(), preview));
                 for q in &f.points {
@@ -1681,7 +1691,7 @@ mod line_tests {
 
 /// What can be typed while dragging: a number, or two separated by a comma.
 pub(crate) fn typed_numbers(text: &str) -> Option<Vec<f64>> {
-    let values: Option<Vec<f64>> = text.split([',', ';']).map(|t| t.trim().parse::<f64>().ok()).collect();
+    let values: Option<Vec<f64>> = text.split([',', ';']).map(crate::ui::typed_value).collect();
     values.filter(|v| (1..=2).contains(&v.len()))
 }
 
@@ -1713,7 +1723,8 @@ impl App {
             let text: String = i.events.iter().filter_map(|e| if let egui::Event::Text(t) = e { Some(t.clone()) } else { None }).collect();
             (text, i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Backspace))
         });
-        self.typed.extend(text.chars().filter(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | ',' | ';')));
+        // Sums too ("8*3" is 24): the signs of arithmetic and brackets come in with the digits.
+        self.typed.extend(text.chars().filter(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | ',' | ';' | '+' | '*' | '/' | '(' | ')')));
         if back {
             self.typed.pop();
         }

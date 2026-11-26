@@ -1399,7 +1399,9 @@ impl App {
             ui.add_enabled_ui(form.by_count, |ui| {
                 ui.horizontal(|ui| {
                     ui.add_space(18.0);
-                    ui.add(egui::DragValue::new(&mut form.count).range(1..=200));
+                    if crate::ui::count_box(ui, &mut form.count, 44.0) {
+                        form.count = form.count.clamp(1, 200);
+                    }
                 });
             });
             let thickness = if form.by_count && form.count > 0 { height / form.count as f64 } else { form.thickness };
