@@ -32,11 +32,8 @@ OWNER_REPO=$(printf '%s' "$ORIGIN" | sed -nE 's#^(https://([^@/]*@)?github\.com/
 if [ -n "$OWNER_REPO" ]; then
     export BURIN_ISSUES_URL="https://github.com/$OWNER_REPO/issues/new"
 fi
-# Where problem reports go by mail: an address kept off the repository, in a file of its own.
-REPORT_FILE=${BURIN_REPORT_EMAIL_FILE:-.backup/report-email}
-if [ -z "${BURIN_REPORT_EMAIL:-}" ] && [ -f "$REPORT_FILE" ]; then
-    export BURIN_REPORT_EMAIL=$(tr -d ' \n' < "$REPORT_FILE")
-fi
+# Problem reports go through the relay (relay/): no address is written into the programs.
+unset BURIN_REPORT_EMAIL
 
 rustup toolchain list | grep -q "^$RUST" || rustup toolchain install "$RUST" --profile minimal --no-self-update
 rustup target list --installed --toolchain "$RUST" | grep -q x86_64-pc-windows-gnu || rustup target add --toolchain "$RUST" x86_64-pc-windows-gnu

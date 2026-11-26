@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex};
 /// hand has none, and offers to copy the text instead.
 pub const ISSUES_PAGE: Option<&str> = option_env!("BURIN_ISSUES_URL");
 
-/// Where reports go by mail, written in when the release is built (`release/build.sh`, from a file
-/// kept off the repository). A copy built without it opens a draft on the project's page instead.
+/// Where reports go by mail, only when a build is given one (BURIN_REPORT_EMAIL). Releases have
+/// none: they send through the relay, with a draft on the project's page as the other way.
 pub const REPORT_ADDRESS: Option<&str> = option_env!("BURIN_REPORT_EMAIL");
 
 /// Where Send posts a report: the relay on Burin's site, which passes it on to the author by mail.
@@ -291,7 +291,7 @@ impl App {
                         ui.ctx().open_url(egui::OpenUrl::same_tab(link));
                     }
                 }
-                if let Some(page) = self.issues_page.clone().filter(|_| by_mail.is_none() && relay.is_none()) {
+                if let Some(page) = self.issues_page.clone().filter(|_| by_mail.is_none()) {
                     if ui.add_enabled(ready, egui::Button::new(tr("Open a Draft in the Browser"))).clicked() {
                         crash::note("Open a Draft in the Browser");
                         let (address, too_long) = draft_address(&page, &form.title_of_draft(), &body);
