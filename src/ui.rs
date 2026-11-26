@@ -2708,6 +2708,10 @@ impl App {
             Datum::TopLeft => crate::i18n::tr("back left"),
             Datum::TopRight => crate::i18n::tr("back right"),
             Datum::Centre => crate::i18n::tr("middle"),
+            Datum::Left => crate::i18n::tr("middle of the left side"),
+            Datum::Right => crate::i18n::tr("middle of the right side"),
+            Datum::Top => crate::i18n::tr("middle of the back"),
+            Datum::Bottom => crate::i18n::tr("middle of the front"),
         };
         let height = if self.doc.job.z_on_bed { crate::i18n::tr("on the bed") } else { crate::i18n::tr("on top") };
         p.text(area.left_bottom() + vec2(8.0, -6.0), Align2::LEFT_BOTTOM, crate::i18n::tr("Origin: {where}, Z {height}").replace("{where}", where_).replace("{height}", height), FontId::proportional(11.0), MUTED());
@@ -2771,9 +2775,14 @@ impl App {
             [only] => self.doc.vectors.iter().find(|v| v.id == *only),
             _ => None,
         };
-        // A text keeps the shapes chosen before it: it can be fitted into them.
-        if !chosen.is_some_and(|v| form.load_shape(v)) && kind != DrawKind::Text {
-            self.selected.clear();
+        // A text keeps the shapes chosen before it: it can be fitted into them. A new shape
+        // keeps their box, to be placed from it.
+        let editing = chosen.is_some_and(|v| form.load_shape(v));
+        if !editing {
+            form.reference = geom::bbox(self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id)).flat_map(|v| v.paths.iter()));
+            if kind != DrawKind::Text {
+                self.selected.clear();
+            }
         }
         self.left = LeftForm::Draw(form);
         self.view3d = false;
@@ -2799,10 +2808,21 @@ impl App {
         }
     }
 
+    /// Whether Enter applies the open form this frame, as in the original's forms. Not while a
+    /// value typed during a drag is being finished with Enter; in a text of several lines Enter
+    /// starts a new line, so there Ctrl+Enter applies.
+    pub(crate) fn enter_applies(&self, ui: &Ui) -> bool {
+        if matches!(self.drag, crate::canvas::Drag::Move { .. } | crate::canvas::Drag::Rotate { .. } | crate::canvas::Drag::Scale { .. } | crate::canvas::Drag::Node { .. }) {
+            return false;
+        }
+        let multiline = matches!(&self.left, LeftForm::Draw(f) if f.kind == DrawKind::Text) && ui.ctx().text_edit_focused();
+        ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift && !i.modifiers.alt && (i.modifiers.command || !multiline))
+    }
+
     pub(crate) fn form_buttons(&mut self, ui: &mut Ui, apply: &str) -> bool {
-        let mut pressed = false;
+        let mut pressed = self.enter_applies(ui);
         ui.horizontal(|ui| {
-            pressed = primary(ui, apply, 74.0).clicked();
+            pressed |= primary(ui, apply, 74.0).clicked();
             ui.add_space((ui.available_width() - 80.0).max(0.0));
             if wide(ui, crate::i18n::tr("Close"), 74.0).clicked() {
                 self.left = LeftForm::None;
@@ -2864,15 +2884,56 @@ impl App {
             shape_preview(ui, &f);
             card(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
-                icon_caps(ui, Icon::Move, if f.kind == DrawKind::Text { crate::i18n::tr("Starts at") } else { crate::i18n::tr("Middle at") });
                 let zero = self.doc.job.origin();
-                ui.horizontal(|ui| {
-                    ui.label("X");
-                    number_from(ui, &mut f.c[0], zero[0], 54.0);
-                    ui.add_space(4.0);
-                    ui.label("Y");
-                    number_from(ui, &mut f.c[1], zero[1], 54.0);
-                });
+                if f.kind == DrawKind::Text {
+                    icon_caps(ui, Icon::Move, crate::i18n::tr("Starts at"));
+                    ui.horizontal(|ui| {
+                        ui.label("X");
+                        number_from(ui, &mut f.c[0], zero[0], 54.0);
+                        ui.add_space(4.0);
+                        ui.label("Y");
+                        number_from(ui, &mut f.c[1], zero[1], 54.0);
+                    });
+                } else {
+                    // X and Y place the chosen point of the shape's box (a corner, the middle of a
+                    // side, or the middle), counted from the job's zero or from the same point of
+                    // the other selected shapes. The shape is still kept by its middle.
+                    let reach = f.prim().and_then(|p| geom::bbox(&p.paths()));
+                    let others = geom::bbox(self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id) && Some(v.id) != f.editing).flat_map(|v| v.paths.iter()));
+                    let base = others.or(f.reference).map(|(lo, hi)| crate::edit::anchor_point(lo, hi, f.anchor));
+                    if base.is_none() {
+                        f.relative = false;
+                    }
+                    ui.horizontal(|ui| {
+                        icon_caps(ui, Icon::Move, crate::i18n::tr("Placed by"));
+                        ui.add_space(12.0);
+                        crate::panels::anchor_grid(ui, &mut f.anchor, crate::i18n::tr("Placed by"));
+                    });
+                    let choices = [(Some(Pic::MoveTo), crate::i18n::tr("From the job's zero")), (Some(Pic::MoveBy), crate::i18n::tr("From the selection"))];
+                    if let Some(k) = pictured_pills(ui, &choices, usize::from(f.relative)) {
+                        f.relative = k == 1 && base.is_some();
+                        if k == 1 && base.is_none() {
+                            self.status = crate::i18n::tr("Select the shape to measure from first, then draw.").into();
+                        }
+                    }
+                    let off = reach.map_or([0.0, 0.0], |(lo, hi)| {
+                        let a = crate::edit::anchor_point(lo, hi, f.anchor);
+                        [a[0] - f.c[0], a[1] - f.c[1]]
+                    });
+                    let from = if f.relative { base.unwrap_or([0.0, 0.0]) } else { zero };
+                    let mut at = [f.c[0] + off[0] - from[0], f.c[1] + off[1] - from[1]];
+                    let mut typed = false;
+                    ui.horizontal(|ui| {
+                        ui.label("X");
+                        typed |= number(ui, &mut at[0], 54.0);
+                        ui.add_space(4.0);
+                        ui.label("Y");
+                        typed |= number(ui, &mut at[1], 54.0);
+                    });
+                    if typed {
+                        f.c = [at[0] + from[0] - off[0], at[1] + from[1] - off[1]];
+                    }
+                }
                 ui.add_space(4.0);
                 if f.kind == DrawKind::Text {
                     icon_caps(ui, Icon::Text, crate::i18n::tr("Text"));

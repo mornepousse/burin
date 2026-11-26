@@ -15,10 +15,18 @@ fn note(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).size(11.5).color(theme::MUTED()));
 }
 
-/// Picks one of the four corners or the middle of a box.
+/// Picks a point of a box: a corner, the middle of a side, or the middle.
 pub fn anchor_grid(ui: &mut Ui, value: &mut Datum, name: &str) {
-    anchor_grid_with(ui, value, name, true);
+    anchor_spots(ui, value, name, &ALL_SPOTS);
 }
+
+/// The job's zero: a corner or the middle, as the original's job setup has it.
+pub fn datum_grid(ui: &mut Ui, value: &mut Datum, name: &str) {
+    anchor_spots(ui, value, name, &[Datum::TopLeft, Datum::TopRight, Datum::Centre, Datum::BottomLeft, Datum::BottomRight]);
+}
+
+/// Every point a shape can be held or placed by.
+const ALL_SPOTS: [Datum; 9] = [Datum::TopLeft, Datum::Top, Datum::TopRight, Datum::Left, Datum::Centre, Datum::Right, Datum::BottomLeft, Datum::Bottom, Datum::BottomRight];
 
 /// How the grid of copies will look: one square per copy, the rows and columns shifted as asked.
 fn copies_grid_preview(ui: &mut Ui, rows: usize, cols: usize, shift: [f64; 2]) {
@@ -66,30 +74,42 @@ fn copies_round_preview(ui: &mut Ui, count: usize, turned: bool) {
     }
 }
 
-/// The same, with or without the middle: nesting starts from one of the four corners only, as
+/// The corners, with or without the middle: nesting starts from one of the four corners only, as
 /// the original's form has four buttons for it (`0x5aa` to `0x5ad`, `CornerToNestFrom`).
 pub fn anchor_grid_with(ui: &mut Ui, value: &mut Datum, name: &str, centre: bool) {
+    if centre {
+        datum_grid(ui, value, name);
+    } else {
+        anchor_spots(ui, value, name, &[Datum::TopLeft, Datum::TopRight, Datum::BottomLeft, Datum::BottomRight]);
+    }
+}
+
+/// A small square with a dot for each of `spots` on it, the chosen one filled.
+fn anchor_spots(ui: &mut Ui, value: &mut Datum, name: &str, spots: &[Datum]) {
     let (square, _) = ui.allocate_exact_size(vec2(58.0, 54.0), Sense::hover());
     let inner = square.shrink(7.0);
     ui.painter().rect_stroke(inner, 0.0, Stroke::new(1.0, theme::LINE()), StrokeKind::Inside);
-    for (spot, datum) in [
-        (inner.left_top(), Datum::TopLeft),
-        (inner.right_top(), Datum::TopRight),
-        (inner.center(), Datum::Centre),
-        (inner.left_bottom(), Datum::BottomLeft),
-        (inner.right_bottom(), Datum::BottomRight),
-    ] {
-        if datum == Datum::Centre && !centre {
-            continue;
-        }
-        let hit = Rect::from_center_size(spot, vec2(14.0, 14.0));
+    for &datum in spots {
+        let spot = match datum {
+            Datum::TopLeft => inner.left_top(),
+            Datum::Top => inner.center_top(),
+            Datum::TopRight => inner.right_top(),
+            Datum::Left => inner.left_center(),
+            Datum::Centre => inner.center(),
+            Datum::Right => inner.right_center(),
+            Datum::BottomLeft => inner.left_bottom(),
+            Datum::Bottom => inner.center_bottom(),
+            Datum::BottomRight => inner.right_bottom(),
+        };
+        let hit = Rect::from_center_size(spot, vec2(12.0, 12.0));
         let resp = ui.interact(hit, ui.make_persistent_id((name, format!("{datum:?}"))), Sense::click());
-        ui.painter().circle(spot, 5.5, theme::INPUT(), Stroke::new(1.0, theme::MUTED()));
+        let ring = if resp.hovered() { theme::ACCENT } else { theme::MUTED() };
+        ui.painter().circle(spot, 5.0, theme::INPUT(), Stroke::new(1.0, ring));
         if *value == datum {
             ui.painter().circle_filled(spot, 3.0, theme::ACCENT);
         }
         label_widget(&resp, &format!("{name} {datum:?}"));
-        if resp.clicked() {
+        if resp.on_hover_text(datum.label()).clicked() {
             *value = datum;
         }
     }
@@ -893,9 +913,10 @@ impl App {
     }
 
     fn apply_close(&mut self, ui: &mut Ui, apply: &str, enabled: bool) -> bool {
-        let mut pressed = false;
+        // Enter applies, as the original's forms do.
+        let mut pressed = enabled && self.enter_applies(ui);
         ui.horizontal(|ui| {
-            pressed = ui.add_enabled(enabled, egui::Button::new(RichText::new(apply).color(theme::ON_ACCENT).strong()).fill(theme::ACCENT).min_size(vec2(74.0, 22.0))).clicked();
+            pressed |= ui.add_enabled(enabled, egui::Button::new(RichText::new(apply).color(theme::ON_ACCENT).strong()).fill(theme::ACCENT).min_size(vec2(74.0, 22.0))).clicked();
             ui.add_space((ui.available_width() - 80.0).max(0.0));
             if wide(ui, crate::i18n::tr("Close"), 74.0).clicked() {
                 self.left = LeftForm::None;
@@ -1760,7 +1781,7 @@ impl App {
                     ui.spacing_mut().item_spacing.y = 4.0;
                     crate::ui::icon_caps(ui, Icon::Move, crate::i18n::tr("Zero"));
                     ui.horizontal(|ui| {
-                        anchor_grid(ui, &mut self.doc.job.datum, crate::i18n::tr("XY datum"));
+                        datum_grid(ui, &mut self.doc.job.datum, crate::i18n::tr("XY datum"));
                         ui.vertical(|ui| {
                             ui.checkbox(&mut self.doc.job.use_offset, crate::i18n::tr("Move the origin by"));
                             ui.add_enabled_ui(self.doc.job.use_offset, |ui| {

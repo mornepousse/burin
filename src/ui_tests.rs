@@ -7813,3 +7813,51 @@ fn a_right_click_opens_a_menu_of_what_the_shape_can_do() {
     h.run();
     assert_eq!(h.state().doc.vectors.len(), 3, "pasted from the menu");
 }
+
+/// A shape's form places it by any of nine points of its box (here its bottom left corner),
+/// counted from the same point of the selected shape; Enter in the form draws it, as Apply does.
+#[test]
+fn a_shape_is_placed_by_a_corner_from_the_selection_and_enter_draws_it() {
+    let mut h = harness();
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    // A triangle from (4, 4) to (6, 6): selected, it is what the new shape is placed from.
+    let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(vec![[4.0, 4.0], [6.0, 4.0], [5.0, 6.0]])], Prim::Free);
+    h.state_mut().selected = vec![id];
+    h.run();
+    h.state_mut().start_draw(crate::app::DrawKind::Rect);
+    if let LeftForm::Draw(f) = &mut h.state_mut().left {
+        (f.c, f.w, f.h, f.corner) = ([10.0, 10.0], 2.0, 1.0, 0.0);
+    }
+    h.run();
+    h.get_by_label("Placed by BottomLeft").click();
+    h.run();
+    h.get_by_label("From the selection").click();
+    h.run();
+    // The rectangle's bottom left (9, 9.5) from the triangle's (4, 4).
+    assert!(h.query_all_by_value("5.0").count() >= 1 && h.query_all_by_value("5.5").count() >= 1, "X and Y from the triangle's corner");
+    h.get_all_by_value("5.0").next().unwrap().focus();
+    h.run();
+    h.get_all_by_value("5.0").next().unwrap().type_text("1");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 2, "Enter drew it");
+    let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors[1].paths).unwrap();
+    assert!((lo[0] - 9.01).abs() < 1e-9 && (lo[1] - 9.5).abs() < 1e-9 && (hi[0] - lo[0] - 2.0).abs() < 1e-9, "{lo:?} {hi:?}");
+}
+
+/// The middles of the sides can hold a shape too: Set Size grows from the middle of the left side.
+#[test]
+fn the_middles_of_the_sides_are_anchors_too() {
+    assert_eq!(crate::edit::anchor_point([0.0, 0.0], [4.0, 2.0], Datum::Left), [0.0, 1.0]);
+    assert_eq!(crate::edit::anchor_point([0.0, 0.0], [4.0, 2.0], Datum::Top), [2.0, 2.0]);
+    assert_eq!(crate::edit::anchor_point([0.0, 0.0], [4.0, 2.0], Datum::Right), [4.0, 1.0]);
+    assert_eq!(crate::edit::anchor_point([0.0, 0.0], [4.0, 2.0], Datum::Bottom), [2.0, 0.0]);
+    let mut h = job_with_square([5.0, 5.0]);
+    click(&mut h, "Move");
+    h.get_by_label("Anchor Left").click();
+    h.run();
+    let LeftForm::Xform(f) = &h.state().left else { panic!("the move form is open") };
+    assert_eq!(f.anchor, Datum::Left);
+}

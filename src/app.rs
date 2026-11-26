@@ -29,6 +29,12 @@ pub enum Datum {
     TopLeft,
     TopRight,
     Centre,
+    /// The middles of the four sides: for placing and holding shapes (the job's zero keeps to the
+    /// corners and the centre, as the original's).
+    Left,
+    Right,
+    Top,
+    Bottom,
 }
 
 impl Datum {
@@ -39,6 +45,10 @@ impl Datum {
             Datum::TopLeft => crate::i18n::tr("Top Left"),
             Datum::TopRight => crate::i18n::tr("Top Right"),
             Datum::Centre => crate::i18n::tr("Center"),
+            Datum::Left => crate::i18n::tr("Middle of the left side"),
+            Datum::Right => crate::i18n::tr("Middle of the right side"),
+            Datum::Top => crate::i18n::tr("Middle of the top"),
+            Datum::Bottom => crate::i18n::tr("Middle of the bottom"),
         }
     }
 }
@@ -121,13 +131,7 @@ impl Job {
         self.units.word()
     }
     fn datum_point(&self) -> P {
-        match self.datum {
-            Datum::BottomLeft => [0.0, 0.0],
-            Datum::BottomRight => [self.width, 0.0],
-            Datum::TopLeft => [0.0, self.height],
-            Datum::TopRight => [self.width, self.height],
-            Datum::Centre => [self.width / 2.0, self.height / 2.0],
-        }
+        crate::edit::anchor_point([0.0, 0.0], [self.width, self.height], self.datum)
     }
     /// Makes this job position the machine's X0 Y0.
     pub fn set_origin(&mut self, at: P) {
@@ -718,6 +722,13 @@ pub struct DrawForm {
     pub next: P,
     pub delta: P,
     pub step: [f64; 2],
+    /// The point of the shape X and Y place: a corner, the middle of a side, or the middle.
+    pub anchor: Datum,
+    /// X and Y counted from the same point of the other selected shapes' box, rather than from
+    /// the job's zero.
+    pub relative: bool,
+    /// The box of the shapes chosen when the form opened, which X and Y can count from.
+    pub reference: Option<(P, P)>,
 }
 
 impl DrawForm {
@@ -749,6 +760,9 @@ impl DrawForm {
             next: [0.0, 0.0],
             delta: [0.0, 0.0],
             step: [0.0, 0.0],
+            anchor: Datum::Centre,
+            relative: false,
+            reference: None,
         }
     }
 

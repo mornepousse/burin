@@ -47,6 +47,10 @@ pub fn anchor_point(lo: P, hi: P, anchor: Datum) -> P {
         Datum::TopLeft => [lo[0], hi[1]],
         Datum::TopRight => hi,
         Datum::Centre => [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0],
+        Datum::Left => [lo[0], (lo[1] + hi[1]) / 2.0],
+        Datum::Right => [hi[0], (lo[1] + hi[1]) / 2.0],
+        Datum::Top => [(lo[0] + hi[0]) / 2.0, hi[1]],
+        Datum::Bottom => [(lo[0] + hi[0]) / 2.0, lo[1]],
     }
 }
 
@@ -1389,9 +1393,9 @@ impl App {
             .collect();
         let used: f64 = widths.iter().sum::<f64>() * f.spacing;
         let mut s = match f.anchor {
-            Datum::BottomLeft | Datum::TopLeft => 0.0,
-            Datum::BottomRight | Datum::TopRight => (total - used).max(0.0),
-            Datum::Centre => ((total - used) / 2.0).max(0.0),
+            Datum::BottomLeft | Datum::TopLeft | Datum::Left => 0.0,
+            Datum::BottomRight | Datum::TopRight | Datum::Right => (total - used).max(0.0),
+            Datum::Centre | Datum::Top | Datum::Bottom => ((total - used) / 2.0).max(0.0),
         };
         self.checkpoint();
         let mut paths = Vec::new();
