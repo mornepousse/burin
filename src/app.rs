@@ -766,6 +766,18 @@ impl DrawForm {
         }
     }
 
+    /// The sizes and choices of `last`, the same kind's form as last left: not where it was, what it
+    /// was changing, or the points of a line.
+    pub fn take_settings(&mut self, last: &DrawForm) {
+        if last.kind != self.kind {
+            return;
+        }
+        (self.r, self.use_dia, self.rx, self.ry, self.w, self.h, self.corner) = (last.r, last.use_dia, last.rx, last.ry, last.w, last.h, last.corner);
+        (self.sides, self.inner, self.start, self.sweep, self.turns) = (last.sides, last.inner, last.start, last.sweep, last.turns);
+        (self.text_height, self.text_style, self.fill_percent, self.text_margin, self.spread_letters) = (last.text_height, last.text_style.clone(), last.fill_percent, last.text_margin, last.spread_letters);
+        (self.anchor, self.relative) = (last.anchor, last.relative);
+    }
+
     pub fn prim(&self) -> Option<Prim> {
         let c = self.c;
         Some(match self.kind {
@@ -1272,6 +1284,12 @@ pub struct App {
     pub measure_mode: crate::measure::MeasureMode,
     pub measure_cursor: Option<P>,
     pub inspected: Option<crate::measure::Inspected>,
+    /// Radius or Diameter, as last chosen in a circle's form: kept from one circle to the next, as
+    /// the original keeps it (the person's report).
+    pub circle_use_dia: bool,
+    /// Each kind of shape's form as last left: its sizes and choices come back the next time (the
+    /// person: what is kept for circles, for every shape).
+    pub draw_memory: Vec<DrawForm>,
     /// The first point is placed and the second not yet: the line follows the pointer.
     pub measure_pending: bool,
     /// Where the first point's click was on the screen, to tell a drag from a click.
@@ -1704,6 +1722,8 @@ impl Default for App {
             measure_cursor: None,
             inspected: None,
             measure_pending: false,
+            circle_use_dia: false,
+            draw_memory: Vec::new(),
             measure_press: None,
             cursor: None,
             model: None,

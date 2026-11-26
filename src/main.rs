@@ -1569,7 +1569,19 @@ fn main() {
     }
     let first_copy = startup::claim_session();
     let previous = startup::previous_log();
-    let avoid = if first_copy { startup::stopped_before(&previous, env!("CARGO_PKG_VERSION")) } else { Vec::new() };
+    let mut avoid = if first_copy { startup::stopped_before(&previous, env!("CARGO_PKG_VERSION")) } else { Vec::new() };
+    // And what died while opening before, whatever the version (kept across versions).
+    if first_copy && screenshot.is_none() {
+        for engine in startup::remembered_failures(startup::died_opening(&previous)) {
+            if !avoid.contains(&engine) {
+                avoid.push(engine);
+            }
+        }
+        // None left to try: try them all again rather than none.
+        if startup::attempts(None).iter().all(|e| avoid.contains(e)) {
+            avoid.clear();
+        }
+    }
     if first_copy && (screenshot.is_none() || state.as_deref() == Some("lasttime")) {
         crash::check_last_run(&previous);
     }

@@ -7973,3 +7973,72 @@ fn feedback_goes_by_mail_when_the_release_has_an_address() {
     assert!(sent.starts_with("mailto:reports@example.org?subject=Burin%3A%20%5BProblem%5D%20Cut%20stops"), "{sent}");
     assert!(h.query_by_label("Open a Draft in the Browser").is_none(), "by mail only");
 }
+
+/// The person's report: a circle given as a diameter stays so for the next circle; a click
+/// places a circle of the form's size there (holes on a square's corners, one click each); a
+/// dragged circle's size goes by whole millimetres (its diameter, when given as one).
+#[test]
+fn circles_keep_the_diameter_go_down_with_a_click_and_drag_to_whole_sizes() {
+    let mut h = harness();
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    h.state_mut().doc.job.units = crate::app::Units::Mm;
+    (h.state_mut().doc.job.width, h.state_mut().doc.job.height) = (200.0, 200.0);
+    h.state_mut().auto_fit = true;
+    h.state_mut().last_rect = egui::Rect::NOTHING;
+    h.state_mut().snap = false;
+    h.state_mut().start_draw(crate::app::DrawKind::Circle);
+    h.run();
+    h.get_by_label("Diameter").click();
+    h.run();
+    h.state_mut().left = LeftForm::None;
+    h.state_mut().start_draw(crate::app::DrawKind::Circle);
+    h.run();
+    let LeftForm::Draw(f) = &h.state().left else { panic!("the circle form") };
+    assert!(f.use_dia, "the diameter is still chosen");
+    // Two holes of 5 across, one click each.
+    if let LeftForm::Draw(f) = &mut h.state_mut().left {
+        f.r = 2.5;
+    }
+    h.run();
+    for at in [[50.0, 50.0], [150.0, 50.0]] {
+        let p = h.state().to_screen(at);
+        click_at(&mut h, p);
+    }
+    assert_eq!(h.state().doc.vectors.len(), 2, "a circle per click");
+    for (v, at) in h.state().doc.vectors.iter().zip([[50.0, 50.0], [150.0, 50.0]]) {
+        let (lo, hi) = crate::geom::bbox(&v.paths).unwrap();
+        assert!(((lo[0] + hi[0]) / 2.0 - at[0]).abs() < 0.5 && (hi[0] - lo[0] - 5.0).abs() < 0.01, "{lo:?} {hi:?}");
+    }
+    // A dragged one: 2.3 out makes 4.6 across, taken as 5.
+    let (a, b) = (h.state().to_screen([100.0, 150.0]), h.state().to_screen([102.3, 150.0]));
+    drag(&mut h, a, b);
+    let v = h.state().doc.vectors.last().unwrap();
+    let (lo, hi) = crate::geom::bbox(&v.paths).unwrap();
+    assert_eq!(h.state().doc.vectors.len(), 3);
+    assert!((hi[0] - lo[0] - 5.0).abs() < 0.01, "a whole diameter: {}", hi[0] - lo[0]);
+}
+
+/// Every kind of shape keeps its form's sizes and choices for the next time: a rectangle drawn
+/// 30 × 12 with rounded corners of 2, placed by its bottom left, comes back so.
+#[test]
+fn each_shapes_form_keeps_its_last_sizes_and_choices() {
+    let mut h = harness();
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    h.state_mut().start_draw(crate::app::DrawKind::Rect);
+    if let LeftForm::Draw(f) = &mut h.state_mut().left {
+        (f.w, f.h, f.corner, f.anchor) = (30.0, 12.0, 2.0, Datum::BottomLeft);
+    }
+    h.run();
+    h.state_mut().left = LeftForm::None;
+    h.state_mut().start_draw(crate::app::DrawKind::Circle);
+    h.run();
+    h.state_mut().start_draw(crate::app::DrawKind::Rect);
+    h.run();
+    let LeftForm::Draw(f) = &h.state().left else { panic!("the rectangle form") };
+    assert_eq!((f.w, f.h, f.corner, f.anchor), (30.0, 12.0, 2.0, Datum::BottomLeft));
+    // The circle's own settings are its own.
+    let circle = h.state().draw_memory.iter().find(|m| m.kind == crate::app::DrawKind::Circle).unwrap();
+    assert_eq!(circle.anchor, Datum::Centre);
+}

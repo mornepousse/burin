@@ -2788,6 +2788,10 @@ impl App {
     pub(crate) fn start_draw(&mut self, kind: DrawKind) {
         self.tool = Tool2::Select;
         let mut form = DrawForm::new(kind, &self.doc.job);
+        form.use_dia = self.circle_use_dia;
+        if let Some(last) = self.draw_memory.iter().find(|m| m.kind == kind) {
+            form.take_settings(&last.clone());
+        }
         // With one shape of this kind selected, the tool edits it rather than making another.
         let chosen = match self.selected.as_slice() {
             [only] => self.doc.vectors.iter().find(|v| v.id == *only),
@@ -2962,6 +2966,7 @@ impl App {
                     DrawKind::Circle => {
                         if let Some(k) = pictured_pills(ui, &[(Some(Pic::Radius), crate::i18n::tr("Radius")), (Some(Pic::Diameter), crate::i18n::tr("Diameter"))], usize::from(f.use_dia)) {
                             f.use_dia = k == 1;
+                            self.circle_use_dia = f.use_dia;
                         }
                         ui.horizontal(|ui| {
                             let mut shown = if f.use_dia { f.r * 2.0 } else { f.r };
@@ -3050,6 +3055,9 @@ impl App {
             if let LeftForm::Draw(now) = &self.left {
                 f.points = now.points.clone();
             }
+            // Kept for the next time this kind of shape is drawn.
+            self.draw_memory.retain(|m| m.kind != f.kind);
+            self.draw_memory.push(f.clone());
             self.left = LeftForm::Draw(f);
         }
         if self.form_buttons(ui, crate::i18n::tr("Apply")) {

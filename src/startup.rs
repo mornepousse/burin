@@ -156,6 +156,45 @@ pub fn stopped_before(log: &str, version: &str) -> Vec<Engine> {
 }
 
 /// What the last start left behind, for choosing how to start now. To be read before `begin_log`.
+/// The way of drawing that was being tried when the program died while opening, whatever version
+/// wrote the log: the last "Trying:" with no "Drawing:" after it.
+pub fn died_opening(log: &str) -> Option<Engine> {
+    let all = [Engine::Graphics, Engine::OpenGl, Engine::Software];
+    let mut trying = None;
+    for line in log.lines() {
+        if let Some(e) = line.strip_prefix("Trying: ").and_then(|w| all.into_iter().find(|e| e.word() == w)) {
+            trying = Some(e);
+        } else if line.starts_with("Drawing: ") || trying.is_some_and(|e| line.starts_with(&format!("{}: ", e.word()))) {
+            trying = None;
+        }
+    }
+    trying
+}
+
+/// The ways of drawing that stopped the program dead while opening on this computer, kept across
+/// versions (a file of their own): a new version used to try them all again, so a driver that
+/// crashes one of them crashed the first start of every version (the person's Windows 10 with an
+/// Intel HD 520). `died` is added; when all of them are in, the list starts again.
+pub fn remembered_failures(died: Option<Engine>) -> Vec<Engine> {
+    let all = [Engine::Graphics, Engine::OpenGl, Engine::Software];
+    let file = crate::app::settings_file("drawing-failures.txt");
+    let text = file.as_ref().and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default();
+    let mut list: Vec<Engine> = text.lines().filter_map(|w| all.into_iter().find(|e| e.word() == w.trim())).collect();
+    if let Some(e) = died.filter(|e| !list.contains(e)) {
+        list.push(e);
+    }
+    if all.iter().all(|e| list.contains(e)) {
+        list.clear();
+    }
+    if let Some(f) = file {
+        if let Some(dir) = f.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(f, list.iter().map(|e| format!("{}\n", e.word())).collect::<String>());
+    }
+    list
+}
+
 pub fn previous_log() -> String {
     log_file().and_then(|f| crate::platform::read_to_string(f).ok()).unwrap_or_default()
 }
@@ -352,6 +391,9 @@ mod tests {
         assert!(stopped_before(died, "1.1").is_empty());
         let all = "Burin 1.0 on windows x86_64\nAvoiding: graphics\nAvoiding: opengl\nTrying: software\n";
         assert!(stopped_before(all, v).is_empty());
+        // Whatever the version: what was being tried when it died while opening.
+        assert_eq!(died_opening(died), Some(Engine::Graphics));
+        assert_eq!(died_opening(later), None);
     }
 
     #[test]

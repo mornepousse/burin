@@ -731,15 +731,23 @@ impl App {
             return;
         }
         if response.clicked() {
+            // A click places a new shape of the form's size there, held by the form's chosen point
+            // (its middle unless another is chosen): holes on a square's corners take one click each.
             if let (Some(p), LeftForm::Draw(f)) = (pointer, &self.left) {
-                if f.kind == DrawKind::Text {
-                    let world = self.snapped(self.to_world(p));
-                    if let LeftForm::Draw(f) = &mut self.left {
-                        f.c = world;
-                        f.editing = None;
-                    }
-                    self.apply_draw();
+                let world = self.snapped(self.to_world(p));
+                let off = if f.kind == DrawKind::Text {
+                    [0.0, 0.0]
+                } else {
+                    f.prim().and_then(|q| geom::bbox(&q.paths())).map_or([0.0, 0.0], |(lo, hi)| {
+                        let a = crate::edit::anchor_point(lo, hi, f.anchor);
+                        [a[0] - f.c[0], a[1] - f.c[1]]
+                    })
+                };
+                if let LeftForm::Draw(f) = &mut self.left {
+                    f.c = [world[0] - off[0], world[1] - off[1]];
+                    f.editing = None;
                 }
+                self.apply_draw();
             }
             return;
         }
@@ -753,8 +761,16 @@ impl App {
         if let (Drag::Draw { start }, Some(p)) = (&self.drag, pointer) {
             let start = *start;
             let now = self.snapped(self.to_world(p));
+            // Sizes dragged go by whole millimetres (sixteenths of an inch), so no 4.973 comes of a
+            // drag; Alt, which lets the pointer go free of snapping, lets the size go free too.
+            let step = if self.snap_held_off { 0.0 } else if self.doc.job.units == crate::app::Units::Mm { 1.0 } else { 0.0625 };
+            let whole = |v: f64| if step > 0.0 { ((v / step).round() * step).max(step) } else { v };
+            let use_dia = matches!(&self.left, LeftForm::Draw(f) if f.use_dia);
             if let LeftForm::Draw(f) = &mut self.left {
                 let radius = (now[0] - start[0]).hypot(now[1] - start[1]);
+                // A circle's size goes by whole diameters when it is given as a diameter.
+                let radius = if use_dia && f.kind == DrawKind::Circle { whole(radius * 2.0) / 2.0 } else { whole(radius) };
+                let now = [start[0] + whole((now[0] - start[0]).abs()) * (now[0] - start[0]).signum(), start[1] + whole((now[1] - start[1]).abs()) * (now[1] - start[1]).signum()];
                 match f.kind {
                     DrawKind::Rect => {
                         f.c = [(start[0] + now[0]) / 2.0, (start[1] + now[1]) / 2.0];
