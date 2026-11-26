@@ -28,6 +28,21 @@ function base64(text) {
   return btoa(binary);
 }
 
+// A header text as encoded words of at most 75 characters each, folded onto lines of their own.
+function encodedWords(text) {
+  const words = [];
+  let part = "";
+  for (const ch of text) {
+    if (new TextEncoder().encode(part + ch).length > 42) {
+      words.push(`=?UTF-8?B?${base64(part)}?=`);
+      part = "";
+    }
+    part += ch;
+  }
+  if (part) words.push(`=?UTF-8?B?${base64(part)}?=`);
+  return words.join("\r\n ");
+}
+
 function tooMany(who) {
   const now = Date.now();
   const times = (recent.get(who) || []).filter((t) => now - t < 3600_000);
@@ -75,7 +90,7 @@ export default {
     const mime = [
       `From: Burin <${env.REPORT_FROM}>`,
       `To: <${env.REPORT_TO}>`,
-      `Subject: =?UTF-8?B?${base64(subject)}?=`,
+      `Subject: ${encodedWords(subject)}`,
       `Message-ID: ${id}`,
       `Date: ${new Date().toUTCString()}`,
       "MIME-Version: 1.0",
@@ -88,7 +103,10 @@ export default {
     try {
       await env.MAIL.send(new EmailMessage(env.REPORT_FROM, env.REPORT_TO, mime));
     } catch (e) {
-      return answer(502, { ok: false, error: "could not pass it on" });
+      // Cloudflare's reason, for whoever sets the relay up; the address itself is never said.
+      const reason = String((e && e.message) || e).split(env.REPORT_TO).join("<to>").split(env.REPORT_FROM).join("<from>");
+      console.error("send failed:", reason);
+      return answer(502, { ok: false, error: "could not pass it on", reason: reason.slice(0, 300) });
     }
     return answer(200, { ok: true });
   },
