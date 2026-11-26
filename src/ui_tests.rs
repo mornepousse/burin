@@ -3854,7 +3854,7 @@ fn the_interface_can_be_used_in_french() {
     h.run();
     h.get_by_label("Modifier les formes");
     h.get_by_label("Créer une pièce");
-    assert_eq!(h.state().doc.layers[0].name, "Couche 1");
+    assert_eq!(h.state().doc.layers[0].name, "Calque 1");
     // A message with something filled in.
     h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowRight);
     h.run();
