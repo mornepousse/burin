@@ -248,6 +248,27 @@ impl App {
             return;
         }
         let red = Color32::from_rgb(210, 40, 40);
+        // Where the pointer's point lands: a smart catch draws its own mark (`paint_snap`); on the
+        // grid or free, a small crosshair.
+        if self.measure_mode != MeasureMode::Shape {
+            if let Some(c) = self.measure_cursor.filter(|_| self.cursor.is_some_and(|w| self.smart_snap(w).is_none())) {
+                let at = self.to_screen(c);
+                let ink = Stroke::new(1.2, red);
+                painter.line_segment([at - vec2(9.0, 0.0), at - vec2(3.0, 0.0)], ink);
+                painter.line_segment([at + vec2(3.0, 0.0), at + vec2(9.0, 0.0)], ink);
+                painter.line_segment([at - vec2(0.0, 9.0), at - vec2(0.0, 3.0)], ink);
+                painter.line_segment([at + vec2(0.0, 3.0), at + vec2(0.0, 9.0)], ink);
+                painter.circle_filled(at, 1.6, red);
+            }
+        } else if let Some(w) = self.cursor {
+            // The piece a click would take, lit faintly under the pointer.
+            let reach = (8.0 / self.scale) as f64;
+            let hover = edge_near(self, w, reach).filter(|h| Some(h) != self.inspected.as_ref());
+            if let Some(piece) = hover.and_then(|h| self.doc.vectors.iter().find(|v| v.id == h.vector).and_then(|v| piece_of(v.paths.get(h.path)?, h.edge))) {
+                let pts: Vec<egui::Pos2> = piece.pts.iter().map(|q| self.to_screen(*q)).collect();
+                painter.add(egui::Shape::line(pts, Stroke::new(2.5, crate::theme::ACCENT.gamma_multiply(0.55))));
+            }
+        }
         match self.measure_mode {
             MeasureMode::Points | MeasureMode::Section => {
                 if let Some((a, b)) = self.measure {

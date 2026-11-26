@@ -307,7 +307,9 @@ fn open_state(app: &mut App, state: &str) {
             app.tool = app::Tool2::Measure;
             if state == "measure" {
                 app.measure = Some(([w * 0.2, h * 0.25], [w * 0.8, h * 0.75]));
-                app.measure_cursor = Some([w * 0.8, h * 0.75]);
+                // The pointer near the rectangle's bottom left, where it catches.
+                app.cursor = Some([w * 0.2 + w * 0.08 + 0.5, h * 0.25 + 0.5]);
+                app.measure_cursor = app.cursor;
             } else {
                 app.measure_mode = measure::MeasureMode::Shape;
                 let path = app.doc.vectors[0].paths[0].clone();

@@ -7891,3 +7891,23 @@ fn the_measure_tool_measures_two_points_and_a_shape() {
     assert_eq!(piece.kind, crate::measure::PieceKind::Line);
     assert!((piece.length - 4.0).abs() < 1e-9, "{}", piece.length);
 }
+
+/// With the measure tool, the point under the pointer catches on a shape's corner as soon as
+/// the pointer comes near it, before any click: that is where the measure starts, and its mark
+/// is drawn there.
+#[test]
+fn the_measure_tool_shows_where_its_point_catches() {
+    let mut h = harness();
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 4.0, 2.0, 0.0))], Prim::Free);
+    h.state_mut().tool = crate::app::Tool2::Measure;
+    h.run();
+    // Two pixels off the corner at (3, 4).
+    let near = h.state().to_screen([3.0, 4.0]) + egui::vec2(2.0, -2.0);
+    h.hover_at(near);
+    h.run();
+    let at = h.state().measure_cursor.expect("the pointer's point");
+    assert!((at[0] - 3.0).abs() < 1e-9 && (at[1] - 4.0).abs() < 1e-9, "caught on the corner: {at:?}");
+    assert!(h.state().cursor.is_some_and(|w| h.state().smart_snap(w).is_some()), "its mark is the corner's");
+}

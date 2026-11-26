@@ -276,7 +276,9 @@ impl App {
     pub(crate) fn paint_snap(&self, painter: &Painter) {
         let drawing = matches!(self.left, LeftForm::Draw(_));
         let dragging = matches!(self.drag, Drag::Move { .. } | Drag::Scale { .. } | Drag::RotateCentre | Drag::Node { .. } | Drag::Draw { .. } | Drag::Measure { .. } | Drag::Envelope(_) | Drag::Sketch { .. });
-        if !(drawing || dragging) {
+        // The measure tool shows it as soon as the pointer moves, so the first point's catch is seen.
+        let measuring = self.tool == crate::app::Tool2::Measure && self.measure_mode != crate::measure::MeasureMode::Shape;
+        if !(drawing || dragging || measuring) {
             return;
         }
         let Some(cursor) = self.cursor else { return };
