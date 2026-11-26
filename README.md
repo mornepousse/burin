@@ -139,9 +139,10 @@ Unsaved work is copied every two minutes and offered at the next start if Burin 
 | **Crash Reports** | What Burin noted when it stopped |
 | **Support Details** | The version, the system, the graphics card and the last start, to copy |
 
-**Burin sends nothing on its own.** Reports stay on your computer. If you choose to report one, a draft
-opens in your browser: you see everything in it, and it only goes if you confirm it. Your work, its file
-names and the name of your home folder are never in it.
+**Burin sends nothing on its own.** Reports stay on your computer. If you choose to report a problem,
+the form shows exactly what would go; only when you press Send does that text go to the author, through
+a small relay on burin.cc that passes it on by mail. A draft on the project's GitHub page, or copying
+the text, are the other ways. Your work, its file names and the name of your home folder are never in it.
 
 On its start page, Burin asks once whether to look for a new version each time it starts (also in
 Preferences). Only if you say yes does it ask GitHub for the number of the project's latest release, and

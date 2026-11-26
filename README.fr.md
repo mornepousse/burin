@@ -130,10 +130,11 @@ si Burin s'est mal fermé.
 | **Rapports de plantage** | Ce que Burin a noté quand il s'est arrêté |
 | **Détails pour l'assistance** | La version, le système, la carte graphique et le dernier démarrage, à copier |
 
-**Burin n'envoie rien tout seul.** Les rapports restent sur votre ordinateur. Si vous choisissez d'en
-signaler un, un brouillon s'ouvre dans votre navigateur : vous voyez tout ce qu'il contient, et il ne part
-que si vous le validez. Votre travail, ses noms de fichiers et le nom de votre dossier personnel n'y
-figurent jamais.
+**Burin n'envoie rien tout seul.** Les rapports restent sur votre ordinateur. Si vous choisissez de
+signaler un problème, le formulaire montre exactement ce qui partirait ; ce texte ne part vers l'auteur
+que lorsque vous appuyez sur Envoyer, par un petit relais sur burin.cc qui le transmet par e-mail. Un
+brouillon sur la page GitHub du projet, ou copier le texte, sont les autres moyens. Votre travail, ses
+noms de fichiers et le nom de votre dossier personnel n'y figurent jamais.
 
 Sur sa page d'accueil, Burin demande une fois s'il doit chercher une nouvelle version à chaque démarrage
 (réglable aussi dans les Préférences). Seulement si vous dites oui, il demande à GitHub le numéro de la
