@@ -203,24 +203,48 @@ impl App {
             }
             return;
         }
-        if let Some(p) = press {
-            let start = self.snapped(self.to_world(p));
-            self.drag = crate::canvas::Drag::Measure { start };
-            self.measure = Some((start, start));
-        }
-        if let (crate::canvas::Drag::Measure { start }, Some(p)) = (&self.drag, pointer) {
-            let start = *start;
-            let now = self.snapped(self.to_world(p));
+        // Two clicks, as the original: the first places the first point, the line then follows
+        // the pointer, the second click places the other end (the person found holding the button
+        // down awkward). Pressing, dragging and letting go far enough away also ends it.
+        let now = pointer.map(|p| self.snapped(self.to_world(p)));
+        if let (Some((start, _)), Some(now)) = (self.measure.filter(|_| self.measure_pending), now) {
             self.measure = Some((start, now));
             let d = (now[0] - start[0]).hypot(now[1] - start[1]);
             let angle = (now[1] - start[1]).atan2(now[0] - start[0]).to_degrees();
             self.status = tf!("Distance {:.4} {}, angle {angle:.1} degrees", d, self.doc.job.unit());
-            if response.drag_stopped() {
-                self.drag = crate::canvas::Drag::None;
-                if self.measure_mode == MeasureMode::Section {
-                    self.make_section(start, now);
+        }
+        // A click without moving is no drag: it counts as a press where it was.
+        let press = press.or_else(|| response.clicked().then_some(pointer).flatten());
+        if let Some(p) = press {
+            let at = self.snapped(self.to_world(p));
+            match self.measure.filter(|_| self.measure_pending) {
+                Some((start, _)) => self.end_measure(start, at),
+                None => {
+                    self.measure = Some((at, at));
+                    self.measure_pending = true;
+                    self.measure_press = Some(p);
+                    self.status = tr("Click the second point. Escape starts again.").into();
                 }
             }
+        }
+        if response.drag_stopped() && self.measure_pending {
+            let far = matches!((self.measure_press, pointer), (Some(a), Some(b)) if a.distance(b) > 6.0);
+            if let (true, Some((start, _)), Some(now)) = (far, self.measure, now) {
+                self.end_measure(start, now);
+            }
+        }
+    }
+
+    /// The second point placed: the measure stays shown, and in a section the shape is drawn.
+    fn end_measure(&mut self, start: P, end: P) {
+        self.measure = Some((start, end));
+        self.measure_pending = false;
+        self.measure_press = None;
+        let d = (end[0] - start[0]).hypot(end[1] - start[1]);
+        let angle = (end[1] - start[1]).atan2(end[0] - start[0]).to_degrees();
+        self.status = tf!("Distance {:.4} {}, angle {angle:.1} degrees", d, self.doc.job.unit());
+        if self.measure_mode == MeasureMode::Section {
+            self.make_section(start, end);
         }
     }
 
@@ -333,7 +357,7 @@ impl App {
             MeasureMode::Shape => self.shape_panel(ui, unit, zero),
             MeasureMode::Section => {
                 card(ui, |ui| {
-                    hint(ui, tr("Drag across the model: its height along the line is drawn as a new shape, standing on the line."));
+                    hint(ui, tr("Click two points across the model: its height along the line is drawn as a new shape, standing on the line."));
                     if self.model.is_none() && !self.model_dirty {
                         hint(ui, tr("There is no 3D model to cut through."));
                     }
@@ -359,7 +383,7 @@ impl App {
 
     fn points_panel(&mut self, ui: &mut Ui, unit: &str, zero: P) {
         let Some((a, b)) = self.measure else {
-            card(ui, |ui| hint(ui, tr("Drag from one point to another. The points catch on shapes and the grid when snapping is on; hold Alt to place them freely.")));
+            card(ui, |ui| hint(ui, tr("Click the first point, then the second. The points catch on shapes and the grid when snapping is on; hold Alt to place them freely.")));
             return;
         };
         let (dx, dy) = (b[0] - a[0], b[1] - a[1]);

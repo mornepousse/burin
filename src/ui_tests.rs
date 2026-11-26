@@ -7911,3 +7911,38 @@ fn the_measure_tool_shows_where_its_point_catches() {
     assert!((at[0] - 3.0).abs() < 1e-9 && (at[1] - 4.0).abs() < 1e-9, "caught on the corner: {at:?}");
     assert!(h.state().cursor.is_some_and(|w| h.state().smart_snap(w).is_some()), "its mark is the corner's");
 }
+
+/// The measure takes two clicks: after the first, the line follows the pointer; the second
+/// places the other end and the measure stays. Escape drops a measure begun, and the tool stays.
+#[test]
+fn the_measure_takes_two_clicks() {
+    let mut h = harness();
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    h.state_mut().snap = false;
+    h.state_mut().tool = crate::app::Tool2::Measure;
+    h.run();
+    let at = |h: &Harness<'static, App>, p: [f64; 2]| h.state().to_screen(p);
+    let a = at(&h, [1.0, 1.0]);
+    click_at(&mut h, a);
+    assert!(h.state().measure_pending, "the first point is placed");
+    let b = at(&h, [4.0, 5.0]);
+    h.hover_at(b);
+    h.run();
+    let (p, q) = h.state().measure.unwrap();
+    assert!(((q[0] - p[0]).hypot(q[1] - p[1]) - 5.0).abs() < 0.05, "the line follows the pointer");
+    click_at(&mut h, b);
+    assert!(!h.state().measure_pending, "the second click ends it");
+    let c = at(&h, [8.0, 8.0]);
+    h.hover_at(c);
+    h.run();
+    let (p, q) = h.state().measure.unwrap();
+    assert!(((q[0] - p[0]).hypot(q[1] - p[1]) - 5.0).abs() < 0.05, "the measure stays where it was placed");
+    // A new one, dropped with Escape: the tool stays.
+    click_at(&mut h, c);
+    assert!(h.state().measure_pending);
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(!h.state().measure_pending && h.state().measure.is_none());
+    assert_eq!(h.state().tool, crate::app::Tool2::Measure);
+}

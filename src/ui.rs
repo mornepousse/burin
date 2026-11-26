@@ -1522,7 +1522,12 @@ impl App {
         }
         use egui::Key;
         let pressed = |k: Key| ctx.input(|i| i.key_pressed(k));
-        if pressed(Key::Escape) {
+        if pressed(Key::Escape) && self.tool == Tool2::Measure && self.measure_pending {
+            // A measure begun is dropped first; the next Escape leaves the tool.
+            self.measure = None;
+            self.measure_pending = false;
+            self.measure_press = None;
+        } else if pressed(Key::Escape) {
             // Only the select tool's own Escape drops the selection: anywhere else it just ends that tool.
             if self.tool == Tool2::Select && matches!(self.left, LeftForm::None) {
                 self.selected.clear();

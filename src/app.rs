@@ -1272,6 +1272,10 @@ pub struct App {
     pub measure_mode: crate::measure::MeasureMode,
     pub measure_cursor: Option<P>,
     pub inspected: Option<crate::measure::Inspected>,
+    /// The first point is placed and the second not yet: the line follows the pointer.
+    pub measure_pending: bool,
+    /// Where the first point's click was on the screen, to tell a drag from a click.
+    pub measure_press: Option<egui::Pos2>,
     pub cursor: Option<P>,
 
     // Model and preview
@@ -1697,6 +1701,8 @@ impl Default for App {
             measure_mode: Default::default(),
             measure_cursor: None,
             inspected: None,
+            measure_pending: false,
+            measure_press: None,
             cursor: None,
             model: None,
             model_dirty: false,
