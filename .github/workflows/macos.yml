@@ -84,10 +84,15 @@ jobs:
           (cd dist && ditto -c -k --keepParent Burin.app "Burin-$VERSION-macos-arm64.zip")
           echo "ZIP=dist/Burin-$VERSION-macos-arm64.zip" >> "$GITHUB_ENV"
 
-      - name: Check it starts
+      - name: Check the program
         run: |
-          # It can't open a window here; it must at least load and say its version.
-          ./dist/Burin.app/Contents/MacOS/burin --version || true
+          # No screen here to open a window on: check it is an Apple Silicon program, signed, and
+          # that every library it needs is one macOS has.
+          file dist/Burin.app/Contents/MacOS/burin
+          lipo -archs dist/Burin.app/Contents/MacOS/burin | grep -q arm64
+          codesign --verify --deep dist/Burin.app
+          otool -L dist/Burin.app/Contents/MacOS/burin
+          ! otool -L dist/Burin.app/Contents/MacOS/burin | tail -n +2 | grep -v -E '^\s*(/usr/lib/|/System/Library/)'
 
       - name: Add to the release
         run: |
