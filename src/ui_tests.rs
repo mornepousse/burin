@@ -7946,3 +7946,30 @@ fn the_measure_takes_two_clicks() {
     assert!(!h.state().measure_pending && h.state().measure.is_none());
     assert_eq!(h.state().tool, crate::app::Tool2::Measure);
 }
+
+/// With an address for reports, the feedback form's button opens a message to it in the mail
+/// program, with the title and the text the form shows; a text too long for a mail link is
+/// copied and the message asks for it to be pasted.
+#[test]
+fn feedback_goes_by_mail_when_the_release_has_an_address() {
+    let (link, long) = crate::feedback::mail_link("reports@example.org", "Burin: [Problem] Cut stops", "It stopped at 50%.");
+    assert!(!long);
+    assert!(link.starts_with("mailto:reports@example.org?subject=Burin%3A%20%5BProblem%5D%20Cut%20stops&body=It%20stopped"), "{link}");
+    let (_, long) = crate::feedback::mail_link("reports@example.org", "t", &"x".repeat(3000));
+    assert!(long, "too long for a mail link");
+    let mut h = harness();
+    h.state_mut().report_address = Some("reports@example.org".into());
+    h.state_mut().issues_page = Some("https://example.org/issues/new".into());
+    let ctx = h.ctx.clone();
+    h.state_mut().open_feedback(&ctx, None);
+    h.run();
+    h.get_all_by_value("").next().unwrap().focus();
+    h.run();
+    h.get_all_by_value("").next().unwrap().type_text("Cut stops");
+    h.run();
+    h.get_by_label("Send by Mail").click();
+    h.run();
+    let sent = h.state().last_draft.clone().unwrap();
+    assert!(sent.starts_with("mailto:reports@example.org?subject=Burin%3A%20%5BProblem%5D%20Cut%20stops"), "{sent}");
+    assert!(h.query_by_label("Open a Draft in the Browser").is_none(), "by mail only");
+}

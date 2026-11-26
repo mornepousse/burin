@@ -1352,6 +1352,8 @@ pub struct App {
     /// The form for telling the author something, and where drafts go.
     pub feedback: Option<crate::feedback::FeedbackForm>,
     pub issues_page: Option<String>,
+    /// Where reports go by mail (`feedback::REPORT_ADDRESS`).
+    pub report_address: Option<String>,
     /// The last draft's address, for checking what it would say.
     pub last_draft: Option<String>,
     pub want_picture: Option<std::sync::Arc<std::sync::Mutex<Option<egui::ColorImage>>>>,
@@ -1756,6 +1758,7 @@ impl Default for App {
             help_page: 0,
             feedback: None,
             issues_page: crate::feedback::ISSUES_PAGE.map(str::to_string),
+            report_address: crate::feedback::REPORT_ADDRESS.map(str::to_string),
             last_draft: None,
             want_picture: None,
             crashes_open: false,

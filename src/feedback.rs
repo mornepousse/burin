@@ -1,5 +1,6 @@
 //! Telling the author something: a fault, an idea, a question, or a crash report. Burin sends nothing
-//! itself. It opens a draft on the project's page in the browser, for the person to read and submit.
+//! itself. It opens a message ready to send in the person's mail program, to the author's address
+//! (written in when the release is built), or else a draft on the project's page in the browser.
 
 use crate::app::*;
 use crate::crash::{self, Report};
@@ -11,6 +12,13 @@ use std::sync::{Arc, Mutex};
 /// The page for new reports, written in at build time from where the code is kept. A copy built by
 /// hand has none, and offers to copy the text instead.
 pub const ISSUES_PAGE: Option<&str> = option_env!("BURIN_ISSUES_URL");
+
+/// Where reports go by mail, written in when the release is built (`release/build.sh`, from a file
+/// kept off the repository). A copy built without it opens a draft on the project's page instead.
+pub const REPORT_ADDRESS: Option<&str> = option_env!("BURIN_REPORT_EMAIL");
+
+/// Past this a mail link gets cut off by some mail programs, so the text goes by the clipboard.
+const LONGEST_MAIL_LINK: usize = 1900;
 
 /// Past this an address gets refused, so the text goes by the clipboard instead.
 const LONGEST_ADDRESS: usize = 6000;
@@ -70,6 +78,18 @@ pub fn draft_address(page: &str, title: &str, body: &str) -> (String, bool) {
     let base = format!("{page}?title={}", url_encoded(title));
     let whole = format!("{base}&body={}", url_encoded(body));
     if whole.len() <= LONGEST_ADDRESS {
+        (whole, false)
+    } else {
+        (format!("{base}&body={}", url_encoded(tr("Paste the text from Burin here: it has been copied."))), true)
+    }
+}
+
+/// A link that opens a message to `to` in the mail program, and whether the text was too long to
+/// go in it (then the message asks for it to be pasted).
+pub fn mail_link(to: &str, subject: &str, body: &str) -> (String, bool) {
+    let base = format!("mailto:{}?subject={}", url_encoded(to).replace("%40", "@"), url_encoded(subject));
+    let whole = format!("{base}&body={}", url_encoded(body));
+    if whole.len() <= LONGEST_MAIL_LINK {
         (whole, false)
     } else {
         (format!("{base}&body={}", url_encoded(tr("Paste the text from Burin here: it has been copied."))), true)
@@ -149,11 +169,31 @@ impl App {
                 });
             });
             ui.add_space(4.0);
-            ui.label(RichText::new(tr("Burin sends nothing by itself. The draft opens in your browser and goes nowhere until you submit it. Your job and its file names are never in it.")).size(12.0).color(theme::MUTED()));
+            let by_mail = self.report_address.clone();
+            let note = if by_mail.is_some() {
+                tr("Burin sends nothing by itself. The message opens in your mail program, addressed to Burin's author, and goes nowhere until you send it. Your job and its file names are never in it.")
+            } else {
+                tr("Burin sends nothing by itself. The draft opens in your browser and goes nowhere until you submit it. Your job and its file names are never in it.")
+            };
+            ui.label(RichText::new(note).size(12.0).color(theme::MUTED()));
             ui.add_space(6.0);
             let ready = !form.title.trim().is_empty();
             ui.horizontal_wrapped(|ui| {
-                if let Some(page) = self.issues_page.clone() {
+                if let Some(to) = by_mail.clone() {
+                    if ui.add_enabled(ready, egui::Button::new(RichText::new(tr("Send by Mail")).strong().color(theme::ON_ACCENT)).fill(theme::ACCENT)).clicked() {
+                        crash::note("Send by Mail");
+                        let (link, too_long) = mail_link(&to, &format!("Burin: {}", form.title_of_draft()), &body);
+                        if too_long {
+                            ui.ctx().copy_text(body.clone());
+                            form.said = Some(tr("The text is too long for a mail link, so it has been copied. Paste it into the message, then send it.").to_string());
+                        } else {
+                            form.said = Some(tr("The message is open in your mail program. Send it when you're happy with it.").to_string());
+                        }
+                        self.last_draft = Some(link.clone());
+                        ui.ctx().open_url(egui::OpenUrl::same_tab(link));
+                    }
+                }
+                if let Some(page) = self.issues_page.clone().filter(|_| by_mail.is_none()) {
                     if ui.add_enabled(ready, egui::Button::new(tr("Open a Draft in the Browser"))).clicked() {
                         crash::note("Open a Draft in the Browser");
                         let (address, too_long) = draft_address(&page, &form.title_of_draft(), &body);
@@ -182,7 +222,7 @@ impl App {
                     }
                 }
             });
-            if self.issues_page.is_none() {
+            if self.issues_page.is_none() && self.report_address.is_none() {
                 ui.label(RichText::new(tr("This copy of Burin doesn't know where to send drafts. Copy the text instead.")).size(12.0).color(theme::MUTED()));
             }
             if let Some(said) = &form.said {
