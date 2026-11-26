@@ -489,6 +489,7 @@ dependencies = [
  "i_overlay",
  "image",
  "js-sys",
+ "miniz_oxide 0.8.9",
  "png",
  "rfd",
  "roxmltree 0.20.0",

@@ -1207,7 +1207,7 @@ impl App {
     }
 
     pub fn dialog_import(&mut self) {
-        let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Drawing or 3D clipart"), &["svg", "dxf", crate::modeltools::CLIP3D_EXTENSION]).pick_file() else { return };
+        let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Drawing or 3D clipart"), &["svg", "dxf", "pdf", "ai", "eps", crate::modeltools::CLIP3D_EXTENSION]).pick_file() else { return };
         let clip = path.extension().is_some_and(|e| e.eq_ignore_ascii_case(crate::modeltools::CLIP3D_EXTENSION));
         if let Err(why) = if clip { self.import_3d_clipart(&path) } else { self.import_drawing(&path) } {
             self.message = Some(why);
@@ -1220,8 +1220,15 @@ impl App {
         let bytes = crate::platform::read(path).map_err(|e| tf!("Could not read {}: {e}", path.display()))?;
         let text = String::from_utf8_lossy(&bytes);
         let is_svg = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+        let printed = path.extension().is_some_and(|e| ["pdf", "ai", "eps"].iter().any(|x| e.eq_ignore_ascii_case(x)));
         let mut masked = 0;
-        let (objects, skipped) = if is_svg {
+        let mut page_note = None;
+        let (objects, skipped) = if printed {
+            let per_inch = if self.doc.job.units == Units::Mm { 25.4 } else { 1.0 };
+            let d = crate::pdfin::read(&bytes, per_inch)?;
+            page_note = d.left_out.first().cloned();
+            (d.objects, 0)
+        } else if is_svg {
             let per_inch = if self.doc.job.units == Units::Mm { 25.4 } else { 1.0 };
             let d = crate::svg::read(&text, per_inch)?;
             masked = d.masked;
@@ -1246,6 +1253,10 @@ impl App {
         }
         if masked > 0 {
             note += &tf!(" {masked} objects are hidden in part by a mask in the file: they come in whole.");
+        }
+        if let Some(said) = page_note {
+            note += " ";
+            note += &said;
         }
         let (w, h) = (self.doc.job.width, self.doc.job.height);
         let picked = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id));

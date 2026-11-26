@@ -131,7 +131,7 @@ impl App {
                 self.leave_for(Leave::Recent);
                 Ok(())
             }
-            "svg" | "dxf" => self.import_drawing(&path),
+            "svg" | "dxf" | "pdf" | "ai" | "eps" => self.import_drawing(&path),
             crate::modeltools::CLIP3D_EXTENSION => self.import_3d_clipart(&path),
             "stl" => self.open_model_file(&path),
             "png" | "jpg" | "jpeg" | "bmp" => match crate::bitmap::Image::load(&path) {

@@ -19,6 +19,8 @@ i_overlay = "9.1.0"
 spade = "2"
 # The same clock on a computer and in a web browser, where the standard one doesn't work.
 web-time = "1"
+# Unpacking the compressed pages of PDF and Illustrator files, for importing their drawings.
+miniz_oxide = "0.8"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland", "pollster"] }

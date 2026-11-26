@@ -1158,7 +1158,7 @@ fn contour_body(d: &[u8], at: usize) -> Option<usize> {
 /// no more than `geom::ARC_SAG` from the curve (steps of 1/n stray at most 3/4 × the larger second
 /// difference of its points / n²; on the foot supports a 110 mm gentle side in the old 64 steps
 /// missed the curve by 0.06 mm).
-fn bezier_steps(a: P, c1: P, c2: P, b: P) -> usize {
+pub(crate) fn bezier_steps(a: P, c1: P, c2: P, b: P) -> usize {
     let span = (a[0] - c1[0]).hypot(a[1] - c1[1]) + (c1[0] - c2[0]).hypot(c1[1] - c2[1]) + (c2[0] - b[0]).hypot(c2[1] - b[1]);
     let chord = (a[0] - b[0]).hypot(a[1] - b[1]);
     let second = (a[0] - 2.0 * c1[0] + c2[0]).hypot(a[1] - 2.0 * c1[1] + c2[1]).max((c1[0] - 2.0 * c2[0] + b[0]).hypot(c1[1] - 2.0 * c2[1] + b[1]));

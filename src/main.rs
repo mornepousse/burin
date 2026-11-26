@@ -34,6 +34,7 @@ mod icons;
 mod keys;
 mod menus;
 mod measure;
+mod pdfin;
 mod merge;
 mod curvefit;
 mod rates;
@@ -1607,7 +1608,7 @@ fn main() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Option<String>, test_crash: Option<&str>) -> eframe::Result {
+fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, mut state: Option<String>, test_crash: Option<&str>) -> eframe::Result {
     let crash_now = test_crash == Some(engine.word());
     let crash_later = test_crash.filter(|t| matches!(*t, "panic" | "abort")).map(str::to_string);
     let options = engine.options(eframe::NativeOptions {
@@ -1639,6 +1640,18 @@ fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, state: Opti
             // Pictures for a check shouldn't show this computer's reports, or touch its copy of unsaved work.
             let quiet = screenshot.is_some() && !state.as_deref().is_some_and(|s| s == "lasttime");
             app.data_dir = if quiet || startup::is_second_copy() { None } else { app::settings_file("x").and_then(|f| f.parent().map(PathBuf::from)) };
+            // For pictures of an imported drawing: a new job of the drawing's size, then the file.
+            if let Some(file) = state.as_deref().and_then(|s| s.strip_prefix("import:")) {
+                app.new_file();
+                app.left = app::LeftForm::None;
+                if let Err(why) = app.import_drawing(std::path::Path::new(file)) {
+                    app.message = Some(why);
+                }
+                if let Some((lo, hi)) = geom::bbox(app.doc.vectors.iter().flat_map(|v| v.paths.iter())) {
+                    (app.doc.job.width, app.doc.job.height) = (hi[0].max(lo[0] + 1.0) + lo[0].max(0.0), hi[1].max(lo[1] + 1.0) + lo[1].max(0.0));
+                }
+                state = None;
+            }
             match state.as_deref().and_then(|s| s.strip_prefix("project:")) {
                 Some(file) => {
                     if let Err(why) = app.open_path(file.into()) {

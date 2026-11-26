@@ -40,7 +40,7 @@ Linux · Windows · Browser · English · Français
 | **Check** | 3D preview of the cut (rapids, plunges and lifts in their own colours), time estimate, **check before cutting** (zero speeds, tool too short, rapids in the material, tabs too thin…), job sheet |
 | **Resume** | After a stop, a file that starts again from a chosen pass of a toolpath |
 | **Write** | Generic G-code, GRBL, Mach3, PlanetCNC, and your own `.pp` post processors |
-| **Exchange** | Reads `.crv3d` projects (shapes, toolpaths, guides, grid, notes) and other programs' G-code, imports SVG, DXF, STL and pictures, exports SVG, EPS, AI, PDF, STL, the parts cut out as STEP solids or as a SolidCraft design you can change (a thickness and a depth parameter, sketches with true arcs), prints through a PDF (paper size, real size over several pages or shrunk to one) |
+| **Exchange** | Reads `.crv3d` projects (shapes, toolpaths, guides, grid, notes) and other programs' G-code, imports SVG, DXF, PDF, Illustrator (.ai), EPS, STL and pictures, exports SVG, EPS, AI, PDF, STL, the parts cut out as STEP solids or as a SolidCraft design you can change (a thickness and a depth parameter, sketches with true arcs), prints through a PDF (paper size, real size over several pages or shrunk to one) |
 
 What's still missing is listed at the end of this page.
 
