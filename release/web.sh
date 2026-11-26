@@ -17,7 +17,7 @@ mkdir -p "$TOOLS"
 export RUSTUP_HOME=$TOOLS/rustup XDG_CACHE_HOME=$TOOLS/cache CARGO_TARGET_DIR=$TOOLS/target
 export CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=$HOME=/build"$'\x1f'"--remap-path-prefix=$TOOLS/source-web=/build/burin"
 # Where problem reports go by mail: an address kept off the repository, in a file of its own.
-REPORT_FILE=${BURIN_REPORT_EMAIL_FILE:-$HOME/.config/burin-release/report-email}
+REPORT_FILE=${BURIN_REPORT_EMAIL_FILE:-.backup/report-email}
 if [ -z "${BURIN_REPORT_EMAIL:-}" ] && [ -f "$REPORT_FILE" ]; then
     export BURIN_REPORT_EMAIL=$(tr -d ' \n' < "$REPORT_FILE")
 fi

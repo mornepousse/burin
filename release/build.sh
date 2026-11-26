@@ -33,7 +33,7 @@ if [ -n "$OWNER_REPO" ]; then
     export BURIN_ISSUES_URL="https://github.com/$OWNER_REPO/issues/new"
 fi
 # Where problem reports go by mail: an address kept off the repository, in a file of its own.
-REPORT_FILE=${BURIN_REPORT_EMAIL_FILE:-$HOME/.config/burin-release/report-email}
+REPORT_FILE=${BURIN_REPORT_EMAIL_FILE:-.backup/report-email}
 if [ -z "${BURIN_REPORT_EMAIL:-}" ] && [ -f "$REPORT_FILE" ]; then
     export BURIN_REPORT_EMAIL=$(tr -d ' \n' < "$REPORT_FILE")
 fi
