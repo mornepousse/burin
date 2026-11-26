@@ -1661,7 +1661,7 @@ fn open_window(engine: startup::Engine, screenshot: Option<PathBuf>, mut state: 
                     app.message = Some(why);
                 }
                 if let Some((lo, hi)) = geom::bbox(app.doc.vectors.iter().flat_map(|v| v.paths.iter())) {
-                    (app.doc.job.width, app.doc.job.height) = (hi[0].max(lo[0] + 1.0) + lo[0].max(0.0), hi[1].max(lo[1] + 1.0) + lo[1].max(0.0));
+                    (app.doc.job.width, app.doc.job.height) = ((hi[0] - lo[0]).max(1.0) + lo[0].max(0.0), (hi[1] - lo[1]).max(1.0) + lo[1].max(0.0));
                 }
                 state = None;
             }
