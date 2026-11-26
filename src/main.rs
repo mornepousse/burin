@@ -75,6 +75,8 @@ mod update;
 mod view3d;
 #[cfg(test)]
 mod ui_tests;
+#[cfg(test)]
+mod monkey;
 
 use app::App;
 use std::path::PathBuf;

@@ -90,9 +90,14 @@ pub struct Grid {
 
 impl Grid {
     pub fn new(width: f64, height: f64, max_points: usize, fill: f32) -> Grid {
-        let cell = (width * height / max_points as f64).sqrt().max(1e-6);
-        let nx = (width / cell).ceil() as usize + 1;
-        let ny = (height / cell).ceil() as usize + 1;
+        // A side of no size (or no number) still gets two rows of points, and a very thin shape
+        // no more points along its length than the whole grid may have.
+        let side = |v: f64| if v.is_finite() && v > 0.0 { v } else { 0.0 };
+        let (width, height) = (side(width), side(height));
+        let most = max_points.max(4) as f64;
+        let cell = (width * height / most).sqrt().max(width.max(height) / (most / 2.0)).max(1e-6);
+        let nx = ((width / cell).ceil() as usize + 1).max(2);
+        let ny = ((height / cell).ceil() as usize + 1).max(2);
         Grid { nx, ny, cell, data: vec![fill; nx * ny] }
     }
 

@@ -119,6 +119,28 @@ pub const RESOLUTIONS: [(&str, &str, usize); 4] = [
 ];
 
 impl Job {
+    /// The largest job Burin works on, in millimetres: 50 m across, 2 m thick. A size past these is
+    /// a typing slip (or a damaged file) and would leave every toolpath working for hours.
+    pub const WIDEST_MM: f64 = 50_000.0;
+    pub const THICKEST_MM: f64 = 2_000.0;
+
+    /// Brings sizes that make no sense back within what a machine can hold; true when one changed.
+    pub fn keep_sizes_sane(&mut self) -> bool {
+        let per_mm = if self.units == Units::Mm { 1.0 } else { 1.0 / 25.4 };
+        let fix = |v: &mut f64, most: f64, least: f64| {
+            let sane = if v.is_finite() { v.clamp(least, most) } else { least.max(1.0 * per_mm) };
+            let changed = sane != *v;
+            *v = sane;
+            changed
+        };
+        let wide = Self::WIDEST_MM * per_mm;
+        let a = fix(&mut self.width, wide, 1e-3 * per_mm);
+        let b = fix(&mut self.height, wide, 1e-3 * per_mm);
+        let c = fix(&mut self.thickness, Self::THICKEST_MM * per_mm, 1e-3 * per_mm);
+        let d = fix(&mut self.spoil_board, Self::THICKEST_MM * per_mm, 0.0);
+        let e = fix(&mut self.offset[0], wide, -wide) | fix(&mut self.offset[1], wide, -wide);
+        a | b | c | d | e
+    }
     pub fn points(&self) -> usize {
         RESOLUTIONS[self.resolution.min(3)].2
     }
@@ -1843,6 +1865,10 @@ impl Default for App {
 }
 
 fn recent_file() -> Option<PathBuf> {
+    // Tests keep their settings in a folder of their own, never the person's.
+    if cfg!(test) {
+        return Some(std::env::temp_dir().join(format!("burin-tests-{}", std::process::id())).join("recent.txt"));
+    }
     // Windows keeps a program's settings in a place of its own.
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
@@ -2219,10 +2245,16 @@ impl App {
         let mut by_mark: std::collections::HashMap<[u8; 16], u64> = std::collections::HashMap::new();
         // The tabs put on each shape, by the shape's id.
         let mut tabs_of: std::collections::HashMap<u64, Vec<P>> = std::collections::HashMap::new();
+        // Shapes with impossible numbers (a damaged file) are left out, and said so.
+        let mut impossible = 0;
         for (i, (layer, outline)) in p.shapes.iter().enumerate() {
             let mut outline = outline.clone();
             for q in &mut outline.pts {
                 *q = [q[0] + shift[0], q[1] + shift[1]];
+            }
+            if !crate::geom::sane(&outline.pts) {
+                impossible += 1;
+                continue;
             }
             doc.active_layer = *layer;
             // The letters of one text block share its mark: they stay one object.
@@ -2412,6 +2444,9 @@ impl App {
         self.path = None;
         self.dirty = false;
         self.status = tf!("{shapes} shapes on {layers} layers, {toolpaths} toolpaths.");
+        if impossible > 0 {
+            self.status = format!("{} {}", self.status, tf!("{} shapes with impossible coordinates were left out (the file may be damaged).", impossible));
+        }
         if toolpaths > 0 {
             self.right_open = true;
             self.right = RightMode::List;

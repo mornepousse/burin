@@ -90,7 +90,10 @@ pub struct FileDialog {
 
 impl FileDialog {
     pub fn new() -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
+        // Tests never open a window of the computer's: every pick answers "nothing chosen".
+        #[cfg(all(not(target_arch = "wasm32"), test))]
+        return FileDialog { inner: None };
+        #[cfg(all(not(target_arch = "wasm32"), not(test)))]
         return FileDialog { inner: Some(rfd::FileDialog::new()) };
         #[cfg(target_arch = "wasm32")]
         return FileDialog::default();

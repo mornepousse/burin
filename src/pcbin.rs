@@ -147,6 +147,9 @@ fn anticlockwise(mut l: Vec<P>) -> Vec<P> {
 
 /// Everything `add` covers put together with what `acc` covers (or taken away from it).
 fn combine(acc: &[Vec<P>], add: &[Vec<P>], rule: OverlayRule) -> Vec<Vec<P>> {
+    // A damaged file's impossible numbers would upset the overlay: those loops are left out.
+    let add: Vec<Vec<P>> = add.iter().filter(|l| crate::geom::sane(l)).cloned().collect();
+    let add = &add[..];
     if add.is_empty() {
         return acc.to_vec();
     }
@@ -548,7 +551,7 @@ pub fn read_gerber(name: &str, text: &str, per_mm: f64) -> Board {
             for c in commands {
                 if let Some(fs) = c.strip_prefix("FS") {
                     lead_omitted = !fs.starts_with('T');
-                    absolute = !fs[1.min(fs.len())..].starts_with('I');
+                    absolute = fs.chars().nth(1) != Some('I');
                     if let Some(i) = fs.find('X') {
                         let b = fs.as_bytes();
                         if let (Some(a), Some(d)) = (b.get(i + 1), b.get(i + 2)) {

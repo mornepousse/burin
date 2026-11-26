@@ -279,6 +279,7 @@ impl Outlines {
         let mut quad_ctrl: Option<P> = None;
         let mut command = b' ';
         loop {
+            let was_at = scan.at;
             match scan.command() {
                 Some(c) => command = c,
                 None if scan.more_numbers() && command != b' ' => {
@@ -371,8 +372,9 @@ impl Outlines {
             if !matches!(kind, b'Q' | b'T') {
                 quad_ctrl = None;
             }
-            // A broken file keeps what was read before the fault.
-            if ok.is_none() {
+            // A broken file keeps what was read before the fault; so does a step that read nothing
+            // (numbers after a Z, which takes none), or it would go round for ever.
+            if ok.is_none() || scan.at == was_at {
                 break;
             }
         }
@@ -698,6 +700,12 @@ mod tests {
     fn a_page_with_a_doctype_is_accepted() {
         let s = "<?xml version=\"1.0\"?><!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"x.dtd\"><svg width=\"10\" height=\"10\" viewBox=\"0 0 10 10\"><circle r=\"5\"/></svg>";
         assert_eq!(read(s, 1.0).unwrap().objects.len(), 1);
+    }
+
+    #[test]
+    fn numbers_after_a_close_end_the_path_instead_of_going_round_for_ever() {
+        let d = read(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10in" height="10in" viewBox="0 0 10 10"><path d="M1 1 L2 1 L2 7.Z9087 L3 3"/></svg>"#, 1.0).unwrap();
+        assert_eq!(d.objects.len(), 1);
     }
 
     #[test]

@@ -12,6 +12,9 @@ pub fn program_file() -> Option<PathBuf> {
 }
 
 pub fn data_home() -> Option<PathBuf> {
+    if cfg!(test) {
+        return Some(std::env::temp_dir().join(format!("burin-tests-{}", std::process::id())).join("share"));
+    }
     std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
 }
 
@@ -71,6 +74,9 @@ pub fn remove_from(data: &Path) {
 /// Tells the desktop what changed, with whichever of its tools are here. None of them is essential:
 /// most desktops notice the new files by themselves.
 pub fn refresh(data: &Path) {
+    if cfg!(test) {
+        return;
+    }
     let run = |program: &str, args: &[&std::ffi::OsStr]| {
         let _ = std::process::Command::new(program).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
     };

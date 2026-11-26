@@ -2097,4 +2097,8 @@ pub const FR: &[(&str, &str)] = &[
     ("The text is too long to send. Shorten it, or copy it and send it another way.", "Le texte est trop long pour être envoyé. Raccourcissez-le, ou copiez-le et envoyez-le autrement."),
     ("The report service answered with an error ({}). Try again later, or send it another way below.", "Le service de rapports a répondu par une erreur ({}). Réessayez plus tard, ou envoyez-le autrement ci-dessous."),
     ("Burin couldn't reach the report service: are you connected to the internet? Try again, or send it another way below.", "Burin n'a pas pu joindre le service de rapports : êtes-vous connecté à internet ? Réessayez, ou envoyez-le autrement ci-dessous."),
+    // Damaged files.
+    ("{} shapes with impossible coordinates were left out (the file may be damaged).", "{} formes aux coordonnées impossibles ont été laissées de côté (le fichier est peut-être abîmé)."),
+    ("The job's sizes are kept within {} m across and {} m thick.", "Les dimensions du projet restent dans {} m de côté et {} m d'épaisseur."),
+    ("That number is too big.", "Ce nombre est trop grand."),
 ];

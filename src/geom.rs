@@ -31,6 +31,15 @@ impl Path {
 
 const TAU: f64 = std::f64::consts::TAU;
 
+/// The farthest a point of a shape may be from zero, in any unit: ten kilometres in millimetres.
+/// Damaged files can hold infinite or absurd numbers; such shapes are left out where files come in.
+pub const FARTHEST: f64 = 1e7;
+
+/// Whether every point is a real number no farther than `FARTHEST`.
+pub fn sane(pts: &[P]) -> bool {
+    pts.iter().all(|p| p[0].is_finite() && p[1].is_finite() && p[0].abs() <= FARTHEST && p[1].abs() <= FARTHEST)
+}
+
 pub fn circle(c: P, r: f64) -> Vec<P> {
     ellipse(c, r, r)
 }
@@ -72,7 +81,7 @@ pub fn rect(c: P, w: f64, h: f64, corner: f64) -> Vec<P> {
 }
 
 pub fn polygon(c: P, r: f64, sides: usize) -> Vec<P> {
-    let n = sides.max(3);
+    let n = sides.clamp(3, 1000);
     (0..n)
         .map(|i| {
             let a = TAU * (0.25 + i as f64 / n as f64);
@@ -82,7 +91,7 @@ pub fn polygon(c: P, r: f64, sides: usize) -> Vec<P> {
 }
 
 pub fn star(c: P, outer: f64, inner: f64, points: usize) -> Vec<P> {
-    let n = points.max(3) * 2;
+    let n = points.clamp(3, 1000) * 2;
     (0..n)
         .map(|i| {
             let a = TAU * (0.25 + i as f64 / n as f64);
@@ -93,7 +102,8 @@ pub fn star(c: P, outer: f64, inner: f64, points: usize) -> Vec<P> {
 }
 
 pub fn spiral(c: P, r: f64, turns: f64) -> Vec<P> {
-    let steps = (turns * 72.0).ceil().max(8.0) as usize;
+    let turns = if turns.is_finite() { turns.clamp(-1000.0, 1000.0) } else { 1.0 };
+    let steps = (turns.abs() * 72.0).ceil().max(8.0) as usize;
     (0..=steps)
         .map(|i| {
             let t = i as f64 / steps as f64;

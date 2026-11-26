@@ -40,6 +40,7 @@ pub enum FormulaError {
     Brackets,
     Dots,
     DivideByZero,
+    TooBig,
     Unknown(String),
 }
 
@@ -50,6 +51,7 @@ impl FormulaError {
             FormulaError::Brackets => crate::i18n::tr("The brackets don't pair up.").into(),
             FormulaError::Dots => crate::i18n::tr("A number has more than one dot.").into(),
             FormulaError::DivideByZero => crate::i18n::tr("It divides by zero.").into(),
+            FormulaError::TooBig => crate::i18n::tr("That number is too big.").into(),
             FormulaError::Unknown(name) => tf!("The document has no variable called {}.", name),
         }
     }

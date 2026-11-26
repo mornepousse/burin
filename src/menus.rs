@@ -836,6 +836,9 @@ impl App {
 
     /// Shows the folder where the program keeps its settings.
     fn open_settings_folder(&mut self) {
+        if cfg!(test) {
+            return;
+        }
         let Some(folder) = settings_file("x").and_then(|f| f.parent().map(FilePath::to_path_buf)) else { return };
         let _ = std::fs::create_dir_all(&folder);
         let shower = if cfg!(windows) { "explorer" } else { "xdg-open" };

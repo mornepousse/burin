@@ -82,7 +82,7 @@ fn number_box(ui: &mut Ui, value: &mut f64, formula: &mut String, keep: bool, wi
     if resp.has_focus() {
         let typed = text.trim();
         if crate::formula::is_formula(typed) {
-            match crate::formula::evaluate(typed, &context) {
+            match crate::formula::evaluate(typed, &context).and_then(|v| if v.abs() <= geom::FARTHEST { Ok(v) } else { Err(crate::formula::FormulaError::TooBig) }) {
                 Ok(v) => {
                     if v != *value {
                         *value = v;
@@ -97,7 +97,10 @@ fn number_box(ui: &mut Ui, value: &mut f64, formula: &mut String, keep: bool, wi
                 Err(e) => resp.show_tooltip_text(e.text()),
             }
         } else if let Ok(v) = typed.parse::<f64>() {
-            if v.is_finite() && v != *value {
+            // A number past ten kilometres is a typing slip: it would leave the work going for hours.
+            if v.abs() > geom::FARTHEST {
+                resp.show_tooltip_text(crate::i18n::tr("That number is too big."));
+            } else if v.is_finite() && v != *value {
                 *value = v;
                 changed = true;
             }
@@ -119,17 +122,19 @@ fn number_box(ui: &mut Ui, value: &mut f64, formula: &mut String, keep: bool, wi
 /// A typed whole number, or a sum worked out and rounded to one (never below zero).
 pub(crate) fn whole_number(text: &str) -> Option<usize> {
     let typed = text.trim();
+    // No count Burin asks for needs more than this; more would only keep it busy for hours.
+    const MOST: usize = 1000;
     if let Ok(v) = typed.parse::<usize>() {
-        return Some(v);
+        return Some(v.min(MOST));
     }
     let v = crate::formula::evaluate(typed, &crate::formula::context()).ok()?;
-    (v.is_finite() && v >= 0.0 && v < 1e9).then(|| v.round() as usize)
+    (v.is_finite() && v >= 0.0).then(|| (v.round().min(MOST as f64)) as usize)
 }
 
 /// A typed number, or a sum worked out ("8*3" is 24).
 pub(crate) fn typed_value(text: &str) -> Option<f64> {
     let typed = text.trim();
-    typed.parse::<f64>().ok().or_else(|| crate::formula::evaluate(typed, &crate::formula::context()).ok()).filter(|v| v.is_finite())
+    typed.parse::<f64>().ok().or_else(|| crate::formula::evaluate(typed, &crate::formula::context()).ok()).filter(|v| v.is_finite() && v.abs() <= geom::FARTHEST)
 }
 
 pub(crate) fn count_box(ui: &mut Ui, value: &mut usize, width: f32) -> bool {
@@ -1274,8 +1279,26 @@ impl App {
             }
             (shapes.into_iter().map(|s| vec![s.path]).collect::<Vec<_>>(), 0)
         };
+        // Shapes with impossible numbers (a damaged file) are left out, and said so.
+        let mut impossible = 0;
+        let (objects, layers): (Vec<Vec<Path>>, Vec<Option<String>>) = objects
+            .into_iter()
+            .enumerate()
+            .filter_map(|(k, paths)| {
+                if paths.iter().all(|p| geom::sane(&p.pts)) {
+                    Some((paths, dxf_layers.get(k).cloned()))
+                } else {
+                    impossible += 1;
+                    None
+                }
+            })
+            .unzip();
+        let dxf_layers: Vec<String> = if dxf_layers.is_empty() { Vec::new() } else { layers.into_iter().map(Option::unwrap_or_default).collect() };
         if objects.is_empty() {
             return Err(tf!("{} has no lines, curves or shapes this program can read.", path.display()));
+        }
+        if impossible > 0 {
+            page_note = Some([page_note.unwrap_or_default(), tf!("{} shapes with impossible coordinates were left out (the file may be damaged).", impossible)].join(" ").trim().to_string());
         }
         self.checkpoint();
         self.selected.clear();
@@ -1340,6 +1363,9 @@ impl App {
 
     pub fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        if self.doc.job.keep_sizes_sane() {
+            self.status = tf!("The job's sizes are kept within {} m across and {} m thick.", crate::app::Job::WIDEST_MM / 1000.0, crate::app::Job::THICKEST_MM / 1000.0);
+        }
         crate::icons::set_tint(None);
         crate::formula::set_context(self.formula_context());
         if let Some(filter) = self.open_font_list.take() {
