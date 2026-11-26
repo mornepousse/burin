@@ -70,6 +70,13 @@ chmod +x Burin-*-x86_64.AppImage
 Ensuite, `Aide > Ajouter au menu des applications` place Burin dans le menu de votre bureau et lui
 fait ouvrir les fichiers `.burin`. Un projet peut aussi être donné en argument, ou glissé sur la fenêtre.
 
+Ou installez le paquet de votre système, qui met Burin dans le menu et se met à jour comme le reste :
+
+```sh
+sudo apt install ./Burin-*-amd64.deb       # Debian, Ubuntu, Mint
+sudo dnf install ./Burin-*-x86_64.rpm      # Fedora (zypper install sur openSUSE)
+```
+
 ### Avec Nix
 
 Le dépôt est un flake :
@@ -98,7 +105,7 @@ cargo run --release
 cargo test
 ```
 
-`release/build.sh` fabrique l'AppImage et le `.exe` dans `dist/`. Il ne demande que Nix.
+`release/build.sh` fabrique l'AppImage, le `.exe`, le `.deb` et le `.rpm` dans `dist/`. Il ne demande que Nix.
 
 ### Dans un navigateur
 

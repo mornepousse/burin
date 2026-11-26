@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Makes dist/Burin-<version>-x86_64.AppImage and dist/Burin-<version>-windows-x86_64.exe.
+# Makes dist/Burin-<version>-x86_64.AppImage, dist/Burin-<version>-windows-x86_64.exe, and the
+# packages for Debian/Ubuntu (.deb) and Fedora/openSUSE (.rpm).
 # Needs only Nix with flakes. The tools stay out of the system: Nix keeps them in its store,
 # and the rest goes in /tmp/burin-release (or BURIN_RELEASE_TOOLS).
 set -euo pipefail
@@ -12,7 +13,7 @@ RUNTIME_SHA256=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
 
 if [ "${1:-}" != --inside ]; then
     exec nix shell nixpkgs#rustup nixpkgs#zig nixpkgs#cargo-zigbuild nixpkgs#squashfsTools \
-        nixpkgs#pkgsCross.mingwW64.buildPackages.binutils nixpkgs#pkgsCross.mingwW64.stdenv.cc \
+        nixpkgs#pkgsCross.mingwW64.buildPackages.binutils nixpkgs#pkgsCross.mingwW64.stdenv.cc nixpkgs#nfpm \
         -c bash "$0" --inside
 fi
 
@@ -87,6 +88,91 @@ chmod +x "$APPDIR/AppRun"
 mksquashfs "$APPDIR" "$TOOLS/burin.squashfs" -root-owned -noappend -comp zstd -quiet -no-progress
 cat "$RUNTIME" "$TOOLS/burin.squashfs" > "dist/Burin-$VERSION-x86_64.AppImage"
 chmod +x "dist/Burin-$VERSION-x86_64.AppImage"
+
+# The same program as a package the system installs: in the applications menu, opening .burin
+# files, removed like any other. What draws the window is found at run time, so it is only
+# recommended; curl is for the update check and problem reports.
+PKGROOT=$TOOLS/package
+rm -rf "$PKGROOT"
+mkdir -p "$PKGROOT/applications" "$PKGROOT/mime"
+sed -e 's/^Exec=burin$/Exec=burin %f/' release/burin.desktop > "$PKGROOT/applications/burin.desktop"
+echo "MimeType=application/x-burin;" >> "$PKGROOT/applications/burin.desktop"
+cat > "$PKGROOT/mime/burin.xml" <<'MIME'
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-burin">
+    <comment>Burin project</comment>
+    <glob pattern="*.burin"/>
+  </mime-type>
+</mime-info>
+MIME
+cat > "$PKGROOT/nfpm.yaml" <<YAML
+name: burin
+arch: amd64
+platform: linux
+version: "$VERSION"
+release: 1
+section: graphics
+priority: optional
+maintainer: "Burin <burin@example.invalid>"
+description: |
+  Draw, model and cut for CNC carving.
+  Burin draws parts, prepares the toolpaths (profiles, pockets, drilling, V-carving, 3D)
+  and writes the file the CNC machine reads.
+homepage: "https://burin.cc"
+license: GPL-3.0-or-later
+depends:
+  - libc6 (>= $GLIBC)
+recommends:
+  - libgl1
+  - libvulkan1
+  - libxkbcommon0
+  - libwayland-client0
+  - libxcursor1
+  - libxi6
+  - libxrandr2
+  - curl
+rpm:
+  # Not this computer's name.
+  buildhost: build
+overrides:
+  rpm:
+    depends:
+      - glibc >= $GLIBC
+    recommends:
+      - mesa-libGL
+      - vulkan-loader
+      - libxkbcommon
+      - libwayland-client
+      - libXcursor
+      - libXi
+      - libXrandr
+      - curl
+contents:
+  - src: $CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release/burin
+    dst: /usr/bin/burin
+    file_info: { mode: 0755 }
+  - src: $PKGROOT/applications/burin.desktop
+    dst: /usr/share/applications/burin.desktop
+  - src: $PWD/release/burin.png
+    dst: /usr/share/icons/hicolor/512x512/apps/burin.png
+  - src: $PKGROOT/mime/burin.xml
+    dst: /usr/share/mime/packages/burin.xml
+  - src: $PWD/dist/THIRD-PARTY.txt
+    dst: /usr/share/doc/burin/THIRD-PARTY.txt
+  - src: $PWD/LICENSE
+    dst: /usr/share/doc/burin/LICENSE
+YAML
+nfpm package --config "$PKGROOT/nfpm.yaml" --packager deb --target "dist/Burin-$VERSION-amd64.deb"
+nfpm package --config "$PKGROOT/nfpm.yaml" --packager rpm --target "dist/Burin-$VERSION-x86_64.rpm"
+# The packages' headers are plain text: this computer's name and home must not be in them. Only
+# the headers are read (the compressed part could hold those letters by chance).
+for PACKAGE in "dist/Burin-$VERSION-amd64.deb" "dist/Burin-$VERSION-x86_64.rpm"; do
+    if head -c 16384 "$PACKAGE" | grep -a -q -w -e "$(hostname)" -e "$HOME"; then
+        echo "This computer's name or home is in $PACKAGE" >&2
+        exit 1
+    fi
+done
 
 (cd dist && sha256sum Burin-* > SHA256SUMS)
 ls -la dist

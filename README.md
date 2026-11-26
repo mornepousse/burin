@@ -85,6 +85,13 @@ chmod +x Burin-*-x86_64.AppImage
 Then `Help > Add to Applications Menu` puts Burin in your desktop's menu and lets it open `.burin`
 files. A project can also be given as an argument, or dropped on the window.
 
+Or install the package for your system, which puts Burin in the menu and updates like the rest:
+
+```sh
+sudo apt install ./Burin-*-amd64.deb       # Debian, Ubuntu, Mint
+sudo dnf install ./Burin-*-x86_64.rpm      # Fedora (zypper install on openSUSE)
+```
+
 ### With Nix
 
 The repository is a flake:
@@ -126,7 +133,7 @@ cargo run --release
 cargo test
 ```
 
-`release/build.sh` builds the Linux and Windows programs, and `release/site.sh` the website.
+`release/build.sh` builds the Linux and Windows programs and the `.deb` and `.rpm` packages, and `release/site.sh` the website.
 
 ## If something goes wrong
 
