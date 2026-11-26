@@ -450,6 +450,7 @@ impl App {
                             match which.to_str() {
                                 Some("edit") => self.edit_menu(ui),
                                 Some("file") => self.file_menu(ui, true),
+                                Some("help") => self.help_menu(ui),
                                 _ => self.canvas_menu(ui),
                             }
                         });

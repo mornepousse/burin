@@ -1349,13 +1349,17 @@ impl App {
         }
     }
 
-    fn help_menu(&mut self, ui: &mut Ui) {
+    pub(crate) fn help_menu(&mut self, ui: &mut Ui) {
         let help = ui.push_id(crate::help::HELP_CONTENTS_COMMAND, |ui| entry(ui, "Help Contents", true, None)).inner;
         if help {
             self.help_open = true;
         }
         if entry(ui, "Keyboard Shortcuts", true, None) {
             self.prefs_open = true;
+        }
+        // Burin's own: a problem goes straight to the author by mail, when this copy knows where.
+        if self.report_address.is_some() && entry(ui, "Report a Problem by Mail...", true, None) {
+            self.open_feedback(ui.ctx(), None);
         }
         if entry(ui, "Send Feedback...", true, None) {
             self.open_feedback(ui.ctx(), None);

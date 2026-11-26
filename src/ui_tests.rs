@@ -4862,6 +4862,8 @@ fn after_a_crash_it_says_so_and_a_report_can_be_read_and_sent_on() {
     h.state_mut().data_dir = Some(dir.clone());
     h.state_mut().after_crash_checked = false;
     h.state_mut().issues_page = Some("https://example.org/issues/new".into());
+    // The draft on the project's page, as in a copy built without a mail address.
+    h.state_mut().report_address = None;
     h.run();
     h.get_by_label("Burin didn't close normally last time. A report is on this computer, and nothing has been sent.");
     click(&mut h, "See the Report...");
@@ -4905,6 +4907,8 @@ fn after_a_crash_it_says_so_and_a_report_can_be_read_and_sent_on() {
 fn feedback_needs_a_title_and_shows_exactly_what_would_go() {
     let mut h = job_with_square([3.0, 3.0]);
     h.state_mut().issues_page = Some("https://example.org/issues/new".into());
+    // The draft on the project's page, as in a copy built without a mail address.
+    h.state_mut().report_address = None;
     h.state_mut().path = Some("/somewhere/private/wheel.burin".into());
     let ctx = h.ctx.clone();
     h.state_mut().open_feedback(&ctx, None);

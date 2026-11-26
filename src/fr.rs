@@ -267,6 +267,7 @@ pub const FR: &[(&str, &str)] = &[
     ("Each part the toolpaths cut out, as a solid in millimetres, in a new folder of the name you give (STEP and STL), named after its piece in the drawing: its outline from the drawing, less its holes, pockets, drillings and grooves cut flat to their depth, as a CAD program models it. A name already taken gets a number, nothing is written over. V-carves and 3D are left out. Not in the original.", "Chaque pièce que les parcours découpent, en solide en millimètres, dans un nouveau dossier du nom choisi (STEP et STL), nommée d'après sa pièce du dessin : son contour du dessin, moins ses trous, poches, perçages et rainures creusés à plat à leur profondeur, comme un logiciel de CAO la modélise. Un nom déjà pris reçoit un numéro, rien n'est écrasé. Gravures en V et 3D laissées de côté. Pas dans l'original."),
     ("No part to export: a part is a shape cut right through by a profile.", "Aucune pièce à exporter : une pièce est une forme découpée de part en part par un contour."),
     ("STEP solid", "Solide STEP"),
+    ("Report a Problem by Mail...", "Signaler un problème par e-mail..."),
     ("This EPS file is cut short.", "Ce fichier EPS est incomplet."),
     ("This file is neither a PDF nor a PostScript drawing.", "Ce fichier n'est ni un PDF ni un dessin PostScript."),
     ("No page was found in this PDF file.", "Aucune page n'a été trouvée dans ce fichier PDF."),
