@@ -76,7 +76,7 @@ G1 X354.000 Y24.000  <i><span data-en="; profile" data-fr="; contour">; profile<
     <div class="why">
       <div><h3 data-en="Free and open" data-fr="Libre et gratuit">Free and open</h3><p data-en="Under the GNU GPL: no account, no subscription, no advertising. The code is open to all." data-fr="Sous licence GNU GPL : sans compte, sans abonnement, sans publicité. Le code est ouvert à tous.">Under the GNU GPL: no account, no subscription, no advertising. The code is open to all.</p></div>
       <div><h3 data-en="Offline, and discreet" data-fr="Hors ligne, et discret">Offline, and discreet</h3><p data-en="Everything is worked out on your computer. Nothing is sent unless you send a problem report yourself, and then only the text you read. Looking for a new version at start is up to you." data-fr="Tout est calculé sur votre ordinateur. Rien n&#x27;est envoyé, sauf un rapport de problème que vous envoyez vous-même, et alors seulement le texte que vous avez lu. Chercher une nouvelle version au démarrage, c&#x27;est vous qui choisissez.">Everything is worked out on your computer. Nothing is sent unless you send a problem report yourself, and then only the text you read. Looking for a new version at start is up to you.</p></div>
-      <div><h3 data-en="Which projects can it open?" data-fr="Quels projets peut-il ouvrir ?">Which projects can it open?</h3><p data-en="Its own .burin projects and .crv3d projects (shapes, toolpaths, guides, notes); SVG, DXF, PDF, Illustrator and EPS drawings; Gerber and Excellon circuit boards; STL models and 3D clipart; PNG, JPG and BMP pictures; other programs&#x27; G-code." data-fr="Ses propres projets .burin et les projets .crv3d (formes, parcours, repères, notes) ; les dessins SVG, DXF, PDF, Illustrator et EPS ; les circuits imprimés Gerber et Excellon ; les modèles STL et le clipart 3D ; les images PNG, JPG et BMP ; le G-code d&#x27;autres logiciels.">Its own .burin projects and .crv3d projects (shapes, toolpaths, guides, notes); SVG, DXF, PDF, Illustrator and EPS drawings; Gerber and Excellon circuit boards; STL models and 3D clipart; PNG, JPG and BMP pictures; other programs' G-code.</p></div>
+      <div><h3 data-en="Which projects can it open?" data-fr="Quels projets peut-il ouvrir ?">Which projects can it open?</h3><ul class="opens"><li data-en="its own &lt;b&gt;.burin&lt;/b&gt; projects" data-fr="ses propres projets &lt;b&gt;.burin&lt;/b&gt;">its own <b>.burin</b> projects</li><li data-en="&lt;b&gt;.crv3d&lt;/b&gt; projects, with their shapes, toolpaths, guides and notes" data-fr="les projets &lt;b&gt;.crv3d&lt;/b&gt;, avec leurs formes, parcours, repères et notes"><b>.crv3d</b> projects, with their shapes, toolpaths, guides and notes</li><li data-en="&lt;b&gt;SVG, DXF, PDF, Illustrator (.ai)&lt;/b&gt; and &lt;b&gt;EPS&lt;/b&gt; drawings" data-fr="les dessins &lt;b&gt;SVG, DXF, PDF, Illustrator (.ai)&lt;/b&gt; et &lt;b&gt;EPS&lt;/b&gt;"><b>SVG, DXF, PDF, Illustrator (.ai)</b> and <b>EPS</b> drawings</li><li data-en="&lt;b&gt;Gerber&lt;/b&gt; circuit boards and &lt;b&gt;Excellon&lt;/b&gt; drill files (.drl)" data-fr="les circuits imprimés &lt;b&gt;Gerber&lt;/b&gt; et les perçages &lt;b&gt;Excellon&lt;/b&gt; (.drl)"><b>Gerber</b> circuit boards and <b>Excellon</b> drill files (.drl)</li><li data-en="&lt;b&gt;STL&lt;/b&gt; 3D models and 3D clipart" data-fr="les modèles 3D &lt;b&gt;STL&lt;/b&gt; et le clipart 3D"><b>STL</b> 3D models and 3D clipart</li><li data-en="&lt;b&gt;PNG, JPG, BMP&lt;/b&gt; pictures, for a relief or to trace" data-fr="les images &lt;b&gt;PNG, JPG, BMP&lt;/b&gt;, pour un relief ou une vectorisation"><b>PNG, JPG, BMP</b> pictures, for a relief or to trace</li><li data-en="other programs&#x27; &lt;b&gt;G-code&lt;/b&gt; (.nc, .gcode, .ngc, .tap)" data-fr="le &lt;b&gt;G-code&lt;/b&gt; d&#x27;autres logiciels (.nc, .gcode, .ngc, .tap)">other programs' <b>G-code</b> (.nc, .gcode, .ngc, .tap)</li></ul></div>
     </div>
     <div class="flow">
       <div class="col"><h3 data-en="What it opens" data-fr="Ce qu&#x27;il ouvre">What it opens</h3><div class="chips"><span class="chip hot">.burin</span><span class="chip">SVG</span><span class="chip">DXF</span><span class="chip">PDF · AI · EPS</span><span class="chip">Gerber · Excellon</span><span class="chip">.crv3d</span><span class="chip">STL</span><span class="chip">PNG · JPG · BMP</span><span class="chip">G-code</span></div></div>
@@ -209,10 +209,11 @@ G1 X354.000 Y24.000  <i><span data-en="; profile" data-fr="; contour">; profile<
   const ua = navigator.userAgent;
   const main = document.getElementById("main-download");
   const detail = document.getElementById("main-detail");
-  const pick = /Windows/.test(ua) ? "win" : /Linux/.test(ua) && !/Android/.test(ua) ? "linux" : null;
+  const pick = /Windows/.test(ua) ? "win" : /Linux/.test(ua) && !/Android/.test(ua) ? "linux" : /Macintosh/.test(ua) && !/iPhone|iPad/.test(ua) ? "mac" : null;
+  const named = { win: "Windows", linux: "Linux", mac: "Mac (Apple Silicon)" };
   if (pick) {
     main.href = document.getElementById(pick).href;
-    detail.textContent = (pick === "win" ? "Windows" : "Linux") + " · {{VERSION}}";
+    detail.textContent = named[pick] + " · {{VERSION}}";
   }
   // English or French, as asked or as the browser prefers.
   const button = document.getElementById("lang");
@@ -228,7 +229,7 @@ G1 X354.000 Y24.000  <i><span data-en="; profile" data-fr="; contour">; profile<
       img.alt = lang === "fr" ? img.dataset.altFr : img.dataset.altEn;
     }
     button.textContent = lang === "fr" ? "EN" : "FR";
-    if (pick) detail.textContent = (pick === "win" ? "Windows" : "Linux") + " · {{VERSION}}";
+    if (pick) detail.textContent = named[pick] + " · {{VERSION}}";
   }
   button.addEventListener("click", () => { show(lang === "fr" ? "en" : "fr"); localStorage.setItem("burin-lang", lang); });
   show(lang);
