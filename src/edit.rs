@@ -1104,8 +1104,8 @@ impl App {
         let border = nest_value(f.border);
         let (w, h) = (self.doc.job.width - 2.0 * border, self.doc.job.height - 2.0 * border);
         let (primary, secondary) = if f.along_x { (w, h) } else { (h, w) };
-        // As the original hands each part its step (`0x1403bf330`): the form's step when turning is
-        // on and the step is above 0, otherwise a full turn (360, `0x14210c1d8`), which is no turning.
+        // Each part gets the form's step when turning is on and the step is above 0, otherwise a
+        // full turn (360), which is no turning.
         let step = nest_value(f.nest_step);
         let step = if step > 0.0 { step } else { NEST_NO_TURN };
         // Turns half a turn apart give the same box, so the first half turn is enough.
@@ -1152,17 +1152,16 @@ impl App {
     }
 
     /// Lays the selected parts out in rows from the chosen corner. Parts that don't fit go onto
-    /// new sheets after the others, laid out the same way, as the original's nesting does: it
-    /// offers its nester a sheet up to 999 times (`0x1403be110`, `0x14090dc10`), then moves each part
-    /// to the sheet it landed on (`nestComponentSheet`) and makes the sheets that are needed.
+    /// new sheets after the others, laid out the same way: a sheet is
+    /// offered to the nester up to 999 times, then each part moves to the sheet it landed on and
+    /// the sheets that are needed are made.
     fn nest_selected(&mut self, f: &XformForm) {
         let items = self.selection_in_click_order();
         if items.is_empty() {
             return;
         }
         // With "Last vector is nest boundary", the last shape chosen is the outline to fill.
-        // Only shapes on the first sheet are nested, as in the original ("Invalid Sheet For
-        // Nesting", `0x1403be110`, string 710).
+        // Only shapes on the first sheet are nested.
         if self.doc.active_sheet != 0 {
             self.status = crate::i18n::tr("Only shapes on the first sheet can be nested.").into();
             return;
@@ -1204,7 +1203,7 @@ impl App {
         let mut placed = 0;
         let mut landed: Vec<(Vec<u64>, usize)> = Vec::new();
         let mut sized = self.blocks(&items, None);
-        // Only closed outlines make parts, as the original's (`0x14090b960`: a contour that is
+        // Only closed outlines make parts (a contour that is
         // closed and not empty); open lines stay where they are.
         sized.retain(|b| self.doc.vectors.iter().filter(|v| b.ids.contains(&v.id)).any(|v| v.paths.iter().any(|p| p.closed && p.pts.len() > 2)));
         if sized.is_empty() {
@@ -1221,7 +1220,7 @@ impl App {
             height(b).total_cmp(&height(a))
         });
         // Part in part: smaller parts go into the holes of bigger ones first, where they stay as
-        // their host moves (the original's `PartInPart`).
+        // their host moves.
         let mut guests: Vec<(Vec<u64>, usize)> = Vec::new();
         if f.part_in_part {
             sized.sort_by(|a, b| {
@@ -1243,8 +1242,7 @@ impl App {
             for g in 1..sized.len() {
                 let (glo, ghi) = (sized[g].lo, sized[g].hi);
                 let (gw, gh) = (ghi[0] - glo[0], ghi[1] - glo[1]);
-                // The original's nester works at a resolution of 0.5 mm (`Nesting/ResolutionMM`,
-                // `0x14090b910`); positions in a hole are tried that far apart, coarser only for a
+                // The nester works at a resolution of 0.5 mm; positions in a hole are tried that far apart, coarser only for a
                 // very big hole.
                 let resolution = if self.doc.job.units == Units::Mm { NEST_RESOLUTION_MM } else { NEST_RESOLUTION_MM * INCH_PER_MM };
                 let step_for = |hole: &Path| {
@@ -1445,30 +1443,27 @@ fn box_fits_in(hole: &Path, lo: P, hi: P, clear: f64) -> bool {
     !hole.segments().any(|(p, q)| sides.iter().any(|(r, t)| cross(p, q, *r, *t)))
 }
 
-/// The original nester's resolution at first, in millimetres (`ResolutionMM`, `0x14090b910`,
-/// default `0x1420e8d28`), and its inches per millimetre (`0x1420e8d08`).
+/// The nester's resolution at first, in millimetres, and its inches per millimetre.
 pub const NEST_RESOLUTION_MM: f64 = 0.5;
 pub const INCH_PER_MM: f64 = 0.03937007874;
 
-/// A nesting setting as the original's form reads it back (`0x1403bd2c0`): anything at or below 0
-/// becomes 0.
+/// A nesting setting as the form reads it back: anything at or below 0 becomes 0.
 pub fn nest_value(v: f64) -> f64 {
     if v > 0.0 { v } else { 0.0 }
 }
 
 /// How far nesting turns a part at a time when it may turn: a quarter turn, the step each part
-/// the original hands its nester starts with (`0x14090b960`, 90.0 at `+0x30`).
+/// starts with.
 #[allow(dead_code)]
 pub const NEST_STEP: f64 = 90.0;
-/// The turn step the nest form starts with, 45 degrees, with turning and part in part ticked:
-/// how the original sets up its nesting settings (`0x14090b8c0`, called from the form's
-/// constructor `0x1403bbc10`) before the saved values are read.
+/// The turn step the nest form starts with, 45 degrees, with turning and part in part ticked,
+/// before the saved values are read.
 pub const NEST_FORM_STEP: f64 = 45.0;
 /// How many grid cells nesting by shape lays across the sheet's longer side (Burin's choice, so
 /// a nest takes a moment rather than minutes).
 pub const NEST_SHAPE_CELLS: f64 = 200.0;
 
-/// The step a part gets when it may not turn: a full turn (`0x14210c1d8`).
+/// The step a part gets when it may not turn: a full turn.
 pub const NEST_NO_TURN: f64 = 360.0;
 
 /// Connects open lines whose ends touch within `tolerance`.

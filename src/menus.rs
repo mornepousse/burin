@@ -1,4 +1,4 @@
-//! The menu bar, laid out as in the original, and the small things only it starts.
+//! The menu bar, and the small things only it starts.
 
 use crate::app::*;
 use crate::edit::Edge;
@@ -60,7 +60,7 @@ fn action_row(ui: &mut Ui, keys: &crate::keys::Keys, icon: crate::icons::Icon, a
     }
 }
 
-/// An entry of the original that Burin doesn't do yet. It stays in its place, greyed.
+/// An entry that Burin doesn't do yet. It stays in its place, greyed.
 fn later(ui: &mut Ui, label: &'static str) {
     ui.add_enabled(false, egui::Button::new(tr(label))).on_disabled_hover_text(tr("Not in this version"));
 }
@@ -175,11 +175,11 @@ fn line_art(paths: &[Path], points_per_unit: f64, moveto: &str, lineto: &str, cl
     s
 }
 
-/// Points to the millimetre, as the original's EPS and AI exports scale (`0x1421ceab0`): 72 / 25.4.
+/// Points to the millimetre, as the EPS and AI exports scale: 72 / 25.4.
 pub const POINTS_PER_MM: f64 = 2.834645669291339;
 
-/// The shapes' box in points, as the original's EPS and AI exports give it: whole points outwards
-/// for `%%BoundingBox`, eight decimals for `%%HiResBoundingBox` (`0x1407aba00`, `0x1407abef0`).
+/// The shapes' box in points for the EPS and AI exports: whole points outwards
+/// for `%%BoundingBox`, eight decimals for `%%HiResBoundingBox`.
 fn point_box(paths: &[Path], k: f64) -> (String, String) {
     let (lo, hi) = crate::geom::bbox(paths).unwrap_or(([0.0, 0.0], [0.0, 0.0]));
     (
@@ -189,7 +189,7 @@ fn point_box(paths: &[Path], k: f64) -> (String, String) {
 }
 
 /// Each shape as a move, its lines, and its stroke. A closed one draws its last side back to the
-/// start rather than closing, as the original does.
+/// start rather than closing.
 fn ps_paths(paths: &[Path], k: f64, moveto: &str, lineto: &str, stroke: &str) -> String {
     let mut s = String::new();
     for path in paths.iter().filter(|p| !p.pts.is_empty()) {
@@ -203,7 +203,7 @@ fn ps_paths(paths: &[Path], k: f64, moveto: &str, lineto: &str, stroke: &str) ->
     s
 }
 
-/// Today as the original writes it in these files ("%A, %B %d, %Y": "Sunday, November 08, 2026").
+/// Today as these files write it ("%A, %B %d, %Y": "Sunday, November 08, 2026").
 pub fn long_date() -> String {
     let (date, _) = crate::postp::now_strings();
     let parts: Vec<i64> = date.split('-').filter_map(|p| p.parse().ok()).collect();
@@ -217,7 +217,7 @@ pub fn long_date() -> String {
     format!("{}, {} {:02}, {}", DAYS[wd], MONTHS[(m - 1) as usize], d, y)
 }
 
-/// Encapsulated PostScript laid out as the original's (`0x1407aba00`): the shapes' box, the
+/// Encapsulated PostScript: the shapes' box, the
 /// title and date, empty setup and prolog, then each shape stroked. Points are 72 to the inch.
 pub fn eps_text(paths: &[Path], _width: f64, _height: f64, points_per_unit: f64) -> String {
     let (bbox, hires) = point_box(paths, points_per_unit);
@@ -228,9 +228,9 @@ pub fn eps_text(paths: &[Path], _width: f64, _height: f64, points_per_unit: f64)
     )
 }
 
-/// An Adobe Illustrator 3 file as the original writes one (`0x1407abef0`): the same box and
+/// An Adobe Illustrator 3 file: the same box and
 /// date, the AI3 resources it names, black stroke (`0 0 0 1 K`, `0 J 0 j 1 w 4 M []0 d`), then each
-/// shape with `m`, `L` and `S`. The original writes its curves with `c`; Burin's shapes are lines.
+/// shape with `m`, `L` and `S`. Burin's shapes are lines.
 pub fn ai_text(paths: &[Path], points_per_unit: f64) -> String {
     let (bbox, hires) = point_box(paths, points_per_unit);
     let mut s = String::from("%!PS-Adobe-3.0\n%%Creator: Adobe Illustrator(TM) 3.2\n%%Title: Exported data from Burin\n");
@@ -671,7 +671,7 @@ impl App {
     }
 
     /// Every machined part in one STEP assembly, each a component where it lies on the sheet, to
-    /// open at once in a CAD program and put together. Burin's own: the original exports no parts.
+    /// open at once in a CAD program and put together. Burin's own.
     pub fn carved_assembly_step(&self, stem: &str) -> Option<Vec<u8>> {
         let parts = self.carved_part_solids(stem);
         (!parts.is_empty()).then(|| crate::solid::step_assembly(&parts, stem).into_bytes())
@@ -734,7 +734,7 @@ impl App {
 
     /// Asks where, then writes the parts there as a SolidCraft design and opens it in SolidCraft.
     /// SolidCraft builds the design in the background; without its command line on this computer,
-    /// the script is kept instead, for SolidCraft to replay. Burin's own: not in the original.
+    /// the script is kept instead, for SolidCraft to replay. Burin's own.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn open_in_solidcraft(&mut self) {
         let Some(script) = self.solidcraft_script() else {
@@ -1411,7 +1411,7 @@ impl App {
         }
     }
 
-    /// The menus, in the original's order.
+    /// The menus, in order.
     pub(crate) fn main_menus(&mut self, ui: &mut Ui, work: bool) {
         ui.menu_button(tr("File"), |ui| self.file_menu(ui, work));
         if work {

@@ -1,51 +1,46 @@
 //! Model menu tools that work on the 3D shapes' heights: a component made from the visible model, the outline
 //! around a component, emptying a component inside or outside closed shapes, and scaling the model's height.
 //!
-//! Read from the original:
-//! - Create Component from Visible Model (33743, `0x1402c6650`): refused when the model is empty or flat (its
-//!   lowest point is "nothing", or as high as its highest, message `0x431`); otherwise a new component named
-//!   "Copy of Visible Model" (`0x432`) is made from it, and the components it came from stay.
-//! - Create Vector Boundary Around Selected Components (33355, `0x1402b3450`): needs components selected
-//!   (message `0x325`); makes the outline of where they stand as a vector.
-//! - Reset Inside / Outside Selected Vectors (33196, 33197, `VectricCadDoc::DeleteModelInsideOutsideVectors`,
-//!   `0x1402c09d0`): needs a component and at least one other object, closed (message `0x277`); every cell of the
-//!   component inside (or outside) the shapes is set to 9999999.0 (`0x1420fbc48`), its mark for "nothing here".
-//! - Scale Model Z Height (33228, `0x1402c25c0`): needs shapes in the model (message `0x28a`), then opens its form.
-//! - Create an Offset Model (33692, `0x1402c5ec0`): refused when the model is empty or flat (message `0x3f3`);
-//!   otherwise its form (`uiOffsetModelDialog`, `0x140b08a00`, `0x140b08f20`): Offset Distance, 0.125 inch or 2.5 mm
-//!   at first (`OffsetDistanceInch`, `OffsetDistanceMM`), at most 10% of the model's smaller side (`0x1420e8d18`,
-//!   message `0x3f5`), and Clip Z values to Zero Plane (`ClipToZeroPlane`, off at first). The offset itself
-//!   (`0x1402ff780`) is a ball's: each point takes the highest of `h + sqrt(d² - r²)` over the heights within `d`,
-//!   the ball spanning `int(d / cell + 0.5) + 1` cells. Inward, the heights are turned upside down (`× -1`,
-//!   `0x1420fbc58`), offset outward and turned back, and places that had nothing keep nothing. The new component
-//!   is called "Model With %2.3f Offset" (`0x3f4`).
-//! - Slice Model (33237, `0x140742ae0`): refused with nothing in the model (`0x2a0`) or a model no taller than the
-//!   material (`0x2a1`). Its form takes a slice thickness, or a number of slices (the model's height divided by it);
-//!   there are `int(height / thickness)` slices, one more if over 0.00001 is left. Slice `i` keeps every place at or
-//!   above its bottom, as `min(h, top) - bottom`, in a component "Slice i" (`0x2a2`) on a level of that name; with
-//!   Create Boundary Vectors (`0x140742200`) each gets the outline where the model reaches its bottom, and where it
-//!   reaches its top when it isn't the last, on a layer of the same name. One step to undo, "Slice Model" (`0x2c4`).
-//! - Create Component from Toolpath Preview (33247, `0x1402c3830`): needs a carve preview. The carved surface is
-//!   moved by where the model sits in the material (`0x140302730`) and made a component, "Toolpath Preview" (`0x2c5`);
-//!   places still at the untouched surface where the model has nothing become nothing. Holding Shift makes every
-//!   place outside the model nothing; holding Ctrl takes the model away from the preview.
-//! - Create Component with Draft from Visible Model (33608, "Add Draft to Model", `0x1402c5d90`): refused when the
-//!   model is empty or flat (`0x3a2`); its form (`0x140358860`) has a Draft Angle slider from 0 to 45 degrees, 10 at
-//!   first (`DraftAngle`, `0x142736370`). The draft (`0x1402ff480`, applied by `0x140309040`): with `t = tan(angle)`,
-//!   angles over 0 and up to 65 (`0x142103340`), each point takes the highest `h - r / t` of the heights within
-//!   `t × (highest - lowest) × 1.01` (`0x142103338`), its own included, kept only between the model's lowest and
-//!   highest points. The new component is called "Model With %2.1f° Draft" (`0x3a3`).
-//! - Turn and Spin (33708, `uiTurnAndSpinForm`, Apply `0x140b287e0`): every selected object must be a vector; the
-//!   first is made into lines at a cell's third (`0x142125a58`) and read as a profile: its offset from the line
-//!   between its ends, sampled every third of a cell and blended between (`0x140613110`, `0x1406137c0`). Turn
-//!   (`DoTurn`, `0x1405a0530`, ends at least two cells apart) rotates it about that line: a point at distance `d`
-//!   from it, level with `t` along it, gets `sqrt(r(t)² - d²)` with `r = |profile(t)|` (`0x1405a1450`). Spin
-//!   (`0x1405a0950`, the vector turned to start at its left end) spins it about that end: a point `ρ` from it gets
-//!   `profile(ρ / length)` (`0x1405a11f0`). Both keep the higher of what's there when combining.
-//! - Split Selected Component (33341, "Split the selected component using a vector", `0x1402c4430`): the
-//!   selection must be exactly two objects, one component and one vector (message `0x364`); the component must be
-//!   visible (`0x318`, checked while baking it, `0x1402b1960`); the vector must cut it into two separate areas that
-//!   both hold some of its heights (`0x30f`). It is one step to undo, "Split Component" (`0x310`).
+//! What the tools do:
+//! - Create Component from Visible Model: refused when the model is empty or flat (its lowest point is "nothing",
+//!   or as high as its highest); otherwise a new component named "Copy of Visible Model" is made from it, and the
+//!   components it came from stay.
+//! - Create Vector Boundary Around Selected Components: needs components selected; makes the outline of where they
+//!   stand as a vector.
+//! - Reset Inside / Outside Selected Vectors: needs a component and at least one other object, closed; every cell
+//!   of the component inside (or outside) the shapes is set to 9999999.0, the mark for "nothing here".
+//! - Scale Model Z Height: needs shapes in the model, then opens its form.
+//! - Create an Offset Model: refused when the model is empty or flat; otherwise its form: Offset Distance, 0.125
+//!   inch or 2.5 mm at first, at most 10% of the model's smaller side, and Clip Z values to Zero Plane (off at
+//!   first). The offset itself is a ball's: each point takes the highest of `h + sqrt(d² - r²)` over the heights
+//!   within `d`, the ball spanning `int(d / cell + 0.5) + 1` cells. Inward, the heights are turned upside down
+//!   (`× -1`), offset outward and turned back, and places that had nothing keep nothing. The new component is
+//!   called "Model With %2.3f Offset".
+//! - Slice Model: refused with nothing in the model or a model no taller than the material. Its form takes a slice
+//!   thickness, or a number of slices (the model's height divided by it); there are `int(height / thickness)`
+//!   slices, one more if over 0.00001 is left. Slice `i` keeps every place at or above its bottom, as
+//!   `min(h, top) - bottom`, in a component "Slice i" on a level of that name; with Create Boundary Vectors each
+//!   gets the outline where the model reaches its bottom, and where it reaches its top when it isn't the last, on a
+//!   layer of the same name. One step to undo, "Slice Model".
+//! - Create Component from Toolpath Preview: needs a carve preview. The carved surface is moved by where the model
+//!   sits in the material and made a component, "Toolpath Preview"; places still at the untouched surface where
+//!   the model has nothing become nothing. Holding Shift makes every place outside the model nothing; holding Ctrl
+//!   takes the model away from the preview.
+//! - Create Component with Draft from Visible Model ("Add Draft to Model"): refused when the model is empty or flat;
+//!   its form has a Draft Angle slider from 0 to 45 degrees, 10 at first. The draft: with `t = tan(angle)`, angles
+//!   over 0 and up to 65, each point takes the highest `h - r / t` of the heights within
+//!   `t × (highest - lowest) × 1.01`, its own included, kept only between the model's lowest and highest points.
+//!   The new component is called "Model With %2.1f° Draft".
+//! - Turn and Spin: every selected object must be a vector; the first is made into lines at a cell's third and
+//!   read as a profile: its offset from the line between its ends, sampled every third of a cell and blended
+//!   between. Turn (ends at least two cells apart) rotates it about that line: a point at distance `d` from it,
+//!   level with `t` along it, gets `sqrt(r(t)² - d²)` with `r = |profile(t)|`. Spin (the vector turned to start at
+//!   its left end) spins it about that end: a point `ρ` from it gets `profile(ρ / length)`. Both keep the higher
+//!   of what's there when combining.
+//! - Split Selected Component ("Split the selected component using a vector"): the selection must be exactly two
+//!   objects, one component and one vector; the component must be visible (checked while baking it); the vector
+//!   must cut it into two separate areas that both hold some of its heights. It is one step to undo, "Split
+//!   Component".
 
 use crate::app::App;
 use crate::geom::{Field, Path, P};
@@ -56,20 +51,20 @@ use std::sync::Arc;
 
 pub const VISIBLE_MODEL_COMMAND: u32 = 33743;
 pub const ZERO_PLANE_COMMAND: u32 = 33643;
-/// Emboss Component (33689, `0x1402c2730`; its form `0x140733530`, one undo step `0x386`).
+/// Emboss Component.
 pub const EMBOSS_COMMAND: u32 = 33689;
-/// The form starts at a scale of 0.1 and no smoothing (`0x140733847`, `+0x548` and `+0x550`); the
-/// scale goes from 1% to 50% (`slider / 100 × 0.49 + 0.01`, `0x140734d60`).
+/// The form starts at a scale of 0.1 and no smoothing; the
+/// scale goes from 1% to 50% (`slider / 100 × 0.49 + 0.01`).
 pub const EMBOSS_SCALE: f64 = 0.1;
 pub const EMBOSS_SCALE_LEAST: f64 = 0.01;
 pub const EMBOSS_SCALE_MOST: f64 = 0.5;
-/// The smoothness picks between four grids a third apart (`0x1421b9aa8`).
+/// The smoothness picks between four grids a third apart.
 pub const EMBOSS_SMOOTH_STEP: f64 = 1.0 / 3.0;
 /// Each smoother grid is the one before averaged over 7 by 7 cells, all weighing the same
-/// (`0x140734910`, `0x140999c50`, `0x140999d20`).
+///.
 pub const EMBOSS_BOX: usize = 7;
 /// A surface's slope is taken across 2.001 cells, one less for each missing neighbour
-/// (`0x1409df340`, `0x142211814`).
+///.
 pub const EMBOSS_SPAN: f64 = 2.001;
 
 /// The Emboss form: the height as a share of the model's, and how much the detail is smoothed.
@@ -85,8 +80,8 @@ impl Default for EmbossForm {
     }
 }
 
-/// The four grids the original prepares (`0x140734830`): at each place holding something, how
-/// upright the surface is there, the up part of its normal (`0x1409e2130`, the dot product with
+/// The four grids prepared: at each place holding something, how
+/// upright the surface is there, the up part of its normal (the dot product with
 /// (0, 0, 1)), then that averaged three times over 7 by 7 cells. `None` where there's nothing, and
 /// along the grid's edge, where the slope can't be taken.
 pub fn emboss_grids(h: &Grid) -> [Vec<Option<f32>>; 4] {
@@ -150,7 +145,7 @@ pub fn emboss_grids(h: &Grid) -> [Vec<Option<f32>>; 4] {
     [g0, g1, g2, g3]
 }
 
-/// The embossed heights (`0x1407344f0`): the two grids either side of the smoothness, mixed,
+/// The embossed heights: the two grids either side of the smoothness, mixed,
 /// times the scale and the model's height from its lowest to its highest point.
 pub fn emboss_heights(grids: &[Vec<Option<f32>>; 4], like: &Grid, form: EmbossForm, lowest: f64, highest: f64) -> Grid {
     let s = form.smoothness.clamp(0.0, 1.0);
@@ -166,11 +161,11 @@ pub fn emboss_heights(grids: &[Vec<Option<f32>>; 4], like: &Grid, form: EmbossFo
         .collect();
     Grid { data, ..like.clone() }
 }
-/// Create a textured area component (33697, string `0x83a1`; its form `0x140b1c540`).
+/// Create a textured area component.
 pub const TEXTURE_AREA_COMMAND: u32 = 33697;
-/// The texture's settings are percentages of the tile (`0x1420fbc10`: 100). Spacing may go down to
-/// -99.9% (`0x14213ad88`), the tiles then overlapping, and up to 100%; the shift of every other row
-/// or column goes from 0 to 100% (`0x1403f6c70`, the top at `0x142736360`). All start at 0.
+/// The texture's settings are percentages of the tile (100). Spacing may go down to
+/// -99.9%, the tiles then overlapping, and up to 100%; the shift of every other row
+/// or column goes from 0 to 100%. All start at 0.
 pub const TEXTURE_SPACING_LEAST: f64 = -99.9;
 pub const TEXTURE_MOST: f64 = 100.0;
 /// Burin's own limit: how many overlapping tiles one place looks at each way, so a spacing near
@@ -194,7 +189,7 @@ impl Default for TextureForm {
 }
 
 impl TextureForm {
-    /// Kept within the original's limits (`0x1403f6c70`).
+    /// Kept within the limits.
     pub fn clamped(self) -> TextureForm {
         TextureForm {
             spacing: self.spacing.map(|v| v.clamp(TEXTURE_SPACING_LEAST, TEXTURE_MOST)),
@@ -205,7 +200,7 @@ impl TextureForm {
 }
 
 /// A tile repeated over a grid like `tile`, inside `mask` (one flag per cell). The tile is the
-/// part of `tile` holding something, cut to its box first (`0x1403f0b10`). Rows go up from `lo`,
+/// part of `tile` holding something, cut to its box first. Rows go up from `lo`,
 /// each tile `1 + spacing` of its size from the last; every other row moves along by the X shift,
 /// and every other column up by the Y shift. Where tiles overlap the highest wins.
 pub fn texture_grid(tile: &Grid, form: TextureForm, lo: P, mask: &[bool]) -> Option<Grid> {
@@ -260,13 +255,13 @@ pub fn texture_grid(tile: &Grid, form: TextureForm, lo: P, mask: &[bool]) -> Opt
     Some(out)
 }
 
-/// Export Component as a 3d Clipart File (33605, string `0x8345`; the files' filter, `0x36c`).
+/// Export Component as a 3d Clipart File.
 pub const EXPORT_CLIP3D_COMMAND: u32 = 33605;
-/// Burin's own 3D clipart file: one component as it is, in Burin's text form (not Vectric's).
+/// Burin's own 3D clipart file: one component as it is, in Burin's text form.
 pub const CLIP3D_EXTENSION: &str = "3dclip";
 pub const CLIP3D_VERSION: u32 = 2;
 
-/// Version 1 held one component; version 2 holds the whole model, as the original's does.
+/// Version 1 held one component; version 2 holds the whole model.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Clip3d {
     burin_3dclip: u32,
@@ -332,7 +327,7 @@ pub const SLICE_COMMAND: u32 = 33237;
 pub const PREVIEW_COMPONENT_COMMAND: u32 = 33247;
 pub const DRAFT_COMMAND: u32 = 33608;
 pub const TURN_SPIN_COMMAND: u32 = 33708;
-/// The profile is sampled every cell divided by this (`0x142125a58`).
+/// The profile is sampled every cell divided by this.
 pub const TURN_SAMPLES_PER_CELL: f64 = 3.0;
 
 /// The Turn and Spin window's choices.
@@ -369,7 +364,7 @@ fn profile_of(path: &Path, start: P, end: P, step: f64) -> (Vec<f64>, f64) {
     (table, length)
 }
 
-/// The profile at a share of its length, blended between samples (`0x1406137c0`).
+/// The profile at a share of its length, blended between samples.
 fn profile_at(table: &[f64], t: f64) -> f64 {
     let n = table.len() - 1;
     let f = t.clamp(0.0, 1.0) * n as f64;
@@ -427,7 +422,7 @@ pub const DRAFT_MOST: f64 = 65.0;
 /// How far past the model's height the draft reaches.
 pub const DRAFT_REACH: f64 = 1.01;
 
-/// The model with draft added: walls sloped `angle` degrees from upright (`0x1402ff480`).
+/// The model with draft added: walls sloped `angle` degrees from upright.
 pub fn draft_grid(grid: &Grid, angle: f64) -> Grid {
     let (lo, hi) = grid.data.iter().filter(|h| **h > 0.0).fold((f32::MAX, 0.0f32), |(l, h), v| (l.min(*v), h.max(*v)));
     if angle <= 0.0 || angle > DRAFT_MOST || hi <= lo {
@@ -477,7 +472,7 @@ pub fn draft_grid(grid: &Grid, angle: f64) -> Grid {
     });
     out
 }
-/// What's left over must be more than this for one more slice (`0x142101020`).
+/// What's left over must be more than this for one more slice.
 pub const SLICE_LEFT_OVER: f64 = 1e-5;
 
 /// The Slice Model window's choices.
@@ -524,7 +519,7 @@ pub struct OffsetForm {
 /// A height grid offset by `d` the way a ball of that radius would see it: outward (`d > 0`) every place gets the
 /// highest `h + sqrt(d² - r²)` of the heights within `d`, and grows by `d` round its edge; inward (`d < 0`) every
 /// place with heights gets the lowest `h - sqrt(d² - r²)`, nothing counting as 0, and what goes down to 0 or under
-/// becomes nothing (`0x1402ff780`).
+/// becomes nothing.
 pub fn offset_grid(grid: &Grid, d: f64) -> Grid {
     let reach = d.abs();
     let (nx, ny, cell) = (grid.nx, grid.ny, grid.cell);
@@ -577,18 +572,17 @@ pub fn offset_grid(grid: &Grid, d: f64) -> Grid {
     out
 }
 
-/// How much a smoothed component takes from its softened self, at first: the original's
-/// `SmoothingBlendFactor` starts at 0.5 (`0x140743cef`) and shows as a percentage (`0x1407436ad`).
+/// How much a smoothed component takes from its softened self, at first: it
+/// starts at 0.5 and shows as a percentage.
 pub const SMOOTH_BLEND: f64 = 0.5;
-/// How far the softening reaches, in model cells. **Estimated:** the original's own softening wasn't read.
+/// How far the softening reaches, in model cells. **Estimated.**
 pub const SMOOTH_REACH: usize = 3;
 
 /// The Smooth window's choices.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SmoothForm {
     pub blend: f64,
-    /// Leaves places with nothing as they are, rather than letting the edges spread into them
-    /// (`PreserveTransparency`, `0x140744ec0`).
+    /// Leaves places with nothing as they are, rather than letting the edges spread into them.
     pub keep_empty: bool,
 }
 
@@ -723,7 +717,7 @@ pub fn split_parts(grid: &Grid, vector: &[Path]) -> Option<Vec<Option<bool>>> {
 }
 
 impl App {
-    /// Splits the selected component in two with the one selected vector (`0x1402c4430`).
+    /// Splits the selected component in two with the one selected vector.
     pub fn split_component(&mut self) {
         let vectors: Vec<&crate::app::Vector> = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id)).collect();
         let Some(i) = self.selected_comp.filter(|i| *i < self.doc.components.len() && vectors.len() == 1) else {
@@ -838,8 +832,8 @@ impl App {
         self.dirty = true;
     }
 
-    /// Smooths the selected component (`0x1402c2300`: refused with no component visible, message `0x287`,
-    /// or none selected, `0x286`).
+    /// Smooths the selected component (refused with no component visible
+    /// or none selected).
     pub fn smooth_component(&mut self, form: SmoothForm) -> bool {
         if !self.doc.components.iter().any(|c| c.visible) {
             self.message = Some(tr("There must be one or more components visible to be able to smooth them.").into());
@@ -856,7 +850,7 @@ impl App {
     }
 
     /// Bakes the selected component: its shape, base and height become heights of its own, which
-    /// later changes then work on (`0x1402b36b0`; this version bakes one component, message `0x43d`).
+    /// later changes then work on (this version bakes one component).
     pub fn bake_component(&mut self) {
         let Some(i) = self.selected_comp.filter(|i| *i < self.doc.components.len()) else {
             self.message = Some(tr("Select the component to bake first.").into());
@@ -893,7 +887,7 @@ impl App {
         }
     }
 
-    /// Add Zero Plane (33643, `0x1402b8770`): a flat component at height 0 over the whole job,
+    /// Add Zero Plane: a flat component at height 0 over the whole job,
     /// called "Zero Plane", combining by Add, so dishes subtracted after it go below zero.
     /// It goes first in the combine order, under everything, which is where it does its work.
     pub fn add_zero_plane(&mut self) {
@@ -909,7 +903,7 @@ impl App {
     }
 
     /// Create Texture Area: needs one component, the tile; closed shapes chosen as well bound it,
-    /// or else it fills the job (`0x140b1c540`).
+    /// or else it fills the job.
     pub fn open_texture_area(&mut self) {
         if self.selected_comp.is_none_or(|i| i >= self.doc.components.len()) {
             self.message = Some(tr("Choose the component to repeat in the Modeling tab, and closed shapes to bound it if you like.").into());
@@ -919,7 +913,7 @@ impl App {
     }
 
     /// Makes the textured area: a new component of the tile repeated, inside the chosen closed
-    /// shapes or over the whole job. The tile is hidden then, as in the original.
+    /// shapes or over the whole job. The tile is hidden then.
     pub fn texture_area(&mut self, form: TextureForm) -> bool {
         let Some(i) = self.selected_comp.filter(|&i| i < self.doc.components.len()) else { return false };
         let j = self.doc.job.clone();
@@ -1031,7 +1025,7 @@ impl App {
         let (mut apply, mut cancel) = (false, false);
         egui::Window::new(tr("Emboss Component")).id(egui::Id::unique("emboss")).open(&mut open).collapsible(false).resizable(false).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
             ui.set_max_width(320.0);
-            // The original's warning (`0x3f8`), shown in the form rather than before it.
+            // The warning is shown in the form rather than before it.
             ui.label(egui::RichText::new(tr("Embossing is meant for imported components or 3D models, and works best with high relief.")).size(12.0).color(crate::theme::MUTED()));
             let mut scale = form.scale * 100.0;
             ui.horizontal(|ui| {
@@ -1054,10 +1048,10 @@ impl App {
         self.emboss_form = if done || cancel || !open { None } else { Some(form) };
     }
 
-    /// Export as 3D Clipart (`0x1402c2d90`): the whole model, every component in its order, to a
+    /// Export as 3D Clipart: the whole model, every component in its order, to a
     /// file that File > Import, dropping it on the window or the Clipart tab bring into any job.
-    /// The original walks the component tree from its top (`0x1409d5310`), and refuses when the
-    /// composite model is empty (`0x1409e0050`, message `0x28e`). The name offered is the job's.
+    /// The component tree is walked from its top, and it refuses when the
+    /// composite model is empty. The name offered is the job's.
     pub fn export_3d_clipart(&mut self) {
         self.refresh_model();
         let empty = self.model.as_ref().is_none_or(|m| m.data.iter().all(|v| *v == 0.0)) && !self.doc.components.iter().any(|c| c.whole);
@@ -1166,7 +1160,7 @@ impl App {
         self.turn_form = Some(TurnForm { turn: self.turn_mode.unwrap_or(true), scale_to_height: false, height });
     }
 
-    /// Makes a component by turning or spinning the first selected vector (`0x140b287e0`).
+    /// Makes a component by turning or spinning the first selected vector.
     pub fn turn_spin(&mut self, form: TurnForm) -> bool {
         let vectors: Vec<&crate::app::Vector> = self.selected.iter().filter_map(|id| self.doc.vectors.iter().find(|v| v.id == *id)).collect();
         let Some(path) = vectors.first().and_then(|v| v.paths.first()).cloned() else {
@@ -1227,7 +1221,7 @@ impl App {
         self.turn_form = if close || !open { None } else { Some(form) };
     }
 
-    /// Opens the Add Draft form, or says why it can't (`0x1402c5d90`).
+    /// Opens the Add Draft form, or says why it can't.
     pub fn open_draft_model(&mut self) {
         if self.model_top().is_none() {
             self.message = Some(tr("There are no components. There must be one or more components visible to be able to add draft.").into());
@@ -1236,7 +1230,7 @@ impl App {
         self.draft_angle = Some(self.last_draft_angle.unwrap_or(DRAFT_ANGLE));
     }
 
-    /// Adds a component that is the visible model with draft (`0x140358cd0`).
+    /// Adds a component that is the visible model with draft.
     pub fn draft_model(&mut self, angle: f64) -> bool {
         let j = &self.doc.job;
         let Some(model) = relief::compose(&self.doc.components, j.width, j.height, j.points()).filter(|g| g.data.iter().any(|v| *v > 0.0)) else {
@@ -1282,7 +1276,7 @@ impl App {
         self.draft_angle = if close || !open { None } else { Some(angle) };
     }
 
-    /// Makes a component from the carve preview (`0x1402c3830`).
+    /// Makes a component from the carve preview.
     pub fn component_from_preview(&mut self) -> bool {
         let Some(sim) = self.sim.as_ref() else {
             self.message = Some(tr("There's no toolpath preview yet. Preview a toolpath first.").into());
@@ -1331,7 +1325,7 @@ impl App {
         self.slice_form = Some(SliceForm { by_count: false, thickness, count, boundaries: true });
     }
 
-    /// Cuts the visible model into slices, each a component of its own (`0x140742ae0`).
+    /// Cuts the visible model into slices, each a component of its own.
     pub fn slice_model(&mut self, form: SliceForm) -> bool {
         let Some((model, lo, hi)) = self.model_range() else {
             self.message = Some(tr("The model is empty. There is nothing to slice.").into());
@@ -1422,7 +1416,7 @@ impl App {
         self.slice_form = if done || cancel || !open { None } else { Some(form) };
     }
 
-    /// Opens the Offset Model form, or says why it can't (`0x1402c5ec0`).
+    /// Opens the Offset Model form, or says why it can't.
     pub fn open_offset_model(&mut self) {
         let flat = self.model_top().is_none();
         if flat {
@@ -1433,7 +1427,7 @@ impl App {
         self.offset_form = Some(OffsetForm { distance: self.offset_distance.unwrap_or(distance) });
     }
 
-    /// Adds a component that is the visible model offset by `d` (`0x140b08f20`).
+    /// Adds a component that is the visible model offset by `d`.
     pub fn offset_model(&mut self, d: f64) -> bool {
         let j = &self.doc.job;
         let (w, h) = (j.width, j.height);
@@ -1573,7 +1567,7 @@ mod tests {
         // Overlapping tiles keep the highest.
         let packed = texture_grid(&tile, TextureForm { spacing: [-50.0, 0.0], ..Default::default() }, [0.0, 0.0], &all).unwrap();
         assert!(packed.sample(0.9, 0.5) >= plain.sample(0.9, 0.5) - 0.03);
-        // Out of range values are kept within the original's limits.
+        // Out of range values are kept within the limits.
         let f = TextureForm { spacing: [-500.0, 300.0], shift: [-5.0, 140.0], mirror: [4, 5, 6, 7] }.clamped();
         assert_eq!(f.spacing, [TEXTURE_SPACING_LEAST, TEXTURE_MOST]);
         assert_eq!(f.shift, [0.0, TEXTURE_MOST]);

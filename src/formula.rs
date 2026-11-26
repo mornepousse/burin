@@ -1,22 +1,22 @@
 //! Sums typed into number boxes, and the document's variables they can use.
 //!
-//! Read from the original:
+//! The rules:
 //! - A box holds a sum, not a number, as soon as it has anything but digits, dots, commas, spaces and tabs,
-//!   or a minus sign anywhere but first (`0x14062b9b0`).
-//! - Working it out (`0x140628cc0`): every `=` is dropped, then quotes and spaces; `{name}` becomes the
-//!   variable's value (`0x14061d8c0`); `P` or `p` becomes 3.1415927, `M` or `m` 25.4 (millimetres in an inch),
+//!   or a minus sign anywhere but first.
+//! - Working it out: every `=` is dropped, then quotes and spaces; `{name}` becomes the
+//!   variable's value; `P` or `p` becomes 3.1415927, `M` or `m` 25.4 (millimetres in an inch),
 //!   `I` or `i` 0.03937 (inches in a millimetre); `W`, `w`, `X` or `x` the job's width, `H`, `h`, `Y` or `y` its
-//!   height, `T`, `t`, `Z` or `z` its thickness; each `'` makes all before it feet (`0x140629992`); commas become
+//!   height, `T`, `t`, `Z` or `z` its thickness; each `'` makes all before it feet; commas become
 //!   dots. What's left is `+ - * / ^ !` and brackets.
-//! - Ranks (`0x14062a0af` to `0x14062ade6`): `+ -` 1, `* /` 2, `^ !` 3, brackets 10, numbers 11. A minus first, or
+//! - Ranks: `+ -` 1, `* /` 2, `^ !` 3, brackets 10, numbers 11. A minus first, or
 //!   right after `! ( ) * + - / ^`, belongs to the number. The sum is split at its rightmost operator of lowest
-//!   rank (`0x14062c2f0`), so every operator goes left to right, and worked out (`0x14062bc10`): `!` multiplies
+//!   rank, so every operator goes left to right, and worked out: `!` multiplies
 //!   1 × 2 × … × n.
-//! - What can go wrong (`0x14062c540`): an error in the sum, brackets that don't pair up, two dots in one
-//!   number, dividing by zero. A name the document doesn't have stops it too (`0x14061d8c0`).
-//! - A variable's name starts with a letter, then letters, digits or `_` (`0x14061d2e0`), and is matched
-//!   exactly, capitals and all (`0x14061e080`). Each is saved as its name and its value (`0x14061d110`).
-//! - The answer shows as `sum = value unit`, to 4 places in inches and 3 in millimetres (`0x140314b90`).
+//! - What can go wrong: an error in the sum, brackets that don't pair up, two dots in one
+//!   number, dividing by zero. A name the document doesn't have stops it too.
+//! - A variable's name starts with a letter, then letters, digits or `_`, and is matched
+//!   exactly, capitals and all. Each is saved as its name and its value.
+//! - The answer shows as `sum = value unit`, to 4 places in inches and 3 in millimetres.
 
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -25,7 +25,7 @@ pub const PI_TEXT: &str = "3.1415927";
 pub const MM_PER_INCH: f64 = 25.4;
 pub const INCH_PER_MM: f64 = 0.03937;
 
-/// The original's Document Variables command.
+/// The Document Variables command.
 pub const DOCUMENT_VARIABLES_COMMAND: u32 = 33702;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -78,12 +78,12 @@ pub fn context() -> Context {
     CURRENT.with(|c| c.borrow().clone())
 }
 
-/// Whether the text is a sum rather than a plain number (`0x14062b9b0`).
+/// Whether the text is a sum rather than a plain number.
 pub fn is_formula(text: &str) -> bool {
     text.chars().enumerate().any(|(i, c)| !(c.is_ascii_digit() || matches!(c, '\t' | ' ' | ',' | '.') || (c == '-' && i == 0)))
 }
 
-/// A name a variable may have (`0x14061d2e0`).
+/// A name a variable may have.
 pub fn valid_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(char::is_alphabetic) && chars.all(|c| c.is_alphanumeric() || c == '_')
@@ -94,7 +94,7 @@ pub fn uses(text: &str, name: &str) -> bool {
     text.contains(&format!("{{{name}}}"))
 }
 
-/// Works the sum out (`0x140628cc0`).
+/// Works the sum out.
 pub fn evaluate(text: &str, context: &Context) -> Result<f64, FormulaError> {
     let mut s: String = text.chars().filter(|c| !matches!(c, '=' | '"' | ' ' | '\t')).collect();
     // The variables first, so their names aren't taken for the letters below.
@@ -147,9 +147,9 @@ pub fn evaluate(text: &str, context: &Context) -> Result<f64, FormulaError> {
     Ok(value)
 }
 
-/// The feet sign (`0x140629992`): each `'` goes, `)*12` takes its place and `(` goes at the very start, so all
+/// The feet sign: each `'` goes, `)*12` takes its place and `(` goes at the very start, so all
 /// that's written before it counts in feet. Burin adds a `+` when a number or a bracket follows straight on, so
-/// `5'6` is 66; the original would read `(5)*126`.
+/// `5'6` is 66, not `(5)*126`.
 pub fn feet(text: &str) -> String {
     let mut s = text.to_string();
     while let Some(i) = s.find('\'') {
@@ -160,16 +160,15 @@ pub fn feet(text: &str) -> String {
     s
 }
 
-/// What the feet sign multiplies by: inches in a foot (`0x1421932f8`, the text `)*12`).
+/// What the feet sign multiplies by: inches in a foot (the text `)*12`).
 pub const FEET_TIMES: &str = "*12";
 
-/// How the answer shows next to the box (`0x140314b90`).
+/// How the answer shows next to the box.
 pub fn shown(text: &str, value: f64, unit: &str, metric: bool) -> String {
     if metric { format!("{text} = {value:4.3} {unit}") } else { format!("{text} = {value:4.4} {unit}") }
 }
 
-/// `n!` (`0x14062bc10`, kind 9): 1 × 2 × … × n, with n cut to a whole number and 0! = 1. The original asks
-/// before working out 1000! or more (`0x142736398`); past 170! the answer is too big to show anyway, so the
+/// `n!`: 1 × 2 × … × n, with n cut to a whole number and 0! = 1. Past 170! the answer is too big to show anyway, so the
 /// sum is refused instead.
 fn factorial(n: f64) -> Result<f64, FormulaError> {
     if !(0.0..=FACTORIAL_MOST).contains(&n) {
@@ -218,8 +217,8 @@ impl Parser<'_> {
         Ok(v)
     }
 
-    /// `^` and `!` share the top rank and, like every operator in the original, are worked out from left to
-    /// right: it splits a sum at its rightmost operator of lowest rank (`0x14062c2f0`), so `2^3^2` is 64.
+    /// `^` and `!` share the top rank and, like every operator, are worked out from left to
+    /// right: it splits a sum at its rightmost operator of lowest rank, so `2^3^2` is 64.
     fn power(&mut self) -> Result<f64, FormulaError> {
         let mut v = self.unary()?;
         loop {
@@ -309,7 +308,7 @@ mod tests {
     #[test]
     fn powers_and_factorials_go_left_to_right() {
         let c = job();
-        assert_eq!(evaluate("2^3^2", &c), Ok(64.0), "the original splits at the rightmost ^");
+        assert_eq!(evaluate("2^3^2", &c), Ok(64.0), "split at the rightmost ^");
         assert_eq!(evaluate("3!", &c), Ok(6.0));
         assert_eq!(evaluate("0!", &c), Ok(1.0));
         assert_eq!(evaluate("2*3!", &c), Ok(12.0));
@@ -326,7 +325,7 @@ mod tests {
         let c = job();
         assert_eq!(evaluate("5'", &c), Ok(60.0));
         assert_eq!(evaluate("5'+6", &c), Ok(66.0));
-        assert_eq!(evaluate("5'6", &c), Ok(66.0), "Burin adds the + the original leaves out");
+        assert_eq!(evaluate("5'6", &c), Ok(66.0), "Burin adds the + that is left out");
         assert_eq!(evaluate("2+3'", &c), Ok(60.0), "everything before it");
         assert_eq!(evaluate("1'2'", &c), Ok(168.0));
         assert!(is_formula("5'"));

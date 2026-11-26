@@ -1,5 +1,5 @@
 //! A page to take to the machine, saying how to set up and what each toolpath needs. A single HTML
-//! file that any browser can show or print (`ID_TOOLPATHS_CREATESETUPSHEET` in the original).
+//! file that any browser can show or print.
 
 use crate::app::*;
 use crate::i18n::tr;

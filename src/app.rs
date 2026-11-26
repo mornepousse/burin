@@ -30,7 +30,7 @@ pub enum Datum {
     TopRight,
     Centre,
     /// The middles of the four sides: for placing and holding shapes (the job's zero keeps to the
-    /// corners and the centre, as the original's).
+    /// corners and the centre).
     Left,
     Right,
     Top,
@@ -80,12 +80,11 @@ pub struct Job {
     pub solid: [u8; 3],
     /// How the wood looks in the carve preview: `None` means the solid colour.
     pub preview_material: Option<usize>,
-    /// Both sides of the material are cut (the original's Double Sided job type).
+    /// Both sides of the material are cut.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub two_sided: bool,
     /// How the material is turned over between the sides: about the Y axis (left to right) when
-    /// set, else about the X axis (top to bottom), the original's `ppSideFlipDirection` "Around Y"
-    /// and "Around X" (value 0, `0x140602519`).
+    /// set, else about the X axis (top to bottom): "Around Y" and "Around X".
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub flip_around_y: bool,
 }
@@ -255,7 +254,7 @@ pub struct Vector {
     /// The side of a two-sided job it is on: 0 the top, 1 the bottom (`SetActiveSide`).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub face: u8,
-    /// The sheet it is on, counted from 0 ("Sheet 1"), as the original keeps each object's sheet.
+    /// The sheet it is on, counted from 0 ("Sheet 1").
     #[serde(default, skip_serializing_if = "is_zero")]
     pub sheet: u8,
 }
@@ -364,8 +363,7 @@ pub struct Toolpath {
     /// The side of a two-sided job it cuts: 0 the top, 1 the bottom.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub face: u8,
-    /// The sheet that was showing when it was calculated (the original's
-    /// `_ActiveSheetWhenCalculated`, 0 in every toolpath of the user's files).
+    /// The sheet that was showing when it was calculated (0 in every toolpath of the user's files).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub sheet: u8,
 }
@@ -379,8 +377,8 @@ pub struct Doc {
     pub active_layer: usize,
     pub components: Vec<Component>,
     pub tools: Vec<Tool>,
-    /// The tool list's groups, kept even while empty: the original's Tool Database holds them as start and end
-    /// markers in the list (types 11 and 12, `0x14086ce30`), made by New Group with tools dragged in after.
+    /// The tool list's groups, kept even while empty: the tool database holds them as start and end
+    /// markers in the list (types 11 and 12), made by New Group with tools dragged in after.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_groups: Vec<String>,
     pub toolpaths: Vec<Toolpath>,
@@ -401,11 +399,11 @@ pub struct Doc {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub active_face: u8,
     /// Sheets beyond the first: every sheet is the job's size, each with its own shapes and
-    /// toolpaths, and only the active one shows (`vcCadSheetManager`, `ActiveSheetIndex`).
+    /// toolpaths, and only the active one shows.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub extra_sheets: u8,
-    /// How many of a shape nesting lays out, when more than one (the original's per-object
-    /// `nestNumCopies`, set from the nesting form by `0x1403c17f0`).
+    /// How many of a shape nesting lays out, when more than one (set per object from the nesting
+    /// form).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub nest_copies: std::collections::BTreeMap<u64, u16>,
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -646,13 +644,13 @@ pub enum Screen {
     Work,
 }
 
-/// Both views at once, as the original's Tile Windows commands lay out its two view windows.
+/// Both views at once, laid out by the Tile Windows commands.
 /// The view in use goes first: on the left side by side, at the top one above the other.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tiling {
-    /// Tile Windows Vertical (57652, `Page Up`).
+    /// Tile Windows Vertical (`Page Up`).
     SideBySide,
-    /// Tile Windows Horizontal (57651, `Page Down`).
+    /// Tile Windows Horizontal (`Page Down`).
     Stacked,
 }
 
@@ -955,17 +953,16 @@ pub struct XformForm {
     pub clearance: f64,
     pub border: f64,
     pub along_x: bool,
-    /// Nesting may turn parts (the original's `CanRotate`), in steps of this many degrees
-    /// (`RotationStepAngle`).
+    /// Nesting may turn parts, in steps of this many degrees.
     pub nest_turn: bool,
     pub nest_step: f64,
-    /// Small parts may go in the holes of bigger ones (the original's `PartInPart`).
+    /// Small parts may go in the holes of bigger ones.
     pub part_in_part: bool,
     /// The last shape chosen is the outline to nest in, instead of the sheet ("Last vector is
     /// nest boundary").
     pub into_boundary: bool,
     /// Nest by each part's true shape rather than its box, and let parts be mirrored to fit
-    /// (the original's `CanMirror`, "Mirror parts to find best fit").
+    /// ("Mirror parts to find best fit").
     pub by_shape: bool,
     pub nest_mirror: bool,
     /// Set Size and Rotate: treat each selected shape on its own.
@@ -1184,13 +1181,13 @@ pub struct App {
     /// Cut more slowly near tight corners (`toolpath::slow_corners`), at this share of the rate.
     pub corner_slow: bool,
     pub corner_share: f64,
-    /// Write `G64 P` with this tolerance, in millimetres, for LinuxCNC. Not from the original.
+    /// Write `G64 P` with this tolerance, in millimetres, for LinuxCNC.
     pub blend: bool,
     pub blend_mm: f64,
     /// The pointer catches on what is drawn.
     pub snap_shapes: bool,
     /// Clicks on the toolpath form's shapes put tabs on them or take them off, and tabs can be
-    /// slid along (the original's tab tool, `vcToolpathTabTool`, `0x140a83540`).
+    /// slid along.
     pub placing_tabs: bool,
     pub show_guides: bool,
     /// Alt is held: nothing catches for now.
@@ -1280,7 +1277,7 @@ pub struct App {
     pub auto_fit: bool,
     pub last_rect: egui::Rect,
     pub snap: bool,
-    /// The grid's spacing in job units, as a project file can set it (`vcSnapGrid`); 0 follows the zoom.
+    /// The grid's spacing in job units, as a project file can set it; 0 follows the zoom.
     pub grid_spacing: f64,
     pub grid: bool,
     pub show_vectors: bool,
@@ -1292,8 +1289,8 @@ pub struct App {
     pub measure_mode: crate::measure::MeasureMode,
     pub measure_cursor: Option<P>,
     pub inspected: Option<crate::measure::Inspected>,
-    /// Radius or Diameter, as last chosen in a circle's form: kept from one circle to the next, as
-    /// the original keeps it (the person's report).
+    /// Radius or Diameter, as last chosen in a circle's form: kept from one circle to the next
+    /// (the person's report).
     pub circle_use_dia: bool,
     /// Each kind of shape's form as last left: its sizes and choices come back the next time (the
     /// person: what is kept for circles, for every shape).
@@ -1312,7 +1309,7 @@ pub struct App {
     /// For Preview All Sides: the bottom side carved on its own, as seen from underneath, which
     /// is joined to the top side's carve when that is done.
     pub sim_floor: Option<Sim>,
-    /// The original's Multi-Sided View (33839): both sides' toolpaths in the 3D view at once.
+    /// Multi-Sided View: both sides' toolpaths in the 3D view at once.
     pub multi_sided: bool,
     /// Sculpting a component, while its form is open.
     pub sculpt: Option<crate::sculpt::Sculpt>,
@@ -1372,7 +1369,7 @@ pub struct App {
     /// Why the toolpaths should be recalculated, when it isn't the material.
     pub recalc_note: Option<String>,
     pub print_setup_open: bool,
-    /// Kept for the session, as the original's printer settings are.
+    /// Kept for the session.
     pub print_setup: crate::printing::PrintSetup,
     pub help_page: usize,
     /// The form for telling the author something, and where drafts go.
@@ -1410,11 +1407,11 @@ pub struct App {
     pub draw_plunges: bool,
     pub draw_retracts: bool,
     pub draw_joins: bool,
-    /// The main light turns with the view. Off at the start, as in the original.
+    /// The main light turns with the view. Off at the start.
     pub light_follows_viewer: bool,
-    /// Higher parts cast shadows in the 3D view. Off at the start, as in the original.
+    /// Higher parts cast shadows in the 3D view. Off at the start.
     pub shadow_shading: bool,
-    /// Draw Modeling Plane, on at first and not kept (`0x142e62668`).
+    /// Draw Modeling Plane, on at first and not kept.
     pub draw_modeling_plane: bool,
     pub solid_previews: bool,
     pub shaded_background: bool,
@@ -1481,7 +1478,7 @@ impl Quality3d {
         }
     }
 
-    /// The most points the carve is worked out on, from the original's own steps.
+    /// The most points the carve is worked out on.
     pub fn most_points(self) -> usize {
         let points = match self {
             Quality3d::Light => 4_000_000,
@@ -1503,17 +1500,16 @@ impl Quality3d {
 }
 
 /// How many of the 3D detail choices, from the first, a new job remembers for the next one; the
-/// highest isn't kept (`0x140332cc0`: saved when the index is below 3).
+/// highest isn't kept (saved when the index is below 3).
 pub const NEW_JOB_REMEMBERED_RESOLUTIONS: usize = 3;
 
 fn new_job_file() -> Option<PathBuf> {
     recent_file().map(|f| f.with_file_name("new-job.json"))
 }
 
-/// What a new job starts from: the material of the last new job confirmed, as the original keeps
-/// it (`0x140332cc0` saves "NewFileMaterialBlock"; `0x14084b7f0` reads back the units, the Z and
-/// X/Y zeros, the size, the job type and its flip). The 3D detail comes along only when it isn't
-/// the highest (`0x140332cc0` saves "Resolution" below 3).
+/// What a new job starts from: the material of the last new job confirmed: the units, the Z and
+/// X/Y zeros, the size, the job type and its flip. The 3D detail comes along only when it isn't
+/// the highest (it is saved below 3).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NewJob {
     pub units: Units,
@@ -2091,7 +2087,7 @@ impl App {
             self.doc.set_units(Units::Mm);
             (self.doc.job.width, self.doc.job.height, self.doc.job.thickness) = (600.0, 400.0, 18.0);
         }
-        // The material of the last new job, as the original keeps it.
+        // The material of the last new job.
         if let Some(saved) = saved_new_job() {
             if saved.units != self.doc.job.units {
                 self.doc.set_units(saved.units);
@@ -2191,7 +2187,7 @@ impl App {
         j.thickness = p.max[2] - p.min[2];
         // Zero at the bottom of the material means the machine bed.
         j.z_on_bed = p.max[2] > 0.0 && p.min[2] >= 0.0;
-        // Cut from two sides, and turned over around which axis (`0x14084a480`). A rotary job
+        // Cut from two sides, and turned over around which axis. A rotary job
         // opens as one side: Burin has no rotary jobs.
         j.two_sided = p.job_type == 1;
         j.flip_around_y = p.side_flip != 0;
@@ -2306,7 +2302,7 @@ impl App {
                 })
                 .collect();
             // A contour saved before its drawing changed: its moves cut shapes that aren't these.
-            // The original keeps such moves as they are; they're kept too, but with no shapes of
+            // Such moves are kept as they are, but with no shapes of
             // their own, so the toolpath shows as needing Recalculate.
             if saved.kind.starts_with("Profile") && !op.source.is_empty() && !kept_moves_follow(&op.paths, &moves, op.tool.dia / 2.0 + op.allowance.abs() + if op.lead { op.lead_distance } else { 0.0 }.max(op.overcut) + FOLLOW_SLACK) {
                 op.paths = Vec::new();
@@ -2325,8 +2321,8 @@ impl App {
             doc.toolpaths.push(Toolpath { op, visible: true, kept_moves: Some(moves.clone()), kept_steps: Some(Arc::new(steps)), moves, color: palette[k % palette.len()], face: doc.active_face, sheet: doc.active_sheet });
         }
         // A V-Carve made with a clearing tool is saved as two toolpaths of one calculation: its own
-        // ("VCarveToolpath") and the clearing tool's ("AreaClearToolpath"), which the original pairs
-        // again by the identifier they share when the V-Carve is edited (`0x1407756d0`). That
+        // ("VCarveToolpath") and the clearing tool's ("AreaClearToolpath"), which are paired
+        // again by the identifier they share when the V-Carve is edited. That
         // identifier isn't read here, so the pair is found by name: the clearing toolpath of the same
         // name. The V-Carve gets its clearing tool back, so a recalculation cuts the same rings.
         let base = doc.toolpaths.len() - p.toolpaths.len();
@@ -2373,8 +2369,8 @@ impl App {
         if !p.notes.is_empty() {
             doc.notes = p.notes.clone();
         }
-        // The model's look: the nearest wood Burin has, or a solid colour close to the original's
-        // material (colours chosen for Burin).
+        // The model's look: the nearest wood Burin has, or a solid colour close to the material's
+        // (colours chosen for Burin).
         if let Some(look) = &p.look {
             let lower = look.to_lowercase();
             let wood = MATERIALS.iter().position(|m| lower.contains(&m.0.to_lowercase().split(' ').next().unwrap_or("").to_string()));
@@ -2411,7 +2407,7 @@ impl App {
             }
         }
         self.screen = Screen::Work;
-        // A separate file from the one it came from: saving asks where. The original is still
+        // A separate file from the one it came from: saving asks where. The original file is still
         // there, so nothing is lost by leaving until something here changes.
         self.path = None;
         self.dirty = false;
@@ -2431,7 +2427,7 @@ impl App {
         let text = crate::platform::read_to_string(&path).map_err(|e| tf!("Could not open {}: {e}", path.display()))?;
         let doc: Doc = serde_json::from_str(&text)
             .map_err(|_| tf!("{} is not a project made by this program.", path.display()))?;
-        // Notes starting with a dot ask to be read each time the job is opened (`0x1402923d0`).
+        // Notes starting with a dot ask to be read each time the job is opened.
         self.notes_open = doc.notes.starts_with('.');
         self.doc = doc;
         self.reset_state();
@@ -2663,7 +2659,7 @@ impl App {
         self.doc.sort_out_copied_pieces(&pasted);
         self.doc.join_copies_to_toolpaths(&pairs);
         // The copy comes selected with its handles showing, ready to be moved or sized, as the
-        // second click on a shape gives (seen by the person in the original).
+        // second click on a shape gives (seen by the person).
         self.handles_on = Some(self.selected.clone());
     }
 
@@ -3206,7 +3202,7 @@ impl App {
             }
         }
         tasks.sort_by_key(|(at, _)| *at);
-        // Nothing made yet: the original says so in a box (its message 0x278, `0x140297d90`).
+        // Nothing made yet: say so in a box.
         if warn && self.doc.toolpaths.is_empty() {
             self.message = Some(crate::i18n::tr("No toolpaths to recalculate.\n\nYou can only recalculate toolpaths which have already been created.").into());
             return;
@@ -3340,8 +3336,8 @@ impl App {
         }
     }
 
-    /// Adds a sheet of the job's size after the others and shows it, as the original names its
-    /// sheets "Sheet %d" (`0x14217bfb8`).
+    /// Adds a sheet of the job's size after the others and shows it, naming it
+    /// "Sheet %d".
     pub fn add_sheet(&mut self) {
         if self.doc.sheet_count() >= u8::MAX as usize {
             return;
@@ -3652,7 +3648,7 @@ impl App {
         self.bump_surface();
     }
 
-    /// Preview All Sides (`0x14033aa10`): every toolpath, shown or not, the active side's first and
+    /// Preview All Sides: every toolpath, shown or not, the active side's first and
     /// then the other side's, and the active side is the one looked at afterwards. Here the active
     /// side's toolpaths carve as usual and the other side's carve a block of their own, as seen from
     /// that side. Turned over the way the job flips, wherever the two meet the material is gone, so
@@ -3681,7 +3677,7 @@ impl App {
         }
         self.sim = None;
         self.sim_floor = Some(under);
-        // The original turns its Multi-Sided View on when this is done (`0x14033aa10`, `0x140593b70`).
+        // The Multi-Sided View is turned on when this is done.
         self.multi_sided = true;
         if top.is_empty() {
             self.ensure_sim();
@@ -4199,7 +4195,7 @@ mod tests {
         assert!((d.job.width - 10.0).abs() < 1e-9);
     }
 
-    /// A new job starts from the last new job's material, as the original keeps it, but not
+    /// A new job starts from the last new job's material, but not
     /// from its highest 3D detail, and never from another job's zero offset.
     #[test]
     fn a_new_job_takes_the_last_new_jobs_material() {
@@ -4521,7 +4517,7 @@ mod tests {
     }
 
     /// A V-Carve's clearing toolpath that would cut nothing is left out, with a message that
-    /// says why (`0x1405680a0`): a narrow strip has no flat wide enough for a big clearing tool.
+    /// says why: a narrow strip has no flat wide enough for a big clearing tool.
     #[test]
     fn an_empty_flat_clearing_is_dropped_with_a_reason() {
         for (width, flat, says) in [(0.2, 0.05, "wide enough"), (0.2, 0.4, "never gets down")] {

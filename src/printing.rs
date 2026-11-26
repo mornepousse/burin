@@ -1,8 +1,7 @@
 //! Print Setup and the PDF that File > Print makes.
 //!
-//! The original's Print Setup is the Windows printer dialog (`CWinApp::OnFilePrintSetup`, `0x140b6e814`,
-//! command 57606): printer, paper and orientation, kept for the session. Its 2D view prints a copy of what
-//! the screen shows (`0x140a3b550`), and its 3D view a picture of itself (`0x1408ab900`, `0x1408ab980`).
+//! Print Setup is the Windows printer dialog: printer, paper and orientation, kept for the session. The 2D
+//! view prints a copy of what the screen shows, and the 3D view a picture of itself.
 //! Burin makes a PDF instead, so the setup says what paper the PDF's pages are and how the drawing goes on
 //! them: at its real size over as many pages as it takes, or shrunk to one page.
 
@@ -11,7 +10,7 @@ use crate::geom::Path;
 use crate::i18n::tr;
 use egui::Align2;
 
-/// The original's Print Setup command.
+/// The Print Setup command.
 pub const PRINT_SETUP_COMMAND: u32 = 57606;
 
 /// Room left round each page, where printers often can't print: 10 mm, in points.

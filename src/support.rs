@@ -72,7 +72,7 @@ impl App {
             return;
         }
         let path = file.path().to_path_buf();
-        // 3D clipart goes into the job open now, as in the original.
+        // 3D clipart goes into the job open now.
         if path.extension().is_some_and(|e| e.eq_ignore_ascii_case(crate::modeltools::CLIP3D_EXTENSION)) {
             if let Err(why) = self.import_3d_clipart(&path) {
                 self.message = Some(why);

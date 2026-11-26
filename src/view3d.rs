@@ -33,7 +33,7 @@ impl Camera {
 }
 
 /// How much of the 3D view the board takes when the view is fitted, along the side that limits it
-/// (the original's 3D view: 642 of 953 pixels; estimated from that one picture).
+/// (642 of 953 pixels in a reference 3D view; estimated from that one picture).
 const VIEW_FILL: f32 = 0.67;
 
 /// Turns job positions into screen positions.
@@ -62,9 +62,8 @@ impl Projection {
             scale: 1.0,
             distance: size * 3.5,
         };
-        // The board as it is turned, fitted to the view and centred in it, as the original frames
-        // its 3D view: the board's outline takes about two thirds of the view (642 of 953 pixels
-        // high in its 3D view of a 10 x 10 inch job).
+        // The board as it is turned, fitted to the view and centred in it: the board's outline
+        // takes about two thirds of the view (642 of 953 pixels high for a 10 x 10 inch job).
         let (w, h) = (width as f32, height as f32);
         let corners = [p.project(0.0, 0.0, 0.0), p.project(w, 0.0, 0.0), p.project(0.0, h, 0.0), p.project(w, h, 0.0)];
         let (lo, hi) = corners.iter().fold((pos2(f32::MAX, f32::MAX), pos2(f32::MIN, f32::MIN)), |(lo, hi), q| (lo.min(*q), hi.max(*q)));
@@ -455,7 +454,7 @@ const GRAIN_PER_DEPTH: f32 = 1.2;
 const KEY_LIGHT: [f32; 3] = [-0.46, -0.38, 0.8];
 const FILL_LIGHT: [f32; 3] = [0.5, 0.25, 0.45];
 
-/// The original's Light Follows Viewer and Use Shadow Shading commands (`0x1408ac380`, `0x1408ad440`).
+/// The Light Follows Viewer and Use Shadow Shading commands.
 pub const LIGHT_FOLLOWS_VIEWER_COMMAND: u32 = 32889;
 pub const SHADOW_SHADING_COMMAND: u32 = 33698;
 /// How close to the modeling plane, in cells, a point of the surface counts as lying on it. The
@@ -463,15 +462,15 @@ pub const SHADOW_SHADING_COMMAND: u32 = 33698;
 /// otherwise come out striped.
 const PLANE_REACH: f32 = 0.05;
 
-/// Multi-Sided View (33839, `0x1402c6e90`): flips a flag of the job's sides (`0x140593b70`), offered
-/// only when there are two sides (`0x1402c6f40`), and turned on by Preview All Sides at its end.
+/// Multi-Sided View: flips a flag of the job's sides, offered
+/// only when there are two sides, and turned on by Preview All Sides at its end.
 pub const MULTI_SIDED_COMMAND: u32 = 33839;
 
-/// The original's Draw Modeling Plane command (`0x1402c6170`), and how see-through the plane is.
+/// The Draw Modeling Plane command, and how see-through the plane is.
 pub const MODELING_PLANE_COMMAND: u32 = 33188;
 pub const MODELING_PLANE_OPACITY: f32 = 0.4;
 
-/// Where the main light comes from. Fixed on the job, as the original starts; when it follows
+/// Where the main light comes from. Fixed on the job at the start; when it follows
 /// the viewer, it turns with the view so it stays where it is at the starting view.
 pub fn key_light(cam: &Camera, follows_viewer: bool) -> [f32; 3] {
     if !follows_viewer {
@@ -953,7 +952,7 @@ impl Scene<'_> {
             None => self.baked.brightness_of(x, y, z, !self.quick, self.light),
         };
         let shaded = base.map(|v| (v * light).min(255.0));
-        // The modeling plane, white and see-through (`0x140301fe6`: 0.4, colour `0xffffff`), shows where
+        // The modeling plane, white and see-through (0.4, colour `0xffffff`), shows where
         // nothing of the model stands above it.
         match self.plane {
             Some(at) if hit.side.is_none() && (z - at).abs() <= self.baked.cell * PLANE_REACH + 1e-5 => shaded.map(|v| v * (1.0 - MODELING_PLANE_OPACITY) + 255.0 * MODELING_PLANE_OPACITY),
@@ -1311,7 +1310,7 @@ impl App {
         if self.shaded_background {
             Self::gradient_background(&painter, rect);
         } else {
-            // Plain, the original paints both ends with the top colour (`0x1408ad390`).
+            // Plain, both ends are painted with the top colour.
             painter.rect_filled(rect, 0.0, crate::theme::BACKDROP_TOP());
         }
 

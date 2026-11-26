@@ -102,7 +102,7 @@ pub fn graphics_line() -> String {
     GRAPHICS.try_lock().map_or(String::new(), |g| g.clone())
 }
 
-/// How the 3D view is drawn, said in About as the original says it (`0x140726810`: through the
+/// How the 3D view is drawn, said in About (through the
 /// system's OpenGL, or in software). `card` is what was recorded at start: wgpu's
 /// "name (backend, device type, driver ...)", or OpenGL's renderer name.
 pub fn drawing_name(card: &str, web: bool) -> String {

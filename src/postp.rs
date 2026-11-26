@@ -106,7 +106,7 @@ fn parse_substitutions(text: &str) -> Vec<(char, char)> {
 }
 
 /// The lines of a multi-line variable: blank ones go, and a line stops at a carriage return. With
-/// nothing in it there is still one line, empty (`0x140854090`).
+/// nothing in it there is still one line, empty.
 fn note_lines(text: &str) -> Vec<&str> {
     let lines: Vec<&str> = text.split('\n').map(|l| l.split('\r').next().unwrap_or("")).filter(|l| !l.is_empty()).collect();
     if lines.is_empty() { vec![""] } else { lines }
@@ -470,7 +470,7 @@ impl Writer<'_> {
 
     /// One line of notes. They're the person's own words and usually land inside a G-code comment:
     /// a bracket closing it early would turn the rest of the line into a command. So a file with no
-    /// list of its own still gets these two changed, which the original doesn't do.
+    /// list of its own still gets these two changed.
     fn note(&self, text: &str) -> String {
         let line = note_lines(text).get(self.note_line).copied().unwrap_or("");
         let done = self.substituted(line);
@@ -847,7 +847,7 @@ begin FOOTER
         assert_eq!(out.matches("G0 X1").count(), 1, "only lines with notes repeat");
         assert!(out.contains("<Climb [careful]>\n<Then clean>\n"), "{out}");
 
-        // Nothing to say: the line still comes once, as the original does.
+        // Nothing to say: the line still comes once.
         assert!(written(&plain, "").contains("()\n"));
 
         // A list in the file is used instead, and on names as well.

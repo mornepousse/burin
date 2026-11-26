@@ -1,6 +1,6 @@
 //! The command search: Ctrl+K, a few letters of what's wanted, Enter. It finds the actions that
 //! have keys, the kinds of toolpath and the two workspaces by name, in the language shown, and does
-//! them as their key or button would. Burin's own; the original has nothing like it.
+//! them as their key or button would. Burin's own.
 
 use crate::app::*;
 use crate::i18n::tr;

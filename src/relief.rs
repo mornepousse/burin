@@ -74,7 +74,7 @@ pub struct Component {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<HeightMap>,
     /// Every cell of the job is part of it, even where its height is 0: the zero plane
-    /// (`0x1402b8770` sets every cell of its grid, at 0, as holding something).
+    /// (every cell of its grid is set at 0, as holding something).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub whole: bool,
 }
@@ -287,7 +287,7 @@ pub fn component_height(c: &Component, width: f64, height: f64, points: usize) -
 /// Combines visible components, in order, into one height grid.
 ///
 /// A place holds something once a component has covered it. Subtracting where something is
-/// goes on below zero, as in the original, whose cells left empty (9999999) stay empty when
+/// goes on below zero, while cells left empty (9999999) stay empty when
 /// subtracted from; where nothing is yet it stops at 0. That is what the zero plane is for: it
 /// covers the whole job at 0, so dishes cut into it go below.
 pub fn compose(components: &[Component], width: f64, height: f64, points: usize) -> Option<Grid> {

@@ -20,7 +20,7 @@ pub fn anchor_grid(ui: &mut Ui, value: &mut Datum, name: &str) {
     anchor_spots(ui, value, name, &ALL_SPOTS);
 }
 
-/// The job's zero: a corner or the middle, as the original's job setup has it.
+/// The job's zero: a corner or the middle.
 pub fn datum_grid(ui: &mut Ui, value: &mut Datum, name: &str) {
     anchor_spots(ui, value, name, &[Datum::TopLeft, Datum::TopRight, Datum::Centre, Datum::BottomLeft, Datum::BottomRight]);
 }
@@ -74,8 +74,7 @@ fn copies_round_preview(ui: &mut Ui, count: usize, turned: bool) {
     }
 }
 
-/// The corners, with or without the middle: nesting starts from one of the four corners only, as
-/// the original's form has four buttons for it (`0x5aa` to `0x5ad`, `CornerToNestFrom`).
+/// The corners, with or without the middle: nesting starts from one of the four corners only.
 pub fn anchor_grid_with(ui: &mut Ui, value: &mut Datum, name: &str, centre: bool) {
     if centre {
         datum_grid(ui, value, name);
@@ -490,7 +489,7 @@ impl App {
         }
     }
 
-    /// Takes the chosen component away, the Delete key's job in the component list (`0x1403ba190`).
+    /// Takes the chosen component away, the Delete key's job in the component list.
     pub fn delete_component(&mut self) {
         if let Some(i) = self.selected_comp.filter(|&i| i < self.doc.components.len()) {
             self.checkpoint();
@@ -920,7 +919,7 @@ impl App {
     }
 
     fn apply_close(&mut self, ui: &mut Ui, apply: &str, enabled: bool) -> bool {
-        // Enter applies, as the original's forms do.
+        // Enter applies.
         let mut pressed = enabled && self.enter_applies(ui);
         ui.horizontal(|ui| {
             pressed |= ui.add_enabled(enabled, egui::Button::new(RichText::new(apply).color(theme::ON_ACCENT).strong()).fill(theme::ACCENT).min_size(vec2(74.0, 22.0))).clicked();
@@ -1434,8 +1433,8 @@ impl App {
                         });
                     });
                     icon_caps(ui, Icon::Nest, crate::i18n::tr("Packing"));
-                    // Copies of the chosen parts, kept with each shape (`nestNumCopies`).
-                    // As the original fills the box (`0x1403bdebd`): each chosen shape's count, 1 when it
+                    // Copies of the chosen parts, kept with each shape.
+                    // The box shows each chosen shape's count, 1 when it
                     // has none; the box shows it when they all agree and stays empty when they don't.
                     let first = self.selected.first().copied();
                     let counts: Vec<u16> = self.selected.iter().map(|id| self.doc.nest_copies.get(id).copied().unwrap_or(1)).collect();
@@ -1467,7 +1466,7 @@ impl App {
                     });
                     ui.checkbox(&mut f.into_boundary, crate::i18n::tr("Last vector is nest boundary")).on_hover_text(crate::i18n::tr("Select the parts, then the closed outline to nest them in, last."));
                     note(ui, crate::i18n::tr("Parts are packed in rows by their outer box. Those that don't fit go on new sheets."));
-                    // As the original's form takes them (`0x1403bd2c0`): none of these below 0.
+                    // None of these goes below 0.
                     for v in [&mut f.tool_dia, &mut f.clearance, &mut f.border, &mut f.nest_step] {
                         *v = crate::edit::nest_value(*v);
                     }
@@ -2062,7 +2061,7 @@ impl App {
             crate::ui::icon_caps(ui, Icon::Edit, crate::i18n::tr("Options"));
             ui.checkbox(&mut self.output_arcs, crate::i18n::tr("Write curves as arcs (G2 / G3)")).on_hover_text(crate::i18n::tr("Smaller files and smoother curves. Try it in the air on your machine first."));
             ui.horizontal(|ui| {
-                ui.checkbox(&mut self.corner_slow, crate::i18n::tr("Slow down in tight corners")).on_hover_text(crate::i18n::tr("Near a sharp turn the cutter takes a wider bite; other CAM programs lower the rate there. Not in the original."));
+                ui.checkbox(&mut self.corner_slow, crate::i18n::tr("Slow down in tight corners")).on_hover_text(crate::i18n::tr("Near a sharp turn the cutter takes a wider bite; other CAM programs lower the rate there. Burin's own extra."));
                 ui.add_enabled_ui(self.corner_slow, |ui| {
                     let mut pct = self.corner_share * 100.0;
                     crate::ui::number(ui, &mut pct, 40.0);
@@ -2072,7 +2071,7 @@ impl App {
             });
             if crate::toolpath::post_takes_blend(self.post_index) {
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.blend, crate::i18n::tr("Corner tolerance for LinuxCNC (G64 P)")).on_hover_text(crate::i18n::tr("Without it, LinuxCNC may round corners as far as it likes to keep its speed. Not in the original."));
+                    ui.checkbox(&mut self.blend, crate::i18n::tr("Corner tolerance for LinuxCNC (G64 P)")).on_hover_text(crate::i18n::tr("Without it, LinuxCNC may round corners as far as it likes to keep its speed. Burin's own extra."));
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(24.0);
@@ -2116,8 +2115,7 @@ impl App {
     }
 
     pub fn save_gcode_dialog(&mut self) {
-        // The choices are kept when a save is asked for, not as they're ticked, as the original
-        // does with its own (`0x140600430` writes `Toolpaths\OutputVisibleToolpaths` then).
+        // The choices are kept when a save is asked for, not as they're ticked.
         crate::pieces::save_one_file(self.one_file);
         self.output_choices().save();
         let only = if self.one_file { None } else { self.selected_tp };
@@ -2488,7 +2486,7 @@ impl App {
                 op.adaptive = k == 2;
             }
             crate::ui::explain(ui, [crate::ui::Pic::ClearOffset, crate::ui::Pic::ClearRaster, crate::ui::Pic::ClearAdaptive][if op.adaptive { 2 } else if op.raster { 1 } else { 0 }], if op.adaptive {
-                crate::i18n::tr("The cutter never bites more than its stepover: gentler on small cutters. From other CAM programs, not in the original.")
+                crate::i18n::tr("The cutter never bites more than its stepover: gentler on small cutters. Taken from other CAM programs.")
             } else if op.raster {
                 crate::i18n::tr("Back and forth in straight rows.")
             } else {
@@ -2550,7 +2548,7 @@ impl App {
             card(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 crate::ui::icon_caps(ui, Icon::TpVCarve, crate::i18n::tr("Clearing the flats"));
-                ui.checkbox(&mut op.clear_flat, crate::i18n::tr("Clear the whole flat with this end mill")).on_hover_text(crate::i18n::tr("The original only cuts one ring a radius inside; F-Engrave clears the flat bottom too. Here a ring every stepover, until nothing is left. Not in the original."));
+                ui.checkbox(&mut op.clear_flat, crate::i18n::tr("Clear the whole flat with this end mill")).on_hover_text(crate::i18n::tr("Usually only one ring a radius inside is cut; F-Engrave clears the flat bottom too. Here a ring every stepover, until nothing is left. Burin's own extra."));
             });
         }
         let _ = unit;
@@ -2615,7 +2613,7 @@ impl App {
                         let mut moved: Option<(String, String)> = None;
                         egui::ScrollArea::vertical().max_height(380.0).id_salt("tools_tree").show(ui, |ui| {
                             // The user's own groups first, each a folder tools and groups can be dragged onto,
-                            // with groups inside groups as in the original's tool database (types 11 and 12).
+                            // with groups inside groups (types 11 and 12).
                             let groups = group_paths(&self.tool_groups_edit, &tools);
                             let mut tree = GroupTree { tools: &tools, groups: &groups, index: &mut self.tool_index, picked: &mut self.tool_group_picked, dropped: &mut dropped, moved: &mut moved };
                             for top in groups.iter().filter(|g| !g.contains(GROUP_SEP)) {
@@ -2674,7 +2672,7 @@ impl App {
                             let mut t = toolpath::default_tools().remove(1);
                             t.name = crate::i18n::tr("New Tool").into();
                             t.number = tools.iter().map(|t| t.number).max().unwrap_or(0) + 1;
-                            // With a group chosen, the new tool goes straight into it (the manual's Tool Database page).
+                            // With a group chosen, the new tool goes straight into it.
                             t.group = self.tool_group_picked.clone().unwrap_or_default();
                             tools.push(t);
                             self.tool_index = tools.len() - 1;
@@ -2843,8 +2841,8 @@ impl App {
                     close = Some(false);
                 }
                 let label = if self.tool_target.is_some() { crate::i18n::tr("Use This Tool") } else { "OK" };
-                // A V-Carve's carving tool can't be an end mill or a drill, as in the original,
-                // where they can't be picked for it (seen by the person). Its clearing tool can.
+                // A V-Carve's carving tool can't be an end mill or a drill
+                // (seen by the person). Its clearing tool can.
                 let vcarve = matches!(&self.right, RightMode::Op { op, .. } if op.kind == OpKind::VCarve);
                 let kind = tools.get(self.tool_index).map(|t| t.kind);
                 let refused = match (vcarve, self.tool_target, kind) {
@@ -2884,14 +2882,13 @@ impl App {
     }
 }
 
-/// The kinds of tool a V-Carve can carve with: not an end mill or a drill (the original doesn't
-/// offer them for it).
+/// The kinds of tool a V-Carve can carve with: not an end mill or a drill.
 pub(crate) fn vcarve_can_use(kind: ToolKind) -> bool {
     !matches!(kind, ToolKind::EndMill | ToolKind::Drill)
 }
 
 /// The kinds of tool a V-Carve can clear its flat areas with: an end mill, a ball nose or an
-/// engraving tool, as the original's help for the form says (not a V-bit, not a drill).
+/// engraving tool (not a V-bit, not a drill).
 pub(crate) fn vcarve_clearing_can_use(kind: ToolKind) -> bool {
     matches!(kind, ToolKind::EndMill | ToolKind::BallNose | ToolKind::Engraving)
 }
@@ -3254,7 +3251,7 @@ impl GroupTree<'_> {
                 }
                 for i in (0..self.tools.len()).filter(|i| self.tools[*i].group == group) {
                     let r = ui.selectable_label(*self.index == i && self.picked.is_none(), self.tools[i].name.as_str()).interact(egui::Sense::click_and_drag());
-                    // Where the tool sits among the groups, as the original's tooltip says.
+                    // Where the tool sits among the groups.
                     let r = r.on_hover_text(group.replace(GROUP_SEP, " > "));
                     r.dnd_set_drag_payload(i);
                     if r.clicked() {

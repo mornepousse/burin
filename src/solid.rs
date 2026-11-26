@@ -1,7 +1,7 @@
 //! Machined parts as clean solids for CAD programs, built as a CAD program models them: each
 //! part's outline from the drawing extruded to the board's thickness, less its holes, less each
 //! pocket, drilling and groove cut flat to its depth; written as a STEP solid or an STL. Burin's
-//! own: the original exports only its 3D model.
+//! own.
 //!
 //! A part is a stack of flat-topped slabs, one per depth, each inside the one below; faces and
 //! walls meet point for point, so the surface is closed.

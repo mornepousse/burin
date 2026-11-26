@@ -1,16 +1,15 @@
 //! Distort: bending shapes inside an envelope.
 //!
-//! A component can be distorted the same way (Model > Distort Selected Component, 33265, `0x1402c5060`, opens this
-//! form, dialog `0x26f`): with one component selected and, for an envelope on curves, the curves as the only
-//! vectors, its heights follow the envelope, in one step to undo ("Envelope Distort Component", `0x140305140`,
-//! `0x302`).
+//! A component can be distorted the same way (Model > Distort Selected Component opens this
+//! form): with one component selected and, for an envelope on curves, the curves as the only
+//! vectors, its heights follow the envelope, in one step to undo ("Envelope Distort Component").
 
 use crate::app::*;
 use crate::geom::{self, Path, P};
 
-/// The original's Distort Selected Component command.
+/// The Distort Selected Component command.
 pub const DISTORT_COMPONENT_COMMAND: u32 = 33265;
-/// How many divisions each way the lattice a component is bent through has (`0x1409d72a0`).
+/// How many divisions each way the lattice a component is bent through has.
 pub const LATTICE: usize = 100;
 
 /// How the envelope around the shapes is defined.
@@ -21,7 +20,7 @@ pub enum EnvelopeKind {
     TwoCurves,
 }
 
-/// A distortion in progress: the original shapes and the box they came from.
+/// A distortion in progress: the shapes as they were and the box they came from.
 #[derive(Clone, Debug)]
 pub struct Envelope {
     orig: Vec<(u64, Vec<Path>)>,
@@ -111,8 +110,8 @@ impl Envelope {
         let k = ((2.0 * stretch).ceil() as usize).clamp(2, 8);
         let (ix0, ix1) = (((self.lo[0] / cell).floor().max(0.0)) as usize, (((self.hi[0] / cell).ceil() as usize) + 1).min(nx));
         let (iy0, iy1) = (((self.lo[1] / cell).floor().max(0.0)) as usize, (((self.hi[1] / cell).ceil() as usize) + 1).min(ny));
-        // The original bends a component through a lattice of 100 by 100 over its box (`0x1409d72a0`,
-        // `0x1407bbf20`): the envelope is worked out at its points, and each place between them is blended.
+        // A component is bent through a lattice of 100 by 100 over its box:
+        // the envelope is worked out at its points, and each place between them is blended.
         let n = LATTICE;
         let lattice: Vec<P> = (0..=n)
             .flat_map(|j| (0..=n).map(move |i| (i, j)))

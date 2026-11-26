@@ -301,7 +301,7 @@ fn tools_can_be_kept_in_a_group_of_their_own() {
     h.get_all_by_value("New Group").next().unwrap().type_text("Roughing");
     h.run();
     click(&mut h, "Apply");
-    // An empty group at first, as the original's New Group makes; tools are dragged onto it.
+    // An empty group at first, as New Group makes; tools are dragged onto it.
     assert!(h.query_by_label("Roughing").is_some(), "shown as a folder of its own");
     let tools = h.state().tool_edit.clone().unwrap();
     assert!(tools.iter().all(|t| t.group.is_empty()), "nothing in it yet");
@@ -1621,7 +1621,7 @@ fn a_boards_drill_and_outline_files_come_in_on_layers_of_their_own() {
 }
 
 #[test]
-fn a_project_from_the_original_opens_as_a_new_job() {
+fn a_crv3d_project_opens_as_a_new_job() {
     use crate::crv3d::tests::{material, sample};
     let dir = std::env::temp_dir().join(format!("burin-crv3d-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -1648,7 +1648,7 @@ fn a_project_from_the_original_opens_as_a_new_job() {
     let (lo, hi) = crate::geom::bbox(&a.doc.vectors[0].paths).unwrap();
     assert_eq!((lo, hi), ([10.0, 140.0], [110.0, 190.0]));
     assert_eq!([lo[0] - j.origin()[0], hi[1] - j.origin()[1]], [10.0, -10.0], "as in the file");
-    assert!(a.path.is_none(), "saving won't overwrite the original");
+    assert!(a.path.is_none(), "saving won't overwrite the file it came from");
     assert!(a.status.contains("3 shapes on 2 layers, 0 toolpaths"), "{}", a.status);
     // Circles are recognised, so the circle tool can edit them.
     assert!(crate::bulk::as_circle(&a.doc.vectors[1].paths[0]).is_some());
@@ -2509,12 +2509,12 @@ fn stopping_keeps_the_old_moves_of_what_isnt_finished() {
     assert!(std::sync::Arc::ptr_eq(&before, &h.state().doc.toolpaths[0].moves));
     assert!(h.state().status.contains("Stopped"), "{}", h.state().status);
     assert!(send.send(crate::recalc::Message::Starting(String::new())).is_err(), "the work is told to stop");
-    // As the original, a box names the toolpaths left unrecalculated.
+    // A box names the toolpaths left unrecalculated.
     let told = h.state().message.clone().unwrap_or_default();
     assert!(told.contains("cancelled") && told.contains("Contour 1") && told.contains("Trous"), "{told}");
 }
 
-/// With no toolpaths, Recalculate says there is nothing to recalculate, as the original does.
+/// With no toolpaths, Recalculate says there is nothing to recalculate.
 #[test]
 fn recalculating_with_no_toolpaths_says_so() {
     let mut a = App::default();
@@ -3741,8 +3741,8 @@ fn with_handles_a_side_stretches_one_way_and_without_them_nothing_moves() {
         (a, b[0] - a[0], b[1] - a[1])
     };
     let id = h.state().doc.vectors[0].id;
-    // Selected, no handles (the first selection mode): dragging there changes nothing, as the
-    // original only lets a selection be dragged with its handles on (`0x140a71300`).
+    // Selected, no handles (the first selection mode): dragging there changes nothing, as
+    // a selection is only dragged with its handles on.
     h.state_mut().selected = vec![id];
     h.state_mut().handles_on = None;
     h.run();
@@ -3755,7 +3755,7 @@ fn with_handles_a_side_stretches_one_way_and_without_them_nothing_moves() {
     // With them: the left side stays, and only the width changes.
     h.state_mut().handles_on = Some(vec![id]);
     h.run();
-    // The handle is drawn 8 pixels out from the side, as the original does.
+    // The handle is drawn 8 pixels out from the side.
     let out = egui::vec2(8.0, 0.0);
     assert!((h.state().handle_rects()[5].0 - (side + out)).length() < 0.01);
     drag(&mut h, side + out, further + out);
@@ -4045,7 +4045,7 @@ fn locked_guides_stay_where_they_are() {
 }
 
 #[test]
-fn the_menus_have_the_entries_of_the_original() {
+fn the_menus_have_all_their_entries() {
     let mut h = job_with_square([1.0, 1.0]);
     for (menu, entries) in [
         ("File", &["Close", "Increment and Save", "Import", "Export", "Recent Files", "Print..."][..]),
@@ -5334,7 +5334,7 @@ fn help_contents_opens_its_pages_and_the_light_settings_can_be_switched() {
     assert_eq!(h.state().help_page, 5);
     assert!(h.query_by_label_contains("Start Again From a Cut writes a file").is_some(), "the page's text shows");
 
-    assert!(!h.state().shadow_shading && !h.state().light_follows_viewer, "both off at the start, as in the original");
+    assert!(!h.state().shadow_shading && !h.state().light_follows_viewer, "both off at the start");
     h.get_all_by_role_and_label(egui::accesskit::Role::Button, "View").next().unwrap().click();
     h.run();
     h.get_by_label("Use Shadow Shading").click();
@@ -5770,7 +5770,7 @@ fn a_component_is_split_in_two_by_a_vector() {
     assert_eq!(app.doc.components.len(), comps + 1);
 }
 
-/// For looking into how far raster rows sit from the original's: BURIN_JOBS=<folder> cargo test raster_rows_against -- --nocapture
+/// For looking into how far raster rows sit from the saved jobs': BURIN_JOBS=<folder> cargo test raster_rows_against -- --nocapture
 #[test]
 fn raster_rows_against_saved_jobs() {
     let Ok(dir) = std::env::var("BURIN_JOBS") else { return };
@@ -6014,7 +6014,7 @@ fn page_keys_show_both_views_at_once() {
     assert_eq!(h.state().tiled, None);
 }
 
-/// The view toolbar's last two buttons are the original's Tile Windows Vertical and Horizontal.
+/// The view toolbar's last two buttons are Tile Windows Vertical and Horizontal.
 #[test]
 fn toolbar_tiles_the_views() {
     use crate::app::Tiling;
@@ -6029,7 +6029,7 @@ fn toolbar_tiles_the_views() {
 }
 
 /// With a component chosen and no shape, Up and Down move through the component list and
-/// stop at its ends, and Delete takes the component away, as the original's component tree does.
+/// stop at its ends, and Delete takes the component away.
 #[test]
 fn component_list_takes_the_arrow_and_delete_keys() {
     let mut h = harness();
@@ -6082,7 +6082,7 @@ fn a_zero_plane_lets_a_dish_go_into_the_material() {
     assert!(h.state().doc.components.iter().all(|c| c.name != "Zero Plane"), "one step to undo");
 }
 
-/// Space opens the last drawing form again, as the original's manual says.
+/// Space opens the last drawing form again.
 #[test]
 fn space_opens_the_last_drawing_form_again() {
     let mut h = job_with_square([5.0, 5.0]);
@@ -6142,8 +6142,7 @@ fn tool_groups_can_hold_groups() {
     assert_eq!(tools.last().unwrap().group, "Roughing/Big", "the new tool goes into the chosen group");
 }
 
-/// Export as 3D Clipart writes the whole model, every component in order, as the original's
-/// does; importing it or choosing it in the Clipart tab's folder brings them back together in the
+/// Export as 3D Clipart writes the whole model, every component in order; importing it or choosing it in the Clipart tab's folder brings them back together in the
 /// middle of the job. With nothing in the model it refuses.
 #[test]
 fn the_model_goes_out_as_3d_clipart_and_comes_back() {
@@ -6222,7 +6221,7 @@ fn a_component_repeats_inside_a_shape_as_a_texture() {
     assert_eq!(h.state().doc.components.len(), 1);
 }
 
-/// Joins in the original's saved jobs come through into the imported toolpaths, one for each
+/// Joins in saved jobs come through into the imported toolpaths, one for each
 /// stored move of that kind (`BURIN_JOBS` points at a folder of .crv3d jobs).
 #[test]
 fn joins_come_in_from_saved_jobs() {
@@ -6288,7 +6287,7 @@ fn a_two_sided_job_keeps_each_side_apart() {
     assert!(h.state().doc.job.flip_around_y);
     let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors.iter().find(|v| v.id == bottom).unwrap().paths).unwrap();
     assert!(((lo[0] + hi[0]) / 2.0 - 7.0).abs() < 1e-6 && ((lo[1] + hi[1]) / 2.0 - 7.0).abs() < 1e-6);
-    // One step undoes it, as the original's batch does (`0x1402a75d0`).
+    // One step undoes it.
     h.state_mut().do_undo();
     assert!(!h.state().doc.job.flip_around_y);
     let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors.iter().find(|v| v.id == bottom).unwrap().paths).unwrap();
@@ -6346,7 +6345,7 @@ fn both_sides_preview_as_one_block() {
 }
 
 /// With the bottom side active, Preview All Sides carves the bottom as the side looked at, and the
-/// top side's cuts meet it from the other side, as the original does with the active side first.
+/// top side's cuts meet it from the other side, the active side first.
 #[test]
 fn both_sides_preview_from_the_active_side() {
     use crate::toolpath::{Move, OpKind};
@@ -6396,7 +6395,7 @@ fn two_sided_buttons_fit_a_narrow_window() {
 }
 
 /// `=` turns the Multi-Sided View on and off, only in a two-sided job, and Preview All Sides
-/// leaves it on, as the original does.
+/// leaves it on.
 #[test]
 fn equals_toggles_the_multi_sided_view() {
     let mut h = job_with_square([5.0, 5.0]);
@@ -6418,7 +6417,7 @@ fn equals_toggles_the_multi_sided_view() {
 }
 
 /// With a text chosen, a click between two of its letters brings them closer, and Shift moves
-/// them apart, as the original's text spacing clicks do.
+/// them apart.
 #[test]
 fn a_click_between_letters_moves_them() {
     let mut h = job_with_square([5.0, 5.0]);
@@ -6512,7 +6511,7 @@ fn two_rails_and_a_section_make_a_component() {
     let form = h.state().sweep_form.clone().unwrap();
     assert_eq!(form.rails, vec![a, b]);
     assert_eq!(form.sections, vec![arch]);
-    assert!(form.scale_with_width && form.between_spans && !form.fill_centre && !form.exact_height, "the original's starting choices");
+    assert!(form.scale_with_width && form.between_spans && !form.fill_centre && !form.exact_height, "the starting choices");
     h.run();
     click(&mut h, "Apply");
     assert_eq!(h.state().doc.components.len(), 1);
@@ -6523,7 +6522,7 @@ fn two_rails_and_a_section_make_a_component() {
 }
 
 /// Extrude and Weave: the rails chosen first, the open cross section last, and Apply makes a
-/// component along the rails, with the original's starting choices.
+/// component along the rails, with the usual starting choices.
 #[test]
 fn a_section_extruded_along_a_rail_makes_a_component() {
     let mut h = job_with_square([5.0, 5.0]);
@@ -6541,8 +6540,8 @@ fn a_section_extruded_along_a_rail_makes_a_component() {
     assert!(h.state().model.as_ref().unwrap().sample(5.0, 2.0) > 0.25);
 }
 
-/// Extrude and Weave checks the rails first, then the cross section, with the original's
-/// messages (`0x14074a880`, `0x14074b4d0`), and makes one rail of every path of a chosen vector.
+/// Extrude and Weave checks the rails first, then the cross section, with its own
+/// messages, and makes one rail of every path of a chosen vector.
 #[test]
 fn extrude_checks_rails_then_section_and_uses_every_path() {
     let mut h = job_with_square([5.0, 5.0]);
@@ -6578,7 +6577,7 @@ fn the_chosen_component_is_extruded_along_a_rail() {
     assert!(top > 0.2, "{top}");
 }
 
-/// Two Rail Sweep takes rails in left and right pairs, as the original does, and sweeps each pair
+/// Two Rail Sweep takes rails in left and right pairs, and sweeps each pair
 /// with the same cross section; an odd number of rails is refused.
 #[test]
 fn two_rail_sweep_sweeps_every_pair_of_rails() {
@@ -6647,7 +6646,7 @@ fn sheets_keep_their_own_shapes_and_toolpaths() {
 }
 
 /// Nesting more parts than fit on the sheet puts the rest on new sheets after the others, laid
-/// out the same way, as the original does.
+/// out the same way.
 #[test]
 fn nesting_more_than_fits_adds_sheets() {
     let mut h = harness();
@@ -6692,7 +6691,7 @@ fn nesting_may_turn_parts() {
     let mut h = harness();
     make(&mut h);
     if let crate::app::LeftForm::Xform(f) = &mut h.state_mut().left {
-        assert!(f.nest_turn && f.part_in_part && f.nest_step == 45.0, "the original's starting values");
+        assert!(f.nest_turn && f.part_in_part && f.nest_step == 45.0, "the starting values");
         f.nest_turn = false;
     }
     h.state_mut().apply_xform();
@@ -6711,7 +6710,7 @@ fn nesting_may_turn_parts() {
     }
 }
 
-/// A negative border, clearance or tool size counts as 0 when nesting, as in the original's form.
+/// A negative border, clearance or tool size counts as 0 when nesting.
 #[test]
 fn nesting_settings_below_zero_count_as_zero() {
     assert_eq!(crate::edit::nest_value(-2.0), 0.0);
@@ -6792,7 +6791,7 @@ fn nesting_fills_a_chosen_outline() {
     assert!(h.state().status.contains("outline"), "{}", h.state().status);
 }
 
-/// A turn step of 0 means no turning, as the original gives such a part a full turn.
+/// A turn step of 0 means no turning: such a part gets a full turn.
 #[test]
 fn a_zero_turn_step_means_no_turning() {
     let mut h = harness();
@@ -6853,8 +6852,8 @@ fn nesting_by_shape_fits_triangles_together() {
     }
 }
 
-/// Only closed outlines are nested; an open line stays where it is, and with nothing closed the
-/// original's message says so.
+/// Only closed outlines are nested; an open line stays where it is, and with nothing closed a
+/// message says so.
 #[test]
 fn nesting_leaves_open_lines_alone() {
     let mut h = harness();
@@ -7137,11 +7136,11 @@ fn vcarve_flat_against_saved_jobs() {
     }
 }
 
-/// The test drawing made for the person to run through the original reads back whole: 15 holes
+/// The test drawing made for the person to run through their CAM program reads back whole: 15 holes
 /// from 4.8 to 7.6 mm across, and 5 closed shapes for the V-Carve test. (The folder stays out of
 /// the repository, so the test passes quietly without it.)
 #[test]
-fn the_test_drawing_for_the_original_reads_back() {
+fn the_test_drawing_reads_back() {
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/01-entrees-et-vcarve.dxf");
     let Ok(text) = std::fs::read_to_string(file) else { return };
     let paths = crate::geom::dxf_read(&text);
@@ -7215,8 +7214,8 @@ fn a_pasted_copy_is_ready_to_move() {
     assert_eq!(crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap(), original, "the original stays");
 }
 
-/// The arrow keys move a selection in either mode, handles showing or not: the original's key
-/// handler (`0x140a6edc0`) nudges any non-empty selection, its handles flag (+0x108) only widening
+/// The arrow keys move a selection in either mode, handles showing or not: any non-empty
+/// selection is nudged, the handles flag only widening
 /// what is redrawn. Only dragging waits for the handles.
 #[test]
 fn the_arrows_move_a_selection_without_its_handles() {
@@ -7301,8 +7300,8 @@ fn series_against_saved_projects() {
             if std::env::var("BURIN_DIST").is_ok() { if let Some(f) = crate::geom::Field::build(&o.paths, o.tool.dia, 900) { for (nm, tr) in [("saved", &a), ("burin", &b)] { let mut h = std::collections::BTreeMap::new(); for t in tr.iter() { for p in t { *h.entry((f.sample(p[0], p[1]) * 10.0).round() as i64).or_insert(0usize) += 1; } } let v: Vec<String> = h.iter().take(12).map(|(k, n)| format!("{:.1}:{n}", *k as f64 / 10.0)).collect(); println!("     {nm} distance from the outline {}", v.join(" ")); } } }
             if let Ok(at) = std::env::var("BURIN_NEAR") { let v: Vec<f64> = at.split(',').map(|x| x.parse().unwrap()).collect(); for (k, p) in o.paths.iter().enumerate() { let near = p.pts.iter().map(|q| (q[0] - v[0]).hypot(q[1] - v[1])).fold(f64::MAX, f64::min); if near < 5000.0 { let (lo, hi) = crate::geom::bbox(std::slice::from_ref(p)).unwrap(); println!("     path {k} closed {} n {} near {near:.2} box {lo:?} {hi:?} first {:?}", p.closed, p.pts.len(), &p.pts[..p.pts.len().min(4)]); if std::env::var("BURIN_PTS").is_ok() && near < 5.0 { let n = p.pts.len(); for (i, q) in p.pts.iter().enumerate() { if (q[0] - v[0]).hypot(q[1] - v[1]) < 4.0 { let (a, b) = (p.pts[(i + n - 1) % n], p.pts[(i + 1) % n]); let t = ((q[0]-a[0])*(b[1]-q[1]) - (q[1]-a[1])*(b[0]-q[0])).atan2((q[0]-a[0])*(b[0]-q[0]) + (q[1]-a[1])*(b[1]-q[1])).to_degrees(); println!("       pt {i} ({:.3},{:.3}) turn {t:.1} seg {:.3}", q[0], q[1], (b[0]-q[0]).hypot(b[1]-q[1])); } } } } } println!("     paths {} source {:?}", o.paths.len(), o.source); for t in traces(saved) { let (mut a, mut b) = ([f64::MAX; 2], [f64::MIN; 2]); for q in &t { a = [a[0].min(q[0]), a[1].min(q[1])]; b = [b[0].max(q[0]), b[1].max(q[1])]; } println!("     saved trace {:.2},{:.2} {:.2},{:.2} n {} z {:.2}", a[0], a[1], b[0], b[1], t.len(), t[0][2]); } }
             if let Ok(at) = std::env::var("BURIN_AT") { let v: Vec<f64> = at.split(',').map(|x| x.parse().unwrap()).collect(); for (nm, tr) in [("saved", &a), ("burin", &b)] { for t in tr.iter() { if t.iter().any(|p| (p[0]-v[0]).hypot(p[1]-v[1]) < 4.0) { let pts: Vec<String> = t.iter().take(if std::env::var("BURIN_ALL").is_ok() { 400 } else { 8 }).map(|p| format!("({:.3},{:.3},{:.2})", p[0], p[1], p[2])).collect(); println!("     {nm} trace n {} starts {}", t.len(), pts.join(" ")); break; } } } }
-            // Wood the original's tool takes away that Burin's doesn't, depth by depth: points on the
-            // edge of the original's tool, every 0.5 mm along its path, further than the tool's
+            // Wood the saved cut's tool takes away that Burin's doesn't, depth by depth: points on the
+            // edge of the saved tool, every 0.5 mm along its path, further than the tool's
             // radius from Burin's path at that depth.
             if std::env::var("BURIN_COVER").is_ok() {
                 let r = o.tool.dia / 2.0;
@@ -7322,7 +7321,7 @@ fn series_against_saved_projects() {
                         let n = (len / 0.5).ceil().max(1.0) as usize;
                         for k in 0..n { let c = [w[0][0] + (w[1][0]-w[0][0]) * k as f64 / n as f64, w[0][1] + (w[1][1]-w[0][1]) * k as f64 / n as f64];
                             for j in 0..16 { let ang = j as f64 * std::f64::consts::TAU / 16.0; let q = [c[0] + (r - 0.02) * ang.cos(), c[1] + (r - 0.02) * ang.sin(), z];
-                                // Only wood the original's tool reaches nowhere else is counted once.
+                                // Only wood the saved tool reaches nowhere else is counted once.
                                 tried += 1;
                                 let d = seg_xy(q, &sb) - r;
                                 if d > 0.01 { missed += 1; if d > worst.0 { worst = (d, q); } }
@@ -7330,7 +7329,7 @@ fn series_against_saved_projects() {
                         }
                     }}
                 }
-                println!("     cover: {missed} of {tried} edge points of the original's cut further than the radius from Burin's, worst {:.3} at ({:.3},{:.3},{:.3})", worst.0, worst.1[0], worst.1[1], worst.1[2]);
+                println!("     cover: {missed} of {tried} edge points of the saved cut further than the radius from Burin's, worst {:.3} at ({:.3},{:.3},{:.3})", worst.0, worst.1[0], worst.1[1], worst.1[2]);
             }
             if std::env::var("BURIN_FAR").is_ok() { for t in &a { for p in t { let d = seg_xy(*p, &b); if d > 0.05 { println!("     far saved ({:.3},{:.3},{:.3}) {d:.3}", p[0], p[1], p[2]); } } } }
             println!("   XY only: saved→burin worst {:.3} (>0.05: {}) | burin→saved worst {:.3} (>0.05: {})", worst(&xa), over2(&xa, 0.05), worst(&xb), over2(&xb, 0.05));
@@ -7343,11 +7342,11 @@ fn series_against_saved_projects() {
 
 
 /// A centred word on one of the person's plates (text set to 2, the middle): its contour, cut on the
-/// letters, follows them once they're read where the original puts them, so it isn't shown as
+/// letters, follows them once they're read where the saved job puts them, so it isn't shown as
 /// needing Recalculate, and Burin's cut lies on the saved one. (The job stays out of the
 /// repository; the test passes quietly without it.)
 #[test]
-fn a_centred_text_is_cut_where_the_original_cut_it() {
+fn a_centred_text_is_cut_where_the_saved_job_cut_it() {
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/texte-centre.crv3d");
     if !file.exists() { return }
     let mut app = App::default();
@@ -7366,10 +7365,10 @@ fn a_centred_text_is_cut_where_the_original_cut_it() {
 
 /// The 60 plate's two groups of 12 holes: their shapes carry no layer's mark in their heads,
 /// and their circles are drawn with few points. The contour on them finds every hole, and its
-/// leads go straight to the holes' middles as the original's do: every saved cut lies on
+/// leads go straight to the holes' middles as the saved ones do: every saved cut lies on
 /// Burin's. (The job stays out of the repository; the test passes quietly without it.)
 #[test]
-fn grouped_holes_are_found_and_led_into_as_the_original_does() {
+fn grouped_holes_are_found_and_led_into_as_in_the_saved_job() {
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/trous-en-groupe.crv3d");
     if !file.exists() { return }
     let mut app = App::default();
@@ -7496,7 +7495,7 @@ fn a_new_vcarve_starts_with_a_carving_tool() {
 
 
 /// A V-Carve clears its flats with an end mill, a ball nose or an engraving tool, never a V-bit
-/// or a drill, as the original's help for the form says.
+/// or a drill.
 #[test]
 fn a_vcarve_clearing_tool_is_flat_round_or_engraving() {
     use crate::relief::ToolKind::*;
@@ -7708,7 +7707,7 @@ fn a_machined_part_comes_out_as_a_step_solid() {
 
 
 
-/// Tabs put by hand, as with the original's tab tool: "Place by hand" starts from the tabs spread
+/// Tabs put by hand: "Place by hand" starts from the tabs spread
 /// evenly; a click on the shape puts one there, a click on a tab takes it off, and a tab dragged
 /// slides along the shape.
 #[test]

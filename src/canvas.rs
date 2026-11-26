@@ -22,7 +22,7 @@ pub enum Drag {
     None,
     Box(Pos2),
     Move { last: P, start: P },
-    /// `corner` by which handle it is, as the original tells corners by their type (6 to 9, `0x140a72f00`).
+    /// `corner` by which handle it is (corners are types 6 to 9).
     /// `out`: how far the handle is drawn from its own place, taken off the pointer while dragging.
     Scale { anchor: P, middle: P, start: P, corner: bool, out: Vec2, orig: Vec<(u64, Vec<Path>)> },
     Rotate { centre: P, start: P, orig: Vec<(u64, Vec<Path>)> },
@@ -40,7 +40,7 @@ pub enum Drag {
     Tab(usize),
 }
 
-/// A corner's new place when the shape keeps its proportions: the shorter way wins (`0x140a70f40`).
+/// A corner's new place when the shape keeps its proportions: the shorter way wins.
 pub(crate) fn keep_proportions(start: P, now: P, anchor: P) -> P {
     let (x0, y0) = (start[0] - anchor[0], start[1] - anchor[1]);
     let aspect = (x0 / y0).abs();
@@ -371,7 +371,7 @@ impl App {
         crate::fonts::gap_at(text, *height, *at, style, self.to_world(p), reach).map(|g| (v.id, g))
     }
 
-    /// The original's text spacing clicks (`0x140a84a90`): letters or lines closer, apart with
+    /// Text spacing clicks: letters or lines closer, apart with
     /// Shift, by a bigger step with Ctrl. One undo step each.
     pub(crate) fn move_text_gap(&mut self, id: u64, gap: crate::fonts::TextGap, apart: bool, coarse: bool) {
         let Some(i) = self.doc.vectors.iter().position(|v| v.id == id) else { return };
@@ -386,7 +386,7 @@ impl App {
         self.dirty = true;
     }
 
-    /// The handles for turning, a little beyond the corners (`0x140a6f810`).
+    /// The handles for turning, a little beyond the corners.
     pub(crate) fn rotate_handles(&self) -> Vec<Pos2> {
         if self.handles_on.as_deref() != Some(self.selected.as_slice()) {
             return Vec::new();
@@ -877,7 +877,7 @@ impl App {
                 self.drag = Drag::Node { id, path, index, start };
             }
         }
-        // Values typed while dragging a point place it (the original's quick keys for editing points).
+        // Values typed while dragging a point place it.
         if self.typed_value(&response.ctx) {
             return;
         }
@@ -906,7 +906,7 @@ impl App {
             } else if !self.rotate_handles().is_empty() && self.rotation_centre().is_some_and(|c| (self.to_screen(c) - p).length() < 7.0) {
                 response.ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
             } else if let Some((_, gap)) = self.text_gap_under(p) {
-                // Between letters or lines of the chosen text: a click there moves them (`0x140a84e50`).
+                // Between letters or lines of the chosen text: a click there moves them.
                 response.ctx.set_cursor_icon(if matches!(gap, crate::fonts::TextGap::Letter(_)) { ResizeHorizontal } else { ResizeVertical });
             }
         }
@@ -978,15 +978,15 @@ impl App {
                 match hit {
                     // A shape not selected yet is only selected by the first press, even if the
                     // pointer then moves: it takes a second press to move it, so a shape isn't
-                    // moved by mistake while choosing it (as the original does, seen by the person).
+                    // moved by mistake while choosing it (seen by the person).
                     Some(id) if !self.selected.contains(&id) => {
                         self.handles_on = None;
                         self.selected = vec![id];
                         self.drag = Drag::None;
                     }
                     // Selected but without its handles (the first mode): no move either. The
-                    // original offers the inside of the selection to drag only with the select
-                    // tool's handles on (flag +0x108, hit test `0x140a71300`, kind 3).
+                    // inside of the selection is offered to drag only with the select
+                    // tool's handles on.
                     Some(_) if self.handles_on.as_deref() != Some(self.selected.as_slice()) => {
                         self.drag = Drag::None;
                     }
@@ -1011,12 +1011,12 @@ impl App {
             }
             Drag::Scale { anchor, middle, start, corner, out, orig } => {
                 let alt = response.ctx.input(|i| i.modifiers.alt);
-                // With Shift it grows from its middle (`0x140a72f00`).
+                // With Shift it grows from its middle.
                 let anchor = if shift { middle } else { anchor };
                 let now = self.snapped(self.to_world(p - out));
                 let now = if corner && !alt { keep_proportions(start, now, anchor) } else { now };
                 // Each way stretches by how far the handle has gone from what stays put; a handle level with it
-                // (exactly: both are the drawing's own numbers) leaves that way alone (`0x140a73262`).
+                // (exactly: both are the drawing's own numbers) leaves that way alone.
                 let ratio = |n: f64, s: f64, a: f64| if s == a { 1.0 } else { (n - a) / (s - a) };
                 let (sx, sy) = (ratio(now[0], start[0], anchor[0]), ratio(now[1], start[1], anchor[1]));
                 for (id, paths) in &orig {
@@ -1083,7 +1083,7 @@ impl App {
         }
 
         // The machine's zero: Burin's own mark, a ring on two short axes, X along and Y up, in the
-        // orange of its other zero marks (the original puts a red square there).
+        // orange of its other zero marks.
         let origin = self.doc.job.origin();
         let datum = self.to_screen(origin);
         let ink = Stroke::new(1.8, crate::theme::ACCENT);
@@ -1131,8 +1131,8 @@ impl App {
                         }
                         painter.extend(dashed_within(&pts, Stroke::new(1.0, theme::CONSTRUCTION), 9.0, 4.0, painter.clip_rect()));
                     } else {
-                        // On the sheet a line keeps its layer's colour, as in the original (whose
-                        // ground is white all round). Off the sheet the ground is the bench's, dark
+                        // On the sheet a line keeps its layer's colour (the ground is white
+                        // all round). Off the sheet the ground is the bench's, dark
                         // in the dark look: a black or dark blue layer vanished there (a big job
                         // of the person's drawn over 17 m). There the line is drawn in its colour
                         // made readable on that ground, then again in its own colour within the sheet.
@@ -1350,11 +1350,10 @@ impl App {
     }
 
     /// Each visible path as a thin line, with arrows for its direction and a mark where it starts.
-    /// Putting tabs on the toolpath form's shapes by hand, as the original's tab tool does
-    /// (`0x140a83540`, `0x140a83900`): a click on a shape puts a tab there, or takes off the tab
-    /// nearest the click when one is close enough (`0x140a18e10`); a tab pressed and moved slides
+    /// Putting tabs on the toolpath form's shapes by hand: a click on a shape puts a tab there, or takes off the tab
+    /// nearest the click when one is close enough; a tab pressed and moved slides
     /// along its shape, to the place on it nearest the pointer. A press counts as a click when it
-    /// moves no more than 4 pixels (`0x142101038`), as egui tells clicks from drags.
+    /// moves no more than 4 pixels, as egui tells clicks from drags.
     fn place_tabs(&mut self, response: &egui::Response, press: Option<Pos2>, pointer: Option<Pos2>) {
         let reach = (TAB_PICK_PIXELS / self.scale) as f64;
         let (press, pointer) = (press.map(|p| self.to_world(p)), pointer.map(|p| self.to_world(p)));
@@ -1395,8 +1394,7 @@ impl App {
     }
 
     /// The tabs put on the drawing, as small bars across the shape where each one stands, its
-    /// length along the shape there (the original keeps them with the shapes, and its 2D view
-    /// marks them on the vectors).
+    /// length along the shape there.
     fn paint_tabs(&self, painter: &egui::Painter, op: &crate::toolpath::Op, view: Rect) {
         let half = (op.tab_length / 2.0) as f32 * self.scale;
         for spot in &op.tab_spots {
@@ -1527,8 +1525,7 @@ impl App {
 
     fn paint_rulers(&self, ui: &egui::Ui, full: Rect, sheet: Rect) {
         let painter = ui.painter_at(full);
-        // On the bottom side of a two-sided job the rulers turn orange, as the original's do
-        // (its Bottom Side Ruler Colour, `secondaryRulerColour`, `0x64C2ED` at `0x142e6100c`).
+        // On the bottom side of a two-sided job the rulers turn orange.
         let bottom = self.doc.job.two_sided && self.doc.active_face == 1;
         let bg = if bottom { theme::BOTTOM_RULER } else { theme::CHROME() };
         let top = Rect::from_min_max(pos2(sheet.left(), full.top()), pos2(sheet.right(), sheet.top()));
@@ -1722,8 +1719,7 @@ impl App {
         }
     }
 
-    /// While dragging with the select tool, a value can be typed and Enter makes it exact, as the
-    /// original allows (`0x140a751e0`): a distance along the drag or `x,y` for a move, an angle for a
+    /// While dragging with the select tool, a value can be typed and Enter makes it exact: a distance along the drag or `x,y` for a move, an angle for a
     /// turn, a percentage for a resize. Escape forgets what was typed. True when Enter finished the drag.
     pub(crate) fn typed_value(&mut self, ctx: &egui::Context) -> bool {
         if !matches!(self.drag, Drag::Move { .. } | Drag::Rotate { .. } | Drag::Scale { .. } | Drag::Node { .. }) {
@@ -1812,7 +1808,7 @@ impl App {
 }
 
 /// How far each resizing handle sits out from the selection's box on screen, in the order of
-/// `handle_points` (the sheet's Y goes up, the screen's down): the original draws them
+/// `handle_points` (the sheet's Y goes up, the screen's down): they are drawn
 /// `HANDLE_GAP` pixels out from the box.
 const HANDLE_GAP: f32 = 8.0;
 const HANDLE_OUT: [Vec2; 8] = [

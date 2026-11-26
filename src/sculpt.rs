@@ -1,20 +1,18 @@
 //! Sculpting: changing a component's heights with the mouse in the 3D view, brush by brush.
 //!
-//! From the original (Model > Sculpt Visible Model, its form `uiSculptingForm`, the manual's
-//! Sculpting page): six tools on the keys 1 to 6, Smooth, Smudge, Deposit, Remove, the Undo Brush
+//! Model > Sculpt Visible Model: six tools on the keys 1 to 6, Smooth, Smudge, Deposit, Remove, the Undo Brush
 //! (Shift erases instead) and Twiddle, which turns the view; a diameter, a strength and a
-//! smoothness; Preserve Transparency, on at first (`0x140743cd0`), which keeps the changes inside
+//! smoothness; Preserve Transparency, on at first, which keeps the changes inside
 //! the component's own edge, and 0 turns it on or off; the mode Normal, Raise or Lower, for
 //! smoothing and smudging; and Keep, Discard and Close for the changes. Each tool keeps its own
-//! settings (`SmoothingTool`, `EraserTool`, `SmudgeTool`, `DepositTool`, `SubtractTool` in the
-//! section "Sculpting", read by `0x140735440`), whose numbers weren't found: Burin's are its own.
+//! settings, whose numbers are Burin's own.
 
 use crate::app::App;
 use crate::geom::P;
 use crate::i18n::tr;
 use crate::relief::{Grid, Profile};
 
-/// Model > Sculpt Visible Model (string `0x819e`).
+/// Model > Sculpt Visible Model.
 pub const SCULPT_COMMAND: u32 = 33182;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -189,7 +187,7 @@ impl Sculpt {
 
 impl App {
     /// Model > Sculpt Visible Model: the chosen component (or the only one) is sculpted in the 3D
-    /// view. A component drawn from an outline becomes heights first, as the original bakes it.
+    /// view. A component drawn from an outline becomes heights first (it is baked).
     pub fn open_sculpt(&mut self) {
         let comp = match (self.selected_comp, self.doc.components.len()) {
             (Some(i), n) if i < n => i,

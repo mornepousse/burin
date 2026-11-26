@@ -1,4 +1,4 @@
-//! Merging the visible toolpaths into one (`0x140b211c0`, `0x14055a0a0`, `0x14055b5c0` in the original).
+//! Merging the visible toolpaths into one.
 
 use crate::app::*;
 use crate::i18n::tr;
@@ -85,7 +85,7 @@ impl App {
         op.selector = None;
         op.source = source;
         self.checkpoint();
-        // The original leaves them showing. Saving all that is visible would then cut everything twice.
+        // They are left showing. Saving all that is visible would then cut everything twice.
         for i in &chosen {
             self.doc.toolpaths[*i].visible = false;
         }

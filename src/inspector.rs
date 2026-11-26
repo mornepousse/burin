@@ -1,7 +1,6 @@
 //! What's selected, at a glance and to the number: where it is, how big, on which layer, in a small
 //! card at the top right of the 2D view, as drawing programs such as Affinity show it. Typing a new
-//! value moves or resizes the selection at once. Burin's own; the original does this through its
-//! Move and Size forms.
+//! value moves or resizes the selection at once. Burin's own.
 
 use crate::app::*;
 use crate::i18n::tr;

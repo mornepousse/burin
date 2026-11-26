@@ -1,11 +1,11 @@
 //! Help Contents: short pages on each part of the program, in the program itself, so they work
-//! offline and in the chosen language. The original opens a separate manual (command 57670).
+//! offline and in the chosen language.
 
 use crate::app::App;
 use crate::i18n::{language, tr, Lang};
 use egui::Align2;
 
-/// The original's Help Contents command.
+/// The Help Contents command.
 pub const HELP_CONTENTS_COMMAND: u32 = 57670;
 
 /// One page of help, in English and in French.

@@ -1,5 +1,5 @@
 //! Looking over the toolpaths before they're cut: what could break a tool, mark the work or hit the
-//! machine. The original has nothing like this, and none of it stops a file being saved for good:
+//! machine. None of it stops a file being saved for good:
 //! the person decides, once told.
 
 use crate::app::*;
@@ -23,7 +23,7 @@ pub struct Finding {
     pub text: String,
 }
 
-/// The thinnest tab that holds a part reliably, in millimetres. A rule of thumb, not the original's.
+/// The thinnest tab that holds a part reliably, in millimetres. A rule of thumb.
 const THINNEST_TAB_MM: f64 = 1.0;
 /// Cutting a little into the board under the material is how a part comes free: only more is said.
 const THROUGH_MARGIN_MM: f64 = 1.0;
@@ -106,7 +106,7 @@ pub fn check_toolpath(tp: &Toolpath, job: &Job, machine: &toolpath::Machine) -> 
 
 /// How far the machine file may stray from the toolpath it was written from, in millimetres: its
 /// arcs follow the curves the toolpath draws as small sides, so a little more than the arc tolerance.
-/// Not from the original: other programs simulate the file itself before it's cut (CAMotics), and
+/// Other programs simulate the file itself before it's cut (CAMotics), and
 /// LinuxCNC refuses arcs whose ends don't agree.
 const FILE_STRAY_MM: f64 = 0.2;
 

@@ -1,7 +1,7 @@
 //! Earlier versions of a project, kept beside it each time it's saved, like KiCad's
 //! `<project>-backups` folder. Differences: each version is a plain `.burin` that opens as it is, a
 //! version the same as the last isn't kept twice, and old ones are thinned out by age rather than cut
-//! at a count, so last week stays as well as the last hour. The original has nothing like this.
+//! at a count, so last week stays as well as the last hour.
 
 use crate::app::*;
 use crate::i18n::tr;

@@ -1,8 +1,7 @@
 //! Reading drawings from PDF, Illustrator (.ai) and EPS files: the lines and curves a page paints,
 //! as shapes at their real size. A PDF's page (and an .ai file of Illustrator 9 or later, which is a
 //! PDF) is found through its objects, packed ones included; EPS and older .ai files are PostScript,
-//! read from their drawing commands. Text, pictures and clipping are left out. Burin's own reader:
-//! the original imports these formats too (its File > Import), how it reads them wasn't looked at.
+//! read from their drawing commands. Text, pictures and clipping are left out. Burin's own reader.
 
 use crate::geom::{Path, P};
 use std::collections::HashMap;

@@ -59,7 +59,7 @@ pub fn number_from(ui: &mut Ui, value: &mut f64, zero: f64, width: f32) -> bool 
 }
 
 /// A number box. A sum typed in it is worked out as it's typed (`crate::formula`), with the answer
-/// shown beside it, as the original's boxes do.
+/// shown beside it.
 pub fn number(ui: &mut Ui, value: &mut f64, width: f32) -> bool {
     let mut none = String::new();
     number_box(ui, value, &mut none, false, width)
@@ -249,7 +249,7 @@ fn start_tile(ui: &mut Ui, icon: Icon, label: &str, width: f32) -> bool {
     resp.clicked()
 }
 
-/// A row of tool icons at the original's 30 pixel pitch.
+/// A row of tool icons at a 30 pixel pitch.
 pub(crate) fn icon_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     ui.horizontal(|ui| {
         ui.add_space(5.0);
@@ -1437,13 +1437,13 @@ impl App {
     }
 
     /// The component list takes the keys when a component is chosen and no shape is, standing in for
-    /// the original's tree having the focus (its key handler `0x1403ba190`).
+    /// a tree having the focus.
     pub(crate) fn component_list_in_use(&self) -> bool {
         self.left_tab == LeftTab::Modeling && self.selected.is_empty() && self.selected_comp.is_some_and(|i| i < self.doc.components.len())
     }
 
     /// Up and Down choose the component above or below the chosen one, and stop at the ends,
-    /// as the original's component tree does with one component chosen (`0x1403ba190`).
+    /// with one component chosen.
     fn component_keys(&mut self, ctx: &egui::Context) {
         if !self.component_list_in_use() || self.recalc.is_some() || ctx.egui_wants_keyboard_input() || self.screen != Screen::Work {
             return;
@@ -1458,7 +1458,7 @@ impl App {
     }
 
     /// The arrow keys move the selection: Shift ten times as far, Ctrl a hundred, Alt a tenth,
-    /// and Ctrl with Shift the original's fixed distance.
+    /// and Ctrl with Shift a fixed distance.
     fn nudge(&mut self, ctx: &egui::Context) {
         use egui::Key;
         let arrows = [(Key::ArrowLeft, -1.0, 0.0), (Key::ArrowRight, 1.0, 0.0), (Key::ArrowDown, 0.0, -1.0), (Key::ArrowUp, 0.0, 1.0)];
@@ -1509,7 +1509,7 @@ impl App {
         self.nudge(&ctx);
         self.component_keys(&ctx);
         if self.sculpt.is_some() {
-            // While sculpting, the numbers choose the tool (the original's form).
+            // While sculpting, the numbers choose the tool.
             self.sculpt_keys(&ctx);
             return;
         }
@@ -1655,7 +1655,7 @@ impl App {
         if fired(Action::View3d) {
             self.view3d = true;
         }
-        // Space opens the last drawing form again (the manual's Shortcut Keys page); with a line
+        // Space opens the last drawing form again; with a line
         // being drawn it finishes the line instead, which is handled by the line tool.
         if !self.view3d && matches!(self.left, LeftForm::None) && matches!(self.drag, crate::canvas::Drag::None) && ctx.input(|i| i.key_pressed(egui::Key::Space)) {
             if let Some(kind) = self.last_draw {
@@ -2791,7 +2791,7 @@ impl App {
         j.height = j.height.max(0.01);
         j.thickness = j.thickness.max(0.001);
         // A new job's material is kept for the next new job (its 3D detail only below the
-        // highest), as the original does (`0x140332cc0`).
+        // highest).
         if matches!(self.left, LeftForm::Job { first: true, .. }) {
             remember_new_job(&self.doc.job);
         }
@@ -2880,7 +2880,7 @@ impl App {
         }
     }
 
-    /// Whether Enter applies the open form this frame, as in the original's forms. Not while a
+    /// Whether Enter applies the open form this frame. Not while a
     /// value typed during a drag is being finished with Enter; in a text of several lines Enter
     /// starts a new line, so there Ctrl+Enter applies.
     pub(crate) fn enter_applies(&self, ui: &Ui) -> bool {
@@ -3224,7 +3224,7 @@ impl App {
                         t.visible = toggle;
                     }
                 }
-                // A two-sided job lists one side's toolpaths, and says which (the original's guide).
+                // A two-sided job lists one side's toolpaths, and says which.
                 let title = match (self.doc.job.two_sided, self.doc.active_face) {
                     (false, _) => crate::i18n::tr("Toolpaths").to_string(),
                     (true, 0) => crate::i18n::tr("Toolpaths (Top)").to_string(),
@@ -3345,7 +3345,7 @@ impl App {
                 } else {
                     ui.label(RichText::new(tf!("{} tabs put on the shapes", op.tab_spots.len())).size(11.5).color(MUTED()));
                 }
-                // As the original's Edit Tabs: on the drawing, a click on a shape puts a tab there,
+                // Edit Tabs: on the drawing, a click on a shape puts a tab there,
                 // a click on a tab takes it off, and a tab dragged slides along its shape.
                 ui.horizontal_wrapped(|ui| {
                     let label = if self.placing_tabs { crate::i18n::tr("Done placing") } else { crate::i18n::tr("Place by hand") };
@@ -3621,14 +3621,14 @@ explain(ui, [Pic::StartDrawn, Pic::StartNearest, Pic::StartPoint][chosen], match
                     self.save_preview = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Picture"), &["png"]).set_file_name("preview.png").save_file();
                 }
                 if worded_button(ui, !self.doc.toolpaths.is_empty(), Icon::Export, crate::i18n::tr("Export pieces (STEP, STL)..."))
-                    .on_hover_text(crate::i18n::tr("Each part the toolpaths cut out, as a solid in millimetres, in a new folder of the name you give (STEP and STL), named after its piece in the drawing: its outline from the drawing, less its holes, pockets, drillings and grooves cut flat to their depth, as a CAD program models it. A name already taken gets a number, nothing is written over. V-carves and 3D are left out. Not in the original."))
+                    .on_hover_text(crate::i18n::tr("Each part the toolpaths cut out, as a solid in millimetres, in a new folder of the name you give (STEP and STL), named after its piece in the drawing: its outline from the drawing, less its holes, pockets, drillings and grooves cut flat to their depth, as a CAD program models it. A name already taken gets a number, nothing is written over. V-carves and 3D are left out. Burin's own extra."))
                     .clicked()
                 {
                     self.export_carved_pieces();
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 if worded_button(ui, !self.doc.toolpaths.is_empty() && self.solidcraft_job.is_none(), Icon::Export, crate::i18n::tr("Open in SolidCraft..."))
-                    .on_hover_text(crate::i18n::tr("The same parts as a SolidCraft design you can change: a thickness parameter and one per depth, each part a component with its outline sketched in lines, arcs and circles and extruded, its pockets, drillings and grooves sketched and cut down from the top. Change a parameter in SolidCraft and the parts follow. Opens in SolidCraft when it is on this computer. Not in the original."))
+                    .on_hover_text(crate::i18n::tr("The same parts as a SolidCraft design you can change: a thickness parameter and one per depth, each part a component with its outline sketched in lines, arcs and circles and extruded, its pockets, drillings and grooves sketched and cut down from the top. Change a parameter in SolidCraft and the parts follow. Opens in SolidCraft when it is on this computer. Burin's own extra."))
                     .clicked()
                 {
                     self.open_in_solidcraft();
@@ -3746,7 +3746,7 @@ explain(ui, [Pic::StartDrawn, Pic::StartNearest, Pic::StartPoint][chosen], match
         ui.painter().rect_stroke(on, 0.0, Stroke::new(1.5, theme::ACCENT), egui::StrokeKind::Inside);
     }
 
-    /// Makes one side of a two-sided job the one worked on (the original's `SetActiveSide`): only
+    /// Makes one side of a two-sided job the one worked on: only
     /// its shapes and toolpaths show, and what's drawn or made goes on it.
     pub(crate) fn set_active_face(&mut self, face: u8) {
         if !self.doc.job.two_sided || self.doc.active_face == face {
@@ -3829,7 +3829,7 @@ explain(ui, [Pic::StartDrawn, Pic::StartNearest, Pic::StartPoint][chosen], match
             (Icon::ShowVectors, crate::i18n::tr("Show shapes"), true, self.show_vectors, 27.0),
             (Icon::ShowPaths, crate::i18n::tr("Show toolpaths"), true, self.show_toolpaths, 34.0),
             (Icon::ShowModel, crate::i18n::tr("Show the 3D model"), true, false, 36.0),
-            // The original's view toolbar (resource 140) ends with Tile Vertical, then Tile Horizontal.
+            // The view toolbar ends with Tile Vertical, then Tile Horizontal.
             (Icon::TileSide, crate::i18n::tr("Tile Windows Vertical"), true, self.tiled == Some(crate::app::Tiling::SideBySide), 27.0),
             (Icon::TileStacked, crate::i18n::tr("Tile Windows Horizontal"), true, self.tiled == Some(crate::app::Tiling::Stacked), 27.0),
         ];
@@ -3881,7 +3881,7 @@ explain(ui, [Pic::StartDrawn, Pic::StartNearest, Pic::StartPoint][chosen], match
         }
         icons::set_tint(None);
         // A two-sided job adds two buttons: which way the block turns over, and which side is in use
-        // (the original's "Change flip direction" `0x8459` and "Toggle Top / Bottom Side" `0x84bd`).
+        // ("Change flip direction" and "Toggle Top / Bottom Side").
         if self.doc.job.two_sided {
             // When they don't fit after the tools, they go at the end of the row above.
             let (mut x, tools_y) = if x + 7.0 + 2.0 * 27.0 > top.right() - 4.0 && two_rows {
@@ -3940,7 +3940,7 @@ explain(ui, [Pic::StartDrawn, Pic::StartNearest, Pic::StartPoint][chosen], match
         if self.about_open {
             let mut open = true;
             egui::Window::new(crate::i18n::tr("About Burin")).open(&mut open).collapsible(false).resizable(false).show(&ctx, |ui| {
-                // As the original's (`0x140726810`): the version, then how the 3D view is drawn.
+                // The version, then how the 3D view is drawn.
                 let drawing = crate::startup::drawing_name(&crate::startup::graphics_line(), crate::platform::WEB);
                 ui.label(RichText::new(tf!("Burin {} ({})", env!("CARGO_PKG_VERSION"), drawing)).strong().size(16.0));
                 ui.label(crate::i18n::tr("Design, model and cut for CNC carving."));

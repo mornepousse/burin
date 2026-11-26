@@ -425,7 +425,7 @@ pub fn text_paths(text: &str, height: f64, origin: P) -> Vec<Path> {
     crate::fonts::text_paths(text, height, origin, &crate::fonts::TextStyle::default())
 }
 
-/// How far a step drawn for an arc may stray from it: half the original's default toolpath
+/// How far a step drawn for an arc may stray from it: half the default toolpath
 /// tolerance (0.01 mm).
 pub const ARC_SAG: f64 = 0.005;
 

@@ -1,14 +1,11 @@
 //! Two Rail Sweep: a component made by hanging cross sections between two rails and sweeping
 //! them along.
 //!
-//! From the original (Model > Create Component > Two Rail Sweep, `uiTwoRailSweepForm` over
-//! `uiSweepFormBase`, the manual's Two Rail Sweep page): two rails, open or closed, the first red
+//! Model > Create Component > Two Rail Sweep: two rails, open or closed, the first red
 //! and the second green; one or more open cross sections; points at the same share of each rail's
 //! length are joined. Its choices and their starting values: Scale cross sections with width, on,
-//! and Fill centre of inner closed vector rails, off (`ScaleWithWidth`, `FillCentreVector`,
-//! `0x140773820`, both set at `0x140773760`); Sweep between spans, on, and Scale to exact height,
-//! off, at a height of 1 (`SweepBetweenSpans`, `ScaleExactHeight`, `ScaleToHeightMM` /
-//! `ScaleToHeightInch`, `0x140749ac0`, set at `0x14074822d` to `0x140748250`).
+//! and Fill centre of inner closed vector rails, off; Sweep between spans, on, and Scale to exact height,
+//! off, at a height of 1.
 
 use crate::app::App;
 use crate::geom::{Path, P};
@@ -217,7 +214,7 @@ impl App {
     }
 
     /// Makes the swept component, combining by Add. Rails come in left and right pairs, in the
-    /// order chosen, as in the original (`0x14074a880`: an odd number is its error 3; each pair is
+    /// order chosen (an odd number is refused; each pair is
     /// marked left 1 and right 2 and pointed at each other). Every pair is swept with the same cross
     /// sections, and where two sweeps meet the higher wins.
     pub fn two_rail_sweep(&mut self, form: &SweepForm) -> bool {
@@ -462,12 +459,10 @@ mod tests {
 
 // ----- Extrude and Weave -----
 
-/// Model > Create Component > Extrude and Weave (33607). Its form shares `uiSweepFormBase` with the
-/// two-rail sweep and keeps, with their starting values (`0x14037ba3c` to `0x14037baee`, loaded by
-/// `0x14037bd20`): `SquareCorners` on, `TileComponents` on, `TileComponentsExactly` on,
-/// `TileComponentsMirror` off, `ComponentOverlap` 0, `DoWeave` off, `WeaveAddBase` off, and the
-/// weave's under and over scales 0.7 and 1.3 (`WeaveUnderScale`, `WeaveOverScale`, and the same for
-/// `WeaveUnderAddBase`, `WeaveOverAddBase`).
+/// Model > Create Component > Extrude and Weave. Its form shares its choices with the
+/// two-rail sweep and keeps, with their starting values: square corners on, tile components on,
+/// tile components exactly on, tile mirror off, component overlap 0, weave off, weave add base off, and the
+/// weave's under and over scales 0.7 and 1.3 (and the same for the add base variants).
 pub const EXTRUDE_COMMAND: u32 = 33607;
 pub const WEAVE_UNDER: f64 = 0.7;
 pub const WEAVE_OVER: f64 = 1.3;
@@ -482,9 +477,9 @@ pub struct ExtrudeForm {
     pub over: f64,
     pub exact_height: bool,
     pub height: f64,
-    /// With a component as the cross section: copies of it along the rail (`TileComponents`), as
-    /// many whole copies as fit exactly (`TileComponentsExactly`), every other one mirrored
-    /// (`TileComponentsMirror`), overlapping by this distance (`ComponentOverlap`).
+    /// With a component as the cross section: copies of it along the rail, as
+    /// many whole copies as fit exactly, every other one mirrored,
+    /// overlapping by this distance.
     pub tile: bool,
     pub tile_exactly: bool,
     pub tile_mirror: bool,
@@ -497,8 +492,8 @@ impl Default for ExtrudeForm {
     }
 }
 
-/// The original samples a component used as a cross section at half the model's resolution
-/// (`0x14074b4d0`: resolution × 0.5 at `0x14210331c`).
+/// A component used as a cross section is sampled at half the model's resolution
+/// (resolution × 0.5).
 pub const COMPONENT_SECTION_SAMPLING: f64 = 0.5;
 
 /// A component used as the cross section: its heights, and the box they stand in. Its length runs
@@ -812,8 +807,8 @@ impl App {
         }
     }
 
-    /// Every path of a shape, each one a rail of its own, as the original makes one rail of each
-    /// span of each chosen vector (`0x14074a880`). Rails of no length are left out.
+    /// Every path of a shape, each one a rail of its own: one rail for each
+    /// span of each chosen vector. Rails of no length are left out.
     fn rail_paths(&self, id: u64) -> Vec<Path> {
         let Some(v) = self.doc.vectors.iter().find(|v| v.id == id) else { return Vec::new() };
         v.paths.iter().filter(|p| Rail::new(p).length() > 0.0).cloned().collect()
@@ -822,13 +817,13 @@ impl App {
     pub fn extrude(&mut self, form: &ExtrudeForm) -> bool {
         let rails: Vec<Path> = form.rails.iter().flat_map(|id| self.rail_paths(*id)).collect();
         let sections: Vec<Path> = form.sections.iter().filter_map(|id| self.first_path(*id)).collect();
-        // The original's checks, in its order: rails first (`0x14074a880`, code 2), then a cross
-        // section (`0x14074b4d0`).
+        // The checks, in order: rails first, then a cross
+        // section.
         if rails.is_empty() {
             self.message = Some(tr("Choose one or more vectors as rails.").into());
             return false;
         }
-        // With no cross section the original uses the one chosen component instead (`0x14074b4d0`).
+        // With no cross section the one chosen component is used instead.
         let piece = if sections.is_empty() {
             let j = &self.doc.job;
             // Half the model's spacing: four times the points.

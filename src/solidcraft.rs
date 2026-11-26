@@ -3,8 +3,7 @@
 //! arcs and circles, its through holes in the same sketch) extruded to the thickness, and each
 //! pocket, drilling or groove sketched and cut down from the top to its own depth parameter.
 //! Change a parameter in SolidCraft and the parts rebuild. Written as a script of SolidCraft's
-//! own commands, which its command line replays into a design (`.sc`). Burin's own: the original
-//! exports no parts.
+//! own commands, which its command line replays into a design (`.sc`). Burin's own.
 
 use crate::geom::P;
 use crate::solid::{loops_of, overlay, ring_arcs, union_all, Removal, Shapes};

@@ -1,11 +1,11 @@
-//! The Document Variables window (Edit > Document Variables, the original's command 33702): named values,
+//! The Document Variables window (Edit > Document Variables): named values,
 //! saved with the job, that sums in number boxes use as `{name}`. Changing one works the toolpaths' depths out
-//! again; the original then warns which toolpaths use the variables edited and need recalculating
-//! (`0x14062df6a`), and Burin offers to recalculate them.
+//! again; Burin then warns which toolpaths use the variables edited and need recalculating,
+//! and offers to recalculate them.
 //!
-//! Export Variables and Import Variables use the original's file, "Document Variables (*.DocVars)": an INI
+//! Export Variables and Import Variables use the file "Document Variables (*.DocVars)": an INI
 //! file with `Version=1` under `[DocumentVariables]`, then one `name=value` line per variable under
-//! `[Variables]` (written by `0x14061e960`). Reading it (`0x14061ef30`) refuses a version above 1, then sets
+//! `[Variables]`. Reading it refuses a version above 1, then sets
 //! each variable by name: one the document already has takes the file's value, the others are added.
 
 use crate::app::App;
@@ -19,9 +19,9 @@ pub struct VariablesForm {
     pub rows: Vec<(String, f64)>,
 }
 
-/// The original's extension for a file of document variables.
+/// The extension for a file of document variables.
 pub const DOCVARS_EXTENSION: &str = "DocVars";
-/// The newest version of that file the original reads.
+/// The newest version of that file that is read.
 pub const DOCVARS_VERSION: u32 = 1;
 
 /// The variables as a `.DocVars` file.
@@ -33,7 +33,7 @@ pub fn docvars_text(rows: &[(String, f64)]) -> String {
     out
 }
 
-/// Reads a `.DocVars` file into the rows, as the original does: same name, new value; new names added at the
+/// Reads a `.DocVars` file into the rows: same name, new value; new names added at the
 /// end. Returns how many were left out for a name that can't be used.
 pub fn read_docvars(text: &str, rows: &mut Vec<(String, f64)>) -> Result<usize, String> {
     let mut section = String::new();
@@ -66,8 +66,8 @@ pub fn read_docvars(text: &str, rows: &mut Vec<(String, f64)>) -> Result<usize, 
     }
     let mut skipped = 0;
     for (name, value) in found {
-        // As `0x14061de10`: a name that can't be one (`0x14061d330`), or the largest number, the original's
-        // mark for "no value" (`0x142172598`), is left out.
+        // A name that can't be one, or the largest number (the
+        // mark for "no value"), is left out.
         if !formula::valid_name(&name) || value == NO_VALUE {
             skipped += 1;
             continue;
@@ -80,7 +80,7 @@ pub fn read_docvars(text: &str, rows: &mut Vec<(String, f64)>) -> Result<usize, 
     Ok(skipped)
 }
 
-/// The value the original takes for "none", never kept as a variable.
+/// The value that means "none", never kept as a variable.
 pub const NO_VALUE: f64 = 1.7976931348623157e308;
 
 impl App {

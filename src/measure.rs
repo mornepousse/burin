@@ -1,4 +1,4 @@
-//! Measure and inspect: the original's form has three choices one under the other (between two
+//! Measure and inspect: three choices one under the other (between two
 //! points, a span and its contour, a section of the model) with every value as a line of text.
 //! Burin's own layout: the three as pictured tabs at the top, the main result written large, the
 //! others in small tiles, a little picture of what is measured, and the points as X/Y pairs.
@@ -165,7 +165,7 @@ fn edge_near(app: &App, w: P, reach: f64) -> Option<Inspected> {
 
 /// The model's height along the line from `a` to `b`, as an open line drawn on it: each height
 /// stands off the line to its left, so the section reads upright when the line goes left to
-/// right. Burin's choice of where to draw it; the original's wasn't read.
+/// right. Burin's choice of where to draw it.
 pub fn section_path(grid: &crate::relief::Grid, a: P, b: P) -> Option<Path> {
     let len = (b[0] - a[0]).hypot(b[1] - a[1]);
     if len < 1e-9 {
@@ -203,7 +203,7 @@ impl App {
             }
             return;
         }
-        // Two clicks, as the original: the first places the first point, the line then follows
+        // Two clicks: the first places the first point, the line then follows
         // the pointer, the second click places the other end (the person found holding the button
         // down awkward). Pressing, dragging and letting go far enough away also ends it.
         let now = pointer.map(|p| self.snapped(self.to_world(p)));

@@ -23,7 +23,7 @@ pub struct Project {
     pub max: [f64; 3],
     /// Where the origin is: 0 bottom left, 1 bottom right, 2 top right, 3 top left, 4 centre.
     pub datum: u32,
-    /// How many sides the job is cut from: 0 one, 1 two, 2 rotary (`0x14084a480`, version 6 on).
+    /// How many sides the job is cut from: 0 one, 1 two, 2 rotary (version 6 on).
     pub job_type: u32,
     /// How the part is turned over between sides: 0 around X, otherwise around Y.
     pub side_flip: u32,
@@ -50,7 +50,7 @@ pub struct Project {
     pub notes: String,
 }
 
-/// A guide line as the original keeps it (`vcGuideLine`, written by `0x140a5d710`, version 2): a
+/// A guide line as the file keeps it (version 2): a
 /// point it goes through, its direction, its angle in degrees, and its kind (1 up and down, 2
 /// across, in the user's files).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -61,10 +61,8 @@ pub struct SavedGuide {
     pub kind: u32,
 }
 
-/// The snap grid as the original keeps it (`vcSnapGrid::Serialize`, `0x140a77c10`, version 1):
-/// shown (a byte), snapping (a byte), then the spacing (8 bytes). The same three are kept in the
-/// program's settings as `vcSnapGridVisible`, `vcSnapGridDoSnap` and `vcSnapGridSpacingMM` or
-/// `vcSnapGridSpacingInches` (`0x140a77ef0` writes, `0x140a77f80` reads).
+/// The snap grid as the file keeps it (`vcSnapGrid`, version 1):
+/// shown (a byte), snapping (a byte), then the spacing (8 bytes).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SavedGrid {
     pub visible: bool,
@@ -83,7 +81,7 @@ fn read_snap_grid(d: &[u8]) -> Option<SavedGrid> {
 }
 
 /// The look the model is shown with. The model's data (`ModelObjects/ObjectData`) starts with its
-/// manager, then its first level (`cmLevelNode`, `0x1403eec30`, over `cmGroupNode`, `0x1409db180`):
+/// manager, then its first level:
 /// in the user's files the level's name ("Niveau 1") is followed by the look's name, indented by
 /// three spaces ("   MDF"), or by nothing at all.
 fn read_look(d: &[u8]) -> Option<String> {
@@ -104,7 +102,7 @@ fn read_look(d: &[u8]) -> Option<String> {
     texts.get(1).filter(|t| t.starts_with(' ')).map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
 }
 
-/// The guide lines in the document's data. The manager (`vcGuideLineManager`, `0x140a5e100`,
+/// The guide lines in the document's data. The manager (`vcGuideLineManager`,
 /// version 1) writes whether they're shown, how many there are, then each as an object: the
 /// first with its class name, the others with a reference to it. Each guide (version 2 or less)
 /// is its point and direction (two numbers each), its angle, its kind, from version 2 a flag,
@@ -202,8 +200,8 @@ pub struct SavedToolpath {
     pub safe_z: f64,
     pub plunge_gap: f64,
     pub home: [f64; 3],
-    /// The toolpath's own notes: its `ToolpathNotes` setting, text (type 3), as the original keeps
-    /// them (`0x140874050` reads, `0x140874160` writes, empty when there are none).
+    /// The toolpath's own notes: its `ToolpathNotes` setting, text (type 3), empty when there
+    /// are none.
     pub notes: String,
 }
 
@@ -390,7 +388,7 @@ fn read_moves(d: &[u8], at: usize, total: usize) -> Option<(Stored, usize)> {
             return Some(());
         }
         let fast = matches!(kind, 2 | 8 | 9 | 10);
-        // 18 is a join (the original's move type 14, `0x1405575e0`): across at one depth from cut to cut.
+        // 18 is a join (move type 14): across at one depth from cut to cut.
         let join = kind == JOIN_KIND;
         let moved = (from[0] - to[0]).abs() + (from[1] - to[1]).abs() + (from[2] - to[2]).abs() > 1e-9;
         if !(fast || moved) {
@@ -507,8 +505,7 @@ fn read_settings(d: &[u8]) -> Vec<(String, Setting)> {
 
 const SMALLEST_TOOL: f64 = 1e-3;
 
-/// How many kinds of tool the original has (0 ball nose ... 10 radiused flat engraving), from its
-/// list of tool type names (0x1404d8760).
+/// How many kinds of tool there are (0 ball nose ... 10 radiused flat engraving).
 const TOOL_KINDS: u8 = 11;
 
 /// The tool's record just before a toolpath's moves, the last if there are several.
@@ -538,7 +535,7 @@ fn read_tool(d: &[u8]) -> Option<SavedTool> {
                     // The file's own text ends in a zero, which must not reach a machine file.
                     let name: String = raw.iter().take_while(|b| **b != 0).map(|b| *b as char).collect();
                     let tip = (f32::from_le_bytes(d[i + 8..i + 12].try_into().unwrap()) * k as f32, f32::from_le_bytes(d[i + 12..i + 16].try_into().unwrap()) * k as f32);
-                    // Just after the name, the stepover the original clears with between V-carve
+                    // Just after the name, the stepover it clears with between V-carve
                     // passes (every saved tool has one: 0.794 for a 3.175 mm V-bit).
                     let clear_step = f64_at(d, at + 56 + len).filter(|v| v.is_finite() && (0.0..1000.0).contains(v)).unwrap_or(0.0) * k;
                     found = Some(SavedTool { name, kind: kind as u32, tip, number, dia, pass_depth: pass, stepover: step, feed, plunge, rpm, clear_step });
@@ -902,7 +899,7 @@ impl<'a> Compound<'a> {
 }
 
 /// Where each text block starts, as `text_blocks` reads it (the class name's position; the
-/// record's header 8 bytes on). The original's archive names a class only the first time it
+/// record's header 8 bytes on). The archive names a class only the first time it
 /// writes one; every later text block is brought in by the class's number instead (`0x8000` and
 /// the number), so those are found by their header (version 7 or 8, two marks, eight zeros,
 /// 0x82, 0x2a) followed by the block's own settings (`_txtAL_Version`) before any other record.
@@ -943,17 +940,16 @@ fn text_block_starts(d: &[u8]) -> Vec<usize> {
 /// last line then sits on the text box's bottom margin to within 0.3 of 320).
 const LINE_PITCH: f64 = 1.5;
 
-/// The letters of each text block (`txtBlock`), placed as the original places them, with the
-/// block's own mark and its layer's mark. The block holds lines (`txtLine`, `0x1408e7ea0`: version
+/// The letters of each text block (`txtBlock`), placed where the job's moves put them, with the
+/// block's own mark and its layer's mark. The block holds lines (version
 /// 1, its words, then the font and sizes, no position), lines words (version 1, letters), words
-/// letters (`txtChar`, version 4, read by `0x1408e2180`): the character, the font, the letter's
-/// advance (+0x28), its outlines centred on 0, then where its middle stands past the pen (+0x18),
-/// a value that isn't a shift along the line (+0x40: applied that way it breaks the spacing of
-/// the 18-line text job), the font size three times, its width (+0x20) and 1.0. The pen moves on
+/// letters (`txtChar`, version 4): the character, the font, the letter's
+/// advance, its outlines centred on 0, then where its middle stands past the pen,
+/// a value that isn't a shift along the line (applied that way it breaks the spacing of
+/// the 18-line text job), the font size three times, its width and 1.0. The pen moves on
 /// by each advance along the base line (`txtBaseCurve`), the first letter's left edge at its
 /// start: on the person's test the line is exactly as long as the letters reach. The base line is
-/// the first line's; the others go down `LINE_PITCH` times the font size apart (the original lays
-/// them out as it draws). The whole block then goes through the 2 × 3 matrix written after the
+/// the first line's; the others go down `LINE_PITCH` times the font size apart. The whole block then goes through the 2 × 3 matrix written after the
 /// base line.
 fn text_blocks(d: &[u8]) -> Vec<([u8; 16], [u8; 16], Vec<Path>, usize)> {
     let mut out = Vec::new();
@@ -1046,10 +1042,10 @@ fn text_blocks(d: &[u8]) -> Vec<([u8; 16], [u8; 16], Vec<Path>, usize)> {
         // Lines go down from the base line, which is the first one's, 1.5 times the font size
         // apart (estimated: on an 18-line text job of the person's that puts the last line on the box's
         // bottom margin to within 0.05 of 320). Each line sits along the base line as the text is
-        // aligned (`_txtAL_text_justify`; the anchor `0x1408d7fb0` picks by the same values): 0
+        // aligned (`_txtAL_text_justify`): 0
         // from its start (the person's test, exact), 2 in its middle (a word on one of the
         // person's plates: 3.81 each side against 3.82 in its saved moves), 1 against its end
-        // (the anchor at the point list's +0x48 index: estimated).
+        // (estimated).
         let justify = {
             let name: Vec<u8> = "_txtAL_text_justify".encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
             region.windows(name.len()).position(|w| w == name.as_slice()).and_then(|p| {
@@ -1117,7 +1113,7 @@ fn text_blocks(d: &[u8]) -> Vec<([u8; 16], [u8; 16], Vec<Path>, usize)> {
                     size = f64_at(d, e + 55).filter(|v| v.is_finite() && *v > 0.0).unwrap_or(size);
                 }
                 let width = if ok { f64_at(d, e + 79).unwrap_or(hi[0] - lo[0]) } else { hi[0] - lo[0] };
-                // The letter's middle stands +0x18 past the pen; the line starts at the first
+                // The letter's middle stands past the pen; the line starts at the first
                 // letter's left edge.
                 let middle = if ok { f64_at(d, e + 39).filter(|v| v.is_finite()).unwrap_or(width / 2.0) } else { width / 2.0 };
                 if fresh_line {
@@ -1139,8 +1135,7 @@ fn text_blocks(d: &[u8]) -> Vec<([u8; 16], [u8; 16], Vec<Path>, usize)> {
 
 /// Where an outline's own data starts after its archive class tag at `at`: a class already met is
 /// `0x8000` and its number; a new one is `0xFFFF`, its version, the name's length and the name, which must be
-/// `vdContour`. The original writes a contour this way after the object's own header (`vcCadContour::Serialize`,
-/// `0x140a1aeb0`, version 2; the header `vcCadObject::Serialize`, `0x140a2c7a0`, version 8: two marks of 16 bytes,
+/// `vdContour`. A contour is written this way after the object's own header (contour version 2; header version 8: two marks of 16 bytes,
 /// then numbers).
 fn contour_body(d: &[u8], at: usize) -> Option<usize> {
     let tag = u16_at(d, at)?;
@@ -1257,7 +1252,7 @@ fn outline_spans_at(d: &[u8], at: usize) -> Option<(Path, usize, Vec<(usize, usi
 
 /// The tabs put on a shape, read after its outline: the outline ends at `end`, then come a mark
 /// of 16 bytes, `FF FF FF FF 00 00`, the number of tabs and each tab (`vcToolpathTab`: its place
-/// on the outline, a `vdContourCarriage` of version 1 with the piece it is on and how far along
+/// on the outline, a contour carriage of version 1 with the piece it is on and how far along
 /// that piece from 0 to 1, then the tab's own version, 1). Each
 /// comes back as a point on the outline, found on its points `spans` mark out. Nothing when the
 /// bytes there are anything else.
@@ -1286,8 +1281,8 @@ fn tabs_after(d: &[u8], end: usize, pts: &[P], spans: &[(usize, usize)], closed:
         } else {
             return Vec::new();
         }
-        // The place on the outline (`vdContourCarriage::Serialize`, `0x1407aa650`: version, piece,
-        // parameter), then the tab's own version (`vcToolpathTab::Serialize`, `0x140a82cc0`); both
+        // The place on the outline (version, piece,
+        // parameter), then the tab's own version; both
         // refuse a version over 1.
         let (Some(place_version), Some(span), Some(t), Some(tab_version)) = (u32_at(d, q), u32_at(d, q + 4), f64_at(d, q + 8), u32_at(d, q + 16)) else { return Vec::new() };
         if place_version > 1 || tab_version > 1 {
@@ -1369,7 +1364,7 @@ fn is_object(d: &[u8], at: usize, layers: &[[u8; 16]]) -> bool {
         && d.get(at + 20..at + 36).and_then(|m| <[u8; 16]>::try_from(m).ok()).is_some_and(|m| layers.contains(&m))
 }
 
-/// A head the original writes for a shape kept in a group: where the layer's mark goes there is
+/// A head written for a shape kept in a group: where the layer's mark goes there is
 /// another mark, no layer's (the 60 plate's two groups of 12 holes all carry the same one), and
 /// the usual numbers follow (0x82, 0x2a). The record's class tag comes just before. Taken only
 /// right after a group's count (`find_objects`).
@@ -1493,7 +1488,7 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
     };
     let datum = u32_at(&size, 54).unwrap_or(0);
     // After the corner come the Z zero, then from version 6 the sides and the flip
-    // (`0x14084a480`: version, millimetres, zero on the surface, the box, X/Y zero, Z zero,
+    // (version, millimetres, zero on the surface, the box, X/Y zero, Z zero,
     // job type, flip, then each side).
     let version = u32_at(&size, 0).unwrap_or(0);
     let (job_type, side_flip) = if version >= 6 { (u32_at(&size, 62).unwrap_or(0), u32_at(&size, 66).unwrap_or(0)) } else { (0, 0) };
@@ -1595,7 +1590,7 @@ pub fn read(bytes: &[u8]) -> Result<Project, String> {
     for t in &mut toolpaths {
         t.sources = t.sources.iter().flat_map(|s| groups.get(s).cloned().unwrap_or_else(|| vec![*s])).collect();
     }
-    // Some shapes (holes made by some of the original's tools) have no version string before them:
+    // Some shapes (holes made by some tools) have no version string before them:
     // their mark comes twice, with six bytes between, then the outline; others have the mark once, six
     // bytes, then the outline's class tag directly. Taken only when a toolpath or a group names them, so
     // the toolpath previews kept in the same stream stay out.
@@ -2175,7 +2170,7 @@ pub(crate) mod tests {
         assert_eq!(tabs, vec![[5.0, 0.0], [0.0, 7.5]], "the last piece runs back to the first point");
         // Anything else after the outline: no tabs.
         assert!(tabs_after(&[0u8; 40], 0, &square, &spans, true).is_empty());
-        // A version the original wouldn't read either.
+        // A version that isn't read either.
         let mut newer = d.clone();
         let last = newer.len() - 4;
         newer[last..].copy_from_slice(&2u32.to_le_bytes());
@@ -2217,10 +2212,10 @@ pub(crate) mod tests {
     }
 
     /// The person's flat V-Carve test: the word "test" typed in Times New Roman, kept as a text
-    /// block. Its letters land where the original's moves reach: from 71.051 to 344.405 across and
+    /// block. Its letters land where the saved moves reach: from 71.051 to 344.405 across and
     /// up to 275.273 (the file stays out of the repository; the test passes quietly without it).
     #[test]
-    fn a_text_block_is_read_as_its_letters_where_the_original_put_them() {
+    fn a_text_block_is_read_as_its_letters_where_the_file_puts_them() {
         let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("essais/vcarve-plat.crv3d");
         let Ok(bytes) = std::fs::read(file) else { return };
         let p = read(&bytes).unwrap();
@@ -2244,7 +2239,7 @@ pub(crate) mod tests {
         let Ok(bytes) = std::fs::read(file) else { return };
         let p = read(&bytes).unwrap();
         // The 18-line block, and eight small labels the job also has (brought in by the class's
-        // number: they were missing before, the original's preview shows them all).
+        // number: they were missing before, the job's preview shows them all).
         assert_eq!(p.texts.len(), 9);
         let first = text_blocks(&bytes)[0].0;
         let paths: Vec<Path> = p.shapes.iter().zip(&p.marks).filter(|(_, m)| **m == first).map(|((_, s), _)| s.clone()).collect();
@@ -2353,7 +2348,7 @@ pub(crate) mod tests {
         d.extend_from_slice(&bytes);
         d.extend_from_slice(&[0u8; 96]);
         assert_eq!(read_tool(&d).expect("the drill is read").kind, 6);
-        // Kind 11 is past the original's list of tool kinds.
+        // Kind 11 is past the list of tool kinds.
         d[8 + 4] = 11;
         assert!(read_tool(&d).is_none());
     }
@@ -2614,7 +2609,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn guide_lines_are_read_as_the_original_writes_them() {
+    fn guide_lines_are_read_as_the_file_has_them() {
         // From a user's own file: four guides, three up and down and one across.
         let hex = "766347756964654c696e654d616e61676572010000000104000000ffff01000b00766347756964654c696e65020000000000000000001040b22727e426a659400000000000000000000000000000f03f0000000000805640010000000000ff008034002e336600f3fff91fc01e0680020000000000000000001c400000000000001240000000000000f03f00000000000000000000000000000000020000000000ff008034002e336600f3fff91fc01e0680020000000000000000406d408c81421d521b4c400000000000000000000000000000f03f000000000080564001000000006964594900002e3366004f00310cc16706800200000000000000008047c0e196e18a401a57400000000000000000000000000000f03f000000000080564001000000006964594900002e3366004f00310cc167ffff01000a007663536e617047726964";
         let d: Vec<u8> = (0..hex.len()).step_by(2).map(|k| u8::from_str_radix(&hex[k..k + 2], 16).unwrap()).collect();

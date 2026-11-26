@@ -168,7 +168,7 @@ impl App {
                     told = tf!("Stopped after {done} toolpath(s). The others still have their old moves: Recalculate finishes them.");
                 }
                 self.status = told;
-                // As the original's Recalculate All (`0x140297d90`, `0x14087b4a0`): a box naming
+                // After Recalculate All: a box naming
                 // the toolpaths that failed (its message 0x1E8), or, once stopped, those that
                 // failed or weren't reached (0x346). Asked by the person only, not on opening.
                 if warn && (stopped || !failed.is_empty()) {
@@ -212,7 +212,7 @@ impl App {
                     }
                 }
                 // A V-Carve's clearing toolpath that cuts nothing is dropped, and the message says
-                // why, as the original does (`0x1405680a0`): from the deepest point the carving
+                // why: from the deepest point the carving
                 // reached below its start depth, either no flat is wide enough for the clearing
                 // tool, or the carving never gets down to the flat depth at all.
                 if let Some(note) = self.empty_flat_clearing(&form, &mut made) {

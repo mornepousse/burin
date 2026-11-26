@@ -1,5 +1,5 @@
 //! Smoothing shapes made of many short lines, such as a traced picture or a scanned outline
-//! (Edit > Curve Fit Vectors). The original fits arcs and curves; Burin keeps shapes as points, so it
+//! (Edit > Curve Fit Vectors). Burin keeps shapes as points, so it
 //! drops points within the tolerance and puts a smooth curve through the rest. Burin's own way.
 
 use crate::app::*;

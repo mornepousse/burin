@@ -94,8 +94,8 @@ impl App {
     }
 
     /// When a V-Carve with a flat depth and a clearing tool comes with a clearing toolpath that
-    /// cuts nothing (the first of `made`), takes that toolpath out and says why
-    /// (`0x1405680a0`): the depth the carving reached, below its start depth, is compared with the
+    /// cuts nothing (the first of `made`), takes that toolpath out and says why:
+    /// the depth the carving reached, below its start depth, is compared with the
     /// flat depth. Reached: the flats are all too narrow for the clearing tool. Not reached: the
     /// flat depth is never got to, with both depths, to 3 decimals in millimetres and 4 in inches.
     pub fn empty_flat_clearing(&self, form: &toolpath::Op, made: &mut Vec<(toolpath::Op, std::sync::Arc<Vec<toolpath::Move>>)>) -> Option<String> {

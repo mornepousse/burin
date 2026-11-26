@@ -1,5 +1,4 @@
-//! Toolpath settings kept in a file of their own, to use on other jobs (`0x140882140`, `0x140882df0`
-//! in the original). Burin writes its own format, not the original's.
+//! Toolpath settings kept in a file of their own, to use on other jobs. Burin writes its own format.
 
 use crate::app::*;
 use crate::i18n::tr;

@@ -1,11 +1,10 @@
 //! Fonts for text shapes: the one built into Burin, the fonts installed on the computer, and single-line
 //! fonts for engraving.
 //!
-//! Read from the original: a text's form keeps its font's name, bold, italic, whether it is a TrueType font
-//! (on at first) and how it is justified (the first choice at first) (`0x1408dcdb0`); a name starting with `@`
-//! is a font for upright writing. Besides the computer's TrueType fonts it has its own kind, for single-line
-//! engraving (`TrueTypeFontName` and `VectricFontName`, `0x140756b30`). A text's font is saved with its name
-//! and six numbers (`txtFont`, version 3, `0x1408e3670`).
+//! A text's form keeps its font's name, bold, italic, whether it is a TrueType font
+//! (on at first) and how it is justified (the first choice at first); a name starting with `@`
+//! is a font for upright writing. Besides the computer's TrueType fonts there is a kind for single-line
+//! engraving. A text's font is saved with its name and six numbers (version 3).
 //!
 //! Burin's single-line fonts are the Hershey fonts, made by Dr. A. V. Hershey at the U. S. National Bureau of
 //! Standards, in the format of James Hurt, Cognition, Inc. (see `assets/fonts/HERSHEY-NOTICE.txt`).
@@ -41,24 +40,24 @@ pub struct TextStyle {
     pub italic: bool,
     #[serde(default)]
     pub align: TextAlign,
-    /// How far apart the letters are, as a share of their own widths: 1 as the font has them, the original's
-    /// text block spacing at first (`_txtblkSpacingValue` = 1.0, `0x1408d6cd0`).
+    /// How far apart the letters are, as a share of their own widths: 1 as the font has them, which is
+    /// the spacing at first.
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub spacing: f64,
     /// How far apart lines are, in capital heights.
     #[serde(default = "line_gap", skip_serializing_if = "is_line_gap")]
     pub line_spacing: f64,
     /// Upright writing: letters one under another, each standing up, the lines as columns from right
-    /// to left. The original turns this on for a font whose name starts with `@` (`0x1408ea400`,
-    /// `0x1408db56a`) and keeps it with the text's font (`txtFont` version 3, `0x1408e3670`).
+    /// to left. This is turned on for a font whose name starts with `@`
+    /// and kept with the text's font (version 3).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub vertical: bool,
     /// Space added before each letter by clicking between letters, in capital heights, by the
-    /// letter's place in the whole text (the original's per-letter offset, `+0x40`, `0x1408e76c0`).
+    /// letter's place in the whole text (the per-letter offset).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub letter_gaps: Vec<f64>,
-    /// Space added above each line by clicking between lines, in capital heights (the original's
-    /// line offset, `+0x48`, `0x1408d8e90`).
+    /// Space added above each line by clicking between lines, in capital heights (the
+    /// line offset).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub line_gaps: Vec<f64>,
 }
@@ -72,11 +71,11 @@ pub enum TextGap {
 }
 
 /// How much one click moves letters or lines, as a share of the letter's advance or the line's
-/// height: 0.05, or 0.2 with Ctrl (`0x140a84a90`, `0x1420f48c0`, `0x14211b1a8`).
+/// height: 0.05, or 0.2 with Ctrl.
 pub const KERN_STEP: f64 = 0.05;
 pub const KERN_STEP_COARSE: f64 = 0.2;
 /// A letter's advance can't be brought under this share of itself; if it would be, the letter is
-/// put this share of its advance back instead (`0x1408e76c0`: `0x1420e8d18`, `0x142186fa0`).
+/// put this share of its advance back instead.
 pub const LEAST_ADVANCE_SHARE: f64 = 0.1;
 pub const CLOSEST_OFFSET_SHARE: f64 = -0.1;
 
@@ -103,7 +102,7 @@ pub fn gap_at(text: &str, height: f64, origin: P, style: &TextStyle, p: P, reach
     None
 }
 
-/// One click on a gap: closer, or apart with Shift; Ctrl for a bigger step (`0x1408d8e90`).
+/// One click on a gap: closer, or apart with Shift; Ctrl for a bigger step.
 pub fn adjust_gap(text: &str, height: f64, origin: P, style: &mut TextStyle, gap: TextGap, apart: bool, coarse: bool) -> bool {
     let step = if coarse { KERN_STEP_COARSE } else { KERN_STEP };
     let sign = if apart { 1.0 } else { -1.0 };
@@ -120,7 +119,7 @@ pub fn adjust_gap(text: &str, height: f64, origin: P, style: &mut TextStyle, gap
             style.letter_gaps[index] = (total - c.kern) / height;
         }
         TextGap::Line(row) => {
-            // Lines can't come closer than one line's height (`0x1408d8e90`); the first doesn't move.
+            // Lines can't come closer than one line's height; the first doesn't move.
             if row == 0 {
                 return false;
             }
@@ -346,8 +345,7 @@ fn single_glyphs(src: &'static str) -> &'static [Stroked] {
 
 /// The picture of a font's name in that font, made the first time its line shows and kept. None when the
 /// font can't be read or has no letters for its own name (a font of symbols): the name is written plainly then.
-/// The second part says it is a font of symbols: its name is then written plainly, with the picture after it,
-/// as the original does for those (`0x140a04a90`).
+/// The second part says it is a font of symbols: its name is then written plainly, with the picture after it.
 type Preview = Option<(egui::TextureHandle, bool)>;
 
 fn preview_texture(ctx: &egui::Context, font: &str) -> Preview {
@@ -357,7 +355,7 @@ fn preview_texture(ctx: &egui::Context, font: &str) -> Preview {
         return t;
     }
     let family = families().iter().find(|f| f.name == font)?;
-    // Regular weight, as the original asks for each one (400, `0x140a004f0`).
+    // Regular weight for each one (400).
     let loaded = pick_face(family, false, false).and_then(|(face, _)| {
         // Read for the picture only, not kept: going down the whole list mustn't keep every font in memory.
         let bytes = crate::platform::read(&face.path).ok()?;
@@ -597,8 +595,8 @@ pub fn pick_face(family: &Family, bold: bool, italic: bool) -> Option<(Face, boo
     Some((face.clone(), italic && !face.italic))
 }
 
-/// How much of a box text fills when fitted to it, at first, in percent: the original's text block starts at
-/// 100 (`_txtblkFillPercent`, `0x1408d6cd0`).
+/// How much of a box text fills when fitted to it, at first, in percent: it starts at
+/// 100.
 pub const FILL_PERCENT: f64 = 100.0;
 
 /// The height and point that make `text` fill `percent` of the box from `lo` to `hi`, keeping its proportions
@@ -608,8 +606,8 @@ pub fn fit_in_box(text: &str, style: &TextStyle, lo: P, hi: P, percent: f64) -> 
     lay_out_in_box(text, style, lo, hi, &layout).map(|(at, height, _)| (at, height))
 }
 
-/// The original's Auto Layout Text margin (`_txtAL_margin_spacing`, `0x1408d9c90`): none, a tenth or a fifth of the
-/// box's width on each side (`0x1420e8d18`, `0x14211b1a8`).
+/// The Auto Layout Text margin: none, a tenth or a fifth of the
+/// box's width on each side.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Margin {
     #[default]
@@ -637,13 +635,13 @@ pub struct BoxLayout {
     /// Burin's share of the room left inside the margins.
     pub percent: f64,
     pub margin: Margin,
-    /// The original's horizontal choice 2: the letters spread until the widest line fills the width (`0x1408de7c0`).
+    /// Horizontal choice 2: the letters spread until the widest line fills the width.
     pub spread_letters: bool,
     /// Centred across whatever the alignment, as Fit to Selected Shape always did.
     pub centre_across: bool,
 }
 
-/// Lays a text out in the box from `lo` to `hi` as the original's Auto Layout Text does (`0x1408d9c90`): inside
+/// Lays a text out in the box from `lo` to `hi` as Auto Layout Text does: inside
 /// the margin (a share of the box's width each side, the room `1 - 2 × share` of it each way), as big as fits
 /// both ways keeping its proportions, centred top to bottom, and starting at the margin (left aligned), ending at
 /// it (right) or centred. Gives the place, the capital height and the letter spacing.
@@ -782,8 +780,7 @@ fn outlines(text: &str, height: f64, origin: P, font: &impl Font, lean: bool, st
     let mut first = 0;
     for (row, line) in text.split('\n').enumerate() {
         // Each letter's place: its width times the spacing asked for, with the font's own kerning between
-        // pairs, as the original keeps a font's kerning pairs with it (`txtKerningPairs`, `0x1408e5410`),
-        // and any space added by clicking between the letters.
+        // pairs, and any space added by clicking between the letters.
         let ids: Vec<_> = line.chars().map(|ch| font.glyph_id(ch)).collect();
         let mut places = Vec::with_capacity(ids.len());
         let mut kerns = Vec::with_capacity(ids.len());
@@ -985,7 +982,7 @@ mod tests {
     }
 
     /// Upright writing puts the letters one under another, each standing up, and a font whose
-    /// name starts with @ does it too, as in the original.
+    /// name starts with @ does it too.
     #[test]
     fn upright_text_goes_down_the_page() {
         let flat = text_paths("AB", 1.0, [0.0, 0.0], &TextStyle::default());
