@@ -123,6 +123,8 @@ h2 { font-family: var(--serif); font-size: 2.6rem; font-weight: 600; margin: 8px
 .why div { border-top: 2px solid var(--orange); padding-top: 14px; }
 .why h3 { font-family: var(--serif); font-size: 1.3rem; margin: 0 0 6px; font-weight: 600; }
 .why p { margin: 0; color: var(--muted); font-size: .95rem; }
+.why ul.opens { margin: 0; padding-left: 1.1em; color: var(--muted); font-size: .9rem; line-height: 1.45; }
+.why ul.opens b { color: var(--text); font-weight: 600; }
 .flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: 14px; align-items: center; padding-bottom: 54px; }
 .flow .col { background: rgba(26,33,44,.75); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; min-height: 150px; }
 .flow .col h3 { font: 700 .74rem var(--mono); color: var(--plan); letter-spacing: .12em; text-transform: uppercase; margin: 0 0 12px; }
