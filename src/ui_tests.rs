@@ -7861,3 +7861,4 @@ fn the_middles_of_the_sides_are_anchors_too() {
     let LeftForm::Xform(f) = &h.state().left else { panic!("the move form is open") };
     assert_eq!(f.anchor, Datum::Left);
 }
+

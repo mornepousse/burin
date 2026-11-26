@@ -438,11 +438,22 @@ impl App {
                 }
             }
             response.context_menu(|ui| self.canvas_menu(ui));
-            // For a picture of the menu: BURIN_MENU_SHOT=1 shows it open in the middle of the view.
-            if std::env::var_os("BURIN_MENU_SHOT").is_some() {
+            // For a picture of a menu: BURIN_MENU_SHOT=1 shows the right-click menu open in the
+            // middle of the view, BURIN_MENU_SHOT=edit or file a menu of the top bar.
+            if let Some(which) = std::env::var_os("BURIN_MENU_SHOT") {
                 let at = sheet_rect.center();
                 egui::Area::new(egui::Id::unique("menu-shot")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
-                    egui::Frame::menu(ui.style()).show(ui, |ui| self.canvas_menu(ui));
+                    egui::Frame::menu(ui.style()).show(ui, |ui| {
+                        // Laid out as a menu of the top bar: entries the menu's width.
+                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                            ui.set_max_width(320.0);
+                            match which.to_str() {
+                                Some("edit") => self.edit_menu(ui),
+                                Some("file") => self.file_menu(ui, true),
+                                _ => self.canvas_menu(ui),
+                            }
+                        });
+                    });
                 });
             }
         }

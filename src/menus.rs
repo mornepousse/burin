@@ -9,13 +9,18 @@ use crate::toolpath::OpKind;
 use egui::Ui;
 use std::path::{Path as FilePath, PathBuf};
 
-/// An entry that does something. Its key, if any, shows when the pointer rests on it.
+/// An entry that does something, its key (if it has one) written on the right of its line, as
+/// menus show them (the person asked for it).
+/// A key's text may go on with a hint on the next lines: the key goes on the line, the hint shows
+/// when the pointer rests on the entry.
 fn entry(ui: &mut Ui, label: &'static str, enabled: bool, key: Option<String>) -> bool {
-    let response = ui.add_enabled(enabled, egui::Button::new(tr(label)));
-    let response = match key {
-        Some(key) => response.on_hover_text(key),
-        None => response,
-    };
+    let key = key.unwrap_or_default();
+    let (key, hint) = key.split_once('\n').map_or((key.as_str(), ""), |(k, h)| (k, h));
+    let button = if key.is_empty() { egui::Button::new(tr(label)) } else { egui::Button::new(tr(label)).shortcut_text(key) };
+    let response = ui.add_enabled(enabled, button);
+    // Named by its words alone: the key written on its line isn't part of its name.
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tr(label)));
+    let response = if hint.is_empty() { response } else { response.on_hover_text(hint).on_disabled_hover_text(hint) };
     if response.clicked() {
         crate::crash::note(label);
         ui.close();
@@ -839,7 +844,7 @@ impl App {
         }
     }
 
-    fn file_menu(&mut self, ui: &mut Ui, work: bool) {
+    pub(crate) fn file_menu(&mut self, ui: &mut Ui, work: bool) {
         let keys = self.keys;
         if entry(ui, "New", true, Some(keys.text(Action::New))) {
             self.leave_for(Leave::New);
@@ -922,7 +927,7 @@ impl App {
         }
     }
 
-    fn edit_menu(&mut self, ui: &mut Ui) {
+    pub(crate) fn edit_menu(&mut self, ui: &mut Ui) {
         let keys = self.keys;
         let some = !self.selected.is_empty();
         if entry(ui, "Undo", !self.undo.is_empty(), Some(keys.text(Action::Undo))) {
