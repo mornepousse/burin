@@ -277,12 +277,23 @@ impl App {
         for v in self.visible_vectors().filter(|v| self.pickable(v)) {
             for (a, b) in v.paths.iter().flat_map(|p| p.segments()) {
                 let d = geom::dist2_seg(w, a, b);
-                if d <= reach * reach && best.is_none_or(|(old, _)| d < old) {
+                if d <= reach * reach && best.is_none_or(|(old, id)| self.picks_over(d, v.id, old, id)) {
                     best = Some((d, v.id));
                 }
             }
         }
         best.map(|(_, id)| id)
+    }
+
+    /// Whether a shape `near` away beats the one found so far. Shapes lying on each other (a copy
+    /// pasted in place) are equally near: then the selected one wins, else the one drawn last (on top).
+    fn picks_over(&self, near: f64, id: u64, old_near: f64, old_id: u64) -> bool {
+        let tie = (near - old_near).abs() <= 1e-12 + 1e-9 * old_near.abs();
+        if !tie {
+            return near < old_near;
+        }
+        let (new_sel, old_sel) = (self.selected.contains(&id), self.selected.contains(&old_id));
+        new_sel || !old_sel
     }
 
     /// The shape under the pointer: nearest edge first, then the smallest shape around it.
@@ -296,7 +307,7 @@ impl App {
             if geom::inside_even_odd(&v.paths, w) {
                 let (lo, hi) = geom::bbox(&v.paths)?;
                 let area = (hi[0] - lo[0]) * (hi[1] - lo[1]);
-                if inside.is_none_or(|(old, _)| area < old) {
+                if inside.is_none_or(|(old, old_id)| self.picks_over(area, v.id, old, old_id)) {
                     inside = Some((area, v.id));
                 }
             }

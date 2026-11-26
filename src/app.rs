@@ -2643,7 +2643,8 @@ impl App {
             return;
         }
         self.checkpoint();
-        let step = self.doc.job.width.min(self.doc.job.height) * 0.02;
+        // The copy goes exactly where the original is, to be moved from there by a known
+        // distance (the person's way: copy, paste, move in relative).
         let items = self.clipboard.clone();
         self.selected.clear();
         let mut pairs = Vec::new();
@@ -2655,18 +2656,12 @@ impl App {
             // Pasted onto the sheet and side showing, wherever it was copied from.
             v.sheet = self.doc.active_sheet;
             v.face = self.doc.active_face;
-            for p in v.paths.iter_mut().flat_map(|p| p.pts.iter_mut()) {
-                p[0] += step;
-                p[1] -= step;
-            }
-            v.prim.translate(step, -step);
             self.selected.push(v.id);
             self.doc.vectors.push(v);
         }
         let pasted = self.selected.clone();
         self.doc.sort_out_copied_pieces(&pasted);
         self.doc.join_copies_to_toolpaths(&pairs);
-        self.copy_selected();
         // The copy comes selected with its handles showing, ready to be moved or sized, as the
         // second click on a shape gives (seen by the person in the original).
         self.handles_on = Some(self.selected.clone());

@@ -4294,6 +4294,8 @@ fn a_copied_piece_joins_the_toolpaths_of_what_it_came_from() {
     h.state_mut().selected = vec![outline, hole];
     h.state_mut().copy_selected();
     h.state_mut().paste();
+    // Pasted in place, then moved aside by a known distance.
+    h.state_mut().translate_selected(4.0, 0.0);
     h.run();
     let copies = h.state().selected.clone();
     assert_eq!(copies.len(), 2);
@@ -7189,7 +7191,9 @@ fn the_first_press_on_a_shape_only_selects_it() {
     assert!((after.0[0] - before.0[0] - 2.0).abs() < 0.05, "with its handles the drag moves it: {:?} → {:?}", before, after);
 }
 
-/// A pasted copy comes selected with its handles showing, and moves with the first drag.
+/// A pasted copy comes selected with its handles showing, exactly where the original is (the
+/// person's way: copy, paste, then move it by a known distance), and moves with the first drag
+/// though it lies on the original.
 #[test]
 fn a_pasted_copy_is_ready_to_move() {
     let mut h = job_with_square([5.0, 5.0]);
@@ -7201,11 +7205,14 @@ fn a_pasted_copy_is_ready_to_move() {
     assert_eq!(h.state().handles_on.as_deref(), Some([copy].as_slice()), "its handles show at once");
     let box_of = |h: &Harness<'static, App>| crate::geom::bbox(&h.state().doc.vectors[1].paths).unwrap();
     let before = box_of(&h);
+    let original = crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap();
+    assert_eq!(before, original, "pasted in place");
     let edge = [before.0[0], (before.0[1] + before.1[1]) / 2.0];
     let (from, to) = (h.state().to_screen(edge), h.state().to_screen([edge[0], edge[1] - 2.0]));
     drag(&mut h, from, to);
     let after = box_of(&h);
     assert!((before.0[1] - after.0[1] - 2.0).abs() < 0.05, "the first drag moves the copy: {before:?} → {after:?}");
+    assert_eq!(crate::geom::bbox(&h.state().doc.vectors[0].paths).unwrap(), original, "the original stays");
 }
 
 /// The arrow keys move a selection in either mode, handles showing or not: the original's key
