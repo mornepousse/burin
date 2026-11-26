@@ -1360,8 +1360,13 @@ impl App {
         if entry(ui, "Keyboard Shortcuts", true, None) {
             self.prefs_open = true;
         }
-        // Burin's own: a problem goes straight to the author by mail, when this copy knows where.
-        if self.report_address.is_some() && entry(ui, "Report a Problem by Mail...", true, None) {
+        // Burin's own: a problem goes straight to the author (by the relay, or by mail), when this
+        // copy knows where.
+        if self.report_relay.is_some() {
+            if entry(ui, "Report a Problem...", true, None) {
+                self.open_feedback(ui.ctx(), None);
+            }
+        } else if self.report_address.is_some() && entry(ui, "Report a Problem by Mail...", true, None) {
             self.open_feedback(ui.ctx(), None);
         }
         if entry(ui, "Send Feedback...", true, None) {

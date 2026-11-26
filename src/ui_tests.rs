@@ -8008,6 +8008,72 @@ fn feedback_goes_by_mail_when_the_release_has_an_address() {
     assert!(h.query_by_label("Open a Draft in the Browser").is_none(), "by mail only");
 }
 
+/// Send posts the report the form shows to the relay, and says when it has gone; a refusal for
+/// too many reports is said in plain words.
+#[test]
+fn feedback_is_sent_straight_to_the_relay() {
+    use std::io::{Read, Write};
+    let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/api/report", server.local_addr().unwrap());
+    let heard = std::thread::spawn(move || {
+        let (mut conn, _) = server.accept().unwrap();
+        conn.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        let mut got = Vec::new();
+        let mut buf = [0u8; 4096];
+        // Headers, then as much body as they announce.
+        loop {
+            let n = conn.read(&mut buf).unwrap_or(0);
+            got.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&got).to_string();
+            if let Some(end) = text.find("\r\n\r\n") {
+                let length = text.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0))).unwrap_or(0);
+                if got.len() >= end + 4 + length || n == 0 {
+                    break;
+                }
+            }
+            if n == 0 {
+                break;
+            }
+        }
+        conn.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}").unwrap();
+        String::from_utf8_lossy(&got).to_string()
+    });
+    let mut h = harness();
+    h.state_mut().report_relay = Some(url);
+    h.state_mut().report_address = Some("reports@example.org".into());
+    let ctx = h.ctx.clone();
+    h.state_mut().open_feedback(&ctx, None);
+    h.run();
+    h.get_all_by_value("").next().unwrap().focus();
+    h.run();
+    h.get_all_by_value("").next().unwrap().type_text("Cut stops");
+    h.run();
+    h.get_by_label("Send").click();
+    h.step();
+    let request = heard.join().unwrap();
+    assert!(request.starts_with("POST /api/report"), "{request}");
+    let body = &request[request.find("\r\n\r\n").unwrap() + 4..];
+    let sent: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(sent["kind"], "Problem");
+    assert_eq!(sent["title"], "Cut stops");
+    assert!(sent["text"].as_str().unwrap().contains("### Details"), "the details shown go too");
+    // The answer comes back on another thread.
+    for _ in 0..100 {
+        h.step();
+        if h.state().feedback.as_ref().is_some_and(|f| f.sent) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    h.run();
+    h.get_by_label("Sent. Thank you!");
+    // Mail stays as another way; the browser draft isn't offered.
+    h.get_by_label("Send by Mail");
+    assert!(h.query_by_label("Open a Draft in the Browser").is_none());
+    assert!(crate::feedback::relay_answer(429, true).unwrap_err().contains("last hour"));
+    assert!(crate::feedback::relay_answer(0, false).unwrap_err().contains("internet"));
+}
+
 /// The person's report: a circle given as a diameter stays so for the next circle; a click
 /// places a circle of the form's size there (holes on a square's corners, one click each); a
 /// dragged circle's size goes by whole millimetres (its diameter, when given as one).

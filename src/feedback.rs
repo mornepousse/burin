@@ -1,6 +1,7 @@
-//! Telling the author something: a fault, an idea, a question, or a crash report. Burin sends nothing
-//! itself. It opens a message ready to send in the person's mail program, to the author's address
-//! (written in when the release is built), or else a draft on the project's page in the browser.
+//! Telling the author something: a fault, an idea, a question, or a crash report. Nothing leaves
+//! until the person presses a button, and only the text the form shows. Send posts it to the
+//! author's relay on Burin's site (`relay/`), which passes it on by mail; the mail program, or a draft
+//! on the project's page in the browser, stay as other ways.
 
 use crate::app::*;
 use crate::crash::{self, Report};
@@ -16,6 +17,60 @@ pub const ISSUES_PAGE: Option<&str> = option_env!("BURIN_ISSUES_URL");
 /// Where reports go by mail, written in when the release is built (`release/build.sh`, from a file
 /// kept off the repository). A copy built without it opens a draft on the project's page instead.
 pub const REPORT_ADDRESS: Option<&str> = option_env!("BURIN_REPORT_EMAIL");
+
+/// Where Send posts a report: the relay on Burin's site, which passes it on to the author by mail.
+/// A build can name another with BURIN_REPORT_RELAY. Tests and the web version send nothing.
+#[cfg(not(any(test, target_arch = "wasm32")))]
+pub const RELAY: Option<&str> = match option_env!("BURIN_REPORT_RELAY") {
+    Some(url) => Some(url),
+    None => Some("https://burin.cc/api/report"),
+};
+#[cfg(any(test, target_arch = "wasm32"))]
+pub const RELAY: Option<&str> = None;
+
+/// What a report sent by the relay holds, as JSON: what kind, its title and text, which version.
+pub fn relay_message(kind: &str, title: &str, text: &str) -> String {
+    let language = if crate::i18n::language() == crate::i18n::Lang::French { "fr" } else { "en" };
+    serde_json::json!({ "kind": kind, "title": title, "text": text, "version": env!("CARGO_PKG_VERSION"), "language": language }).to_string()
+}
+
+/// How a relay's answer reads: sent, or why not, in words for the person.
+pub fn relay_answer(code: u16, reached: bool) -> Result<(), String> {
+    match (reached, code) {
+        (true, 200..=299) => Ok(()),
+        (true, 429) => Err(tr("Several reports were already sent from here in the last hour. Try again later, or send it another way below.").to_string()),
+        (true, 413) => Err(tr("The text is too long to send. Shorten it, or copy it and send it another way.").to_string()),
+        (true, _) => Err(tf!("The report service answered with an error ({}). Try again later, or send it another way below.", code)),
+        (false, _) => Err(tr("Burin couldn't reach the report service: are you connected to the internet? Try again, or send it another way below.").to_string()),
+    }
+}
+
+/// Posts a report to the relay and says how it went (curl, as for the update check).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn post_report(url: &str, message: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut command = std::process::Command::new("curl");
+    command.args(["-sS", "--max-time", "20", "-w", "\n%{http_code}", "-H", "Content-Type: application/json", "-A", concat!("Burin/", env!("CARGO_PKG_VERSION")), "--data-binary", "@-", url]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    command.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+    let Ok(mut child) = command.spawn() else { return relay_answer(0, false) };
+    if let Some(mut input) = child.stdin.take() {
+        let _ = input.write_all(message.as_bytes());
+    }
+    let Ok(out) = child.wait_with_output() else { return relay_answer(0, false) };
+    // The answer's body, then the status code on the last line.
+    let code: u16 = String::from_utf8_lossy(&out.stdout).lines().last().and_then(|l| l.trim().parse().ok()).unwrap_or(0);
+    relay_answer(code, code != 0)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn post_report(_url: &str, _message: &str) -> Result<(), String> {
+    relay_answer(0, false)
+}
 
 /// Past this a mail link gets cut off by some mail programs, so the text goes by the clipboard.
 const LONGEST_MAIL_LINK: usize = 1900;
@@ -59,6 +114,9 @@ pub struct FeedbackForm {
     /// The window as it was before this form opened.
     pub picture: Arc<Mutex<Option<egui::ColorImage>>>,
     pub said: Option<String>,
+    /// A report on its way to the relay: how it went, once it has.
+    pub sending: Option<Arc<Mutex<Option<Result<(), String>>>>>,
+    pub sent: bool,
 }
 
 /// Web address text, with everything that could end a value made safe.
@@ -133,7 +191,7 @@ impl App {
         let picture = Arc::new(Mutex::new(None));
         let title = crash.as_ref().map_or(String::new(), Report::headline);
         let text = if crash.is_some() { tr("What were you doing when it stopped?").to_string() } else { String::new() };
-        self.feedback = Some(FeedbackForm { kind: Kind::Problem, title, text, with_details: true, crash, picture: picture.clone(), said: None });
+        self.feedback = Some(FeedbackForm { kind: Kind::Problem, title, text, with_details: true, crash, picture: picture.clone(), said: None, sending: None, sent: false });
         // Taken at once, so the picture shows the work rather than this form.
         self.want_picture = Some(picture);
         ctx.request_repaint();
@@ -170,7 +228,10 @@ impl App {
             });
             ui.add_space(4.0);
             let by_mail = self.report_address.clone();
-            let note = if by_mail.is_some() {
+            let relay = self.report_relay.clone();
+            let note = if relay.is_some() {
+                tr("Nothing leaves until you press Send. Then exactly the text shown above goes to Burin's author over the internet, and nothing else: your job and its file names are never in it.")
+            } else if by_mail.is_some() {
                 tr("Burin sends nothing by itself. The message opens in your mail program, addressed to Burin's author, and goes nowhere until you send it. Your job and its file names are never in it.")
             } else {
                 tr("Burin sends nothing by itself. The draft opens in your browser and goes nowhere until you submit it. Your job and its file names are never in it.")
@@ -178,9 +239,46 @@ impl App {
             ui.label(RichText::new(note).size(12.0).color(theme::MUTED()));
             ui.add_space(6.0);
             let ready = !form.title.trim().is_empty();
+            // How a report sent to the relay went.
+            if let Some(answer) = form.sending.as_ref().and_then(|s| s.lock().ok().and_then(|mut a| a.take())) {
+                form.sending = None;
+                match answer {
+                    Ok(()) => {
+                        form.sent = true;
+                        form.said = Some(tr("Sent. Thank you!").to_string());
+                    }
+                    Err(why) => form.said = Some(why),
+                }
+            }
+            let on_its_way = form.sending.is_some();
             ui.horizontal_wrapped(|ui| {
+                if let Some(url) = relay.clone() {
+                    let label = if form.sent { tr("Sent") } else { tr("Send") };
+                    if ui.add_enabled(ready && !on_its_way && !form.sent, egui::Button::new(RichText::new(label).strong().color(theme::ON_ACCENT)).fill(theme::ACCENT)).clicked() {
+                        crash::note("Send");
+                        let kind = if form.crash.is_some() { "Crash" } else { form.kind.tag() };
+                        let message = relay_message(kind, form.title.trim(), &body);
+                        let answer = Arc::new(Mutex::new(None));
+                        form.sending = Some(answer.clone());
+                        form.said = None;
+                        self.last_draft = Some(message.clone());
+                        let ctx = ui.ctx().clone();
+                        std::thread::spawn(move || {
+                            let result = post_report(&url, &message);
+                            if let Ok(mut a) = answer.lock() {
+                                *a = Some(result);
+                            }
+                            ctx.request_repaint();
+                        });
+                    }
+                    if on_its_way {
+                        ui.spinner();
+                        ui.label(tr("Sending..."));
+                    }
+                }
                 if let Some(to) = by_mail.clone() {
-                    if ui.add_enabled(ready, egui::Button::new(RichText::new(tr("Send by Mail")).strong().color(theme::ON_ACCENT)).fill(theme::ACCENT)).clicked() {
+                    let button = if relay.is_some() { egui::Button::new(tr("Send by Mail")) } else { egui::Button::new(RichText::new(tr("Send by Mail")).strong().color(theme::ON_ACCENT)).fill(theme::ACCENT) };
+                    if ui.add_enabled(ready, button).clicked() {
                         crash::note("Send by Mail");
                         let (link, too_long) = mail_link(&to, &format!("Burin: {}", form.title_of_draft()), &body);
                         if too_long {
@@ -193,7 +291,7 @@ impl App {
                         ui.ctx().open_url(egui::OpenUrl::same_tab(link));
                     }
                 }
-                if let Some(page) = self.issues_page.clone().filter(|_| by_mail.is_none()) {
+                if let Some(page) = self.issues_page.clone().filter(|_| by_mail.is_none() && relay.is_none()) {
                     if ui.add_enabled(ready, egui::Button::new(tr("Open a Draft in the Browser"))).clicked() {
                         crash::note("Open a Draft in the Browser");
                         let (address, too_long) = draft_address(&page, &form.title_of_draft(), &body);
@@ -222,7 +320,7 @@ impl App {
                     }
                 }
             });
-            if self.issues_page.is_none() && self.report_address.is_none() {
+            if self.issues_page.is_none() && self.report_address.is_none() && self.report_relay.is_none() {
                 ui.label(RichText::new(tr("This copy of Burin doesn't know where to send drafts. Copy the text instead.")).size(12.0).color(theme::MUTED()));
             }
             if let Some(said) = &form.said {
@@ -379,7 +477,7 @@ mod tests {
 
     #[test]
     fn the_text_is_kept_to_a_size_on_a_character_boundary() {
-        let form = FeedbackForm { kind: Kind::Idea, title: " Hello ".into(), text: "é".repeat(LONGEST_TEXT), with_details: false, crash: None, picture: Default::default(), said: None };
+        let form = FeedbackForm { kind: Kind::Idea, title: " Hello ".into(), text: "é".repeat(LONGEST_TEXT), with_details: false, crash: None, picture: Default::default(), said: None, sending: None, sent: false };
         assert_eq!(form.title_of_draft(), "[Idea] Hello");
         let body = form.body("");
         assert!(body.len() < LONGEST_TEXT + 40 && body.ends_with("(cut short)\n"));
@@ -387,7 +485,7 @@ mod tests {
 
     #[test]
     fn details_are_only_there_when_asked_for() {
-        let mut form = FeedbackForm { kind: Kind::Problem, title: "x".into(), text: "It broke".into(), with_details: true, crash: None, picture: Default::default(), said: None };
+        let mut form = FeedbackForm { kind: Kind::Problem, title: "x".into(), text: "It broke".into(), with_details: true, crash: None, picture: Default::default(), said: None, sending: None, sent: false };
         assert!(form.body("the details").contains("the details"));
         form.with_details = false;
         assert!(!form.body("the details").contains("the details"));

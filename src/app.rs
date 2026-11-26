@@ -1380,6 +1380,8 @@ pub struct App {
     pub issues_page: Option<String>,
     /// Where reports go by mail (`feedback::REPORT_ADDRESS`).
     pub report_address: Option<String>,
+    /// Where Send posts reports (`feedback::RELAY`).
+    pub report_relay: Option<String>,
     /// The last draft's address, for checking what it would say.
     pub last_draft: Option<String>,
     pub want_picture: Option<std::sync::Arc<std::sync::Mutex<Option<egui::ColorImage>>>>,
@@ -1787,6 +1789,7 @@ impl Default for App {
             feedback: None,
             issues_page: crate::feedback::ISSUES_PAGE.map(str::to_string),
             report_address: crate::feedback::REPORT_ADDRESS.map(str::to_string),
+            report_relay: crate::feedback::RELAY.map(str::to_string),
             last_draft: None,
             want_picture: None,
             crashes_open: false,

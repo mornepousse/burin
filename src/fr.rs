@@ -2086,4 +2086,15 @@ pub const FR: &[(&str, &str)] = &[
     ("{} slots {}", "{} rainures {}"),
     ("{} holes use a drill size the file doesn't give: they were left out.", "{} trous utilisent un foret dont le fichier ne donne pas la taille : ils ont été laissés de côté."),
     ("The file repeats parts of itself (step and repeat): only the first copy came in.", "Le fichier répète certaines de ses parties (step and repeat) : seule la première copie a été importée."),
+    // Reports sent straight to the author through the relay.
+    ("Report a Problem...", "Signaler un problème..."),
+    ("Send", "Envoyer"),
+    ("Sent", "Envoyé"),
+    ("Sending...", "Envoi..."),
+    ("Sent. Thank you!", "Envoyé. Merci !"),
+    ("Nothing leaves until you press Send. Then exactly the text shown above goes to Burin's author over the internet, and nothing else: your job and its file names are never in it.", "Rien ne part avant que vous appuyiez sur Envoyer. Alors, exactement le texte affiché ci-dessus part vers l'auteur de Burin par internet, et rien d'autre : votre projet et ses noms de fichiers n'y sont jamais."),
+    ("Several reports were already sent from here in the last hour. Try again later, or send it another way below.", "Plusieurs messages sont déjà partis d'ici dans la dernière heure. Réessayez plus tard, ou envoyez-le autrement ci-dessous."),
+    ("The text is too long to send. Shorten it, or copy it and send it another way.", "Le texte est trop long pour être envoyé. Raccourcissez-le, ou copiez-le et envoyez-le autrement."),
+    ("The report service answered with an error ({}). Try again later, or send it another way below.", "Le service de rapports a répondu par une erreur ({}). Réessayez plus tard, ou envoyez-le autrement ci-dessous."),
+    ("Burin couldn't reach the report service: are you connected to the internet? Try again, or send it another way below.", "Burin n'a pas pu joindre le service de rapports : êtes-vous connecté à internet ? Réessayez, ou envoyez-le autrement ci-dessous."),
 ];
