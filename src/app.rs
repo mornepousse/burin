@@ -1268,6 +1268,10 @@ pub struct App {
     pub show_model2d: bool,
     pub drag: crate::canvas::Drag,
     pub measure: Option<(P, P)>,
+    /// What the measure tool measures, where the pointer is, and the shape clicked (`measure.rs`).
+    pub measure_mode: crate::measure::MeasureMode,
+    pub measure_cursor: Option<P>,
+    pub inspected: Option<crate::measure::Inspected>,
     pub cursor: Option<P>,
 
     // Model and preview
@@ -1690,6 +1694,9 @@ impl Default for App {
             show_model2d: false,
             drag: crate::canvas::Drag::None,
             measure: None,
+            measure_mode: Default::default(),
+            measure_cursor: None,
+            inspected: None,
             cursor: None,
             model: None,
             model_dirty: false,

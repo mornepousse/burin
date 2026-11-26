@@ -2423,6 +2423,8 @@ impl App {
                 let form_open = matches!(self.left, LeftForm::Draw(_) | LeftForm::Xform(_) | LeftForm::Shape(_) | LeftForm::Trace(_) | LeftForm::Relief(_));
                 if form_open {
                     self.left_form(ui);
+                } else if self.tool == Tool2::Measure && !self.view3d && self.left_tab == LeftTab::Drawing {
+                    self.measure_panel(ui);
                 } else {
                     match self.left_tab {
                         LeftTab::Drawing => self.drawing_tab(ui),

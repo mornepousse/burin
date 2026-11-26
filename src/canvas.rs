@@ -261,7 +261,7 @@ impl App {
         (fine, fine * 5.0)
     }
 
-    fn visible_vectors(&self) -> impl Iterator<Item = &crate::app::Vector> {
+    pub(crate) fn visible_vectors(&self) -> impl Iterator<Item = &crate::app::Vector> {
         self.doc.vectors.iter().filter(|v| self.doc.shows(v))
     }
 
@@ -801,25 +801,6 @@ impl App {
         }
     }
 
-    fn handle_measure(&mut self, response: &egui::Response, pointer: Option<Pos2>, press: Option<Pos2>) {
-        if let Some(p) = press {
-            let start = self.snapped(self.to_world(p));
-            self.drag = Drag::Measure { start };
-            self.measure = Some((start, start));
-        }
-        if let (Drag::Measure { start }, Some(p)) = (&self.drag, pointer) {
-            let start = *start;
-            let now = self.snapped(self.to_world(p));
-            self.measure = Some((start, now));
-            let d = (now[0] - start[0]).hypot(now[1] - start[1]);
-            let angle = (now[1] - start[1]).atan2(now[0] - start[0]).to_degrees();
-            self.status = tf!("Distance {:.4} {}, angle {angle:.1} degrees", d, self.doc.job.unit());
-            if response.drag_stopped() {
-                self.drag = Drag::None;
-            }
-        }
-    }
-
     fn handle_zoom_box(&mut self, response: &egui::Response, pointer: Option<Pos2>, press: Option<Pos2>, rect: Rect) {
         if let Some(p) = press {
             self.drag = Drag::Zoom(p);
@@ -1290,12 +1271,7 @@ impl App {
             }
             _ => {}
         }
-        if let Some((a, b)) = self.measure.filter(|_| self.tool == Tool2::Measure) {
-            let d = (b[0] - a[0]).hypot(b[1] - a[1]);
-            let (pa, pb) = (self.to_screen(a), self.to_screen(b));
-            painter.line_segment([pa, pb], Stroke::new(1.5, Color32::from_rgb(210, 40, 40)));
-            painter.text(pb + vec2(8.0, 8.0), Align2::LEFT_TOP, format!("{d:.4}"), FontId::proportional(12.0), Color32::from_rgb(170, 20, 20));
-        }
+        self.paint_measure(&painter);
     }
 
     /// Fine and bold grid lines across the whole view, tuned to read on the sheet and around it.

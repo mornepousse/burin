@@ -7862,3 +7862,32 @@ fn the_middles_of_the_sides_are_anchors_too() {
     assert_eq!(f.anchor, Datum::Left);
 }
 
+
+/// The measure tool: dragging between two points shows their distance, angle and legs in its
+/// panel; on "A shape", clicking a straight side of a rectangle measures that side and the
+/// whole outline.
+#[test]
+fn the_measure_tool_measures_two_points_and_a_shape() {
+    let mut h = harness();
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    h.state_mut().snap = false;
+    let id = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([5.0, 5.0], 4.0, 2.0, 0.0))], Prim::Free);
+    h.state_mut().tool = crate::app::Tool2::Measure;
+    h.run();
+    let (a, b) = (h.state().to_screen([1.0, 1.0]), h.state().to_screen([4.0, 5.0]));
+    drag(&mut h, a, b);
+    let (p, q) = h.state().measure.unwrap();
+    let d = (q[0] - p[0]).hypot(q[1] - p[1]);
+    assert!((d - 5.0).abs() < 0.05, "3 across and 4 up: {d}");
+    h.get_by_label("Two points");
+    h.get_by_label("A shape").click();
+    h.run();
+    // The top side of the rectangle, from (3, 6) to (7, 6).
+    let at = h.state().to_screen([5.0, 6.0]);
+    click_at(&mut h, at);
+    let piece = h.state().inspected_piece().expect("a piece clicked");
+    assert_eq!(h.state().inspected.as_ref().unwrap().vector, id);
+    assert_eq!(piece.kind, crate::measure::PieceKind::Line);
+    assert!((piece.length - 4.0).abs() < 1e-9, "{}", piece.length);
+}

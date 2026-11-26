@@ -33,6 +33,7 @@ mod fr;
 mod icons;
 mod keys;
 mod menus;
+mod measure;
 mod merge;
 mod curvefit;
 mod rates;
@@ -296,6 +297,26 @@ fn open_state(app: &mut App, state: &str) {
         "drawing" => {
             app.new_file();
             app.left = LeftForm::None;
+        }
+        // The measure tool: two points measured, or a rounded rectangle's arc clicked.
+        "measure" | "inspect" => {
+            app.new_file();
+            app.left = LeftForm::None;
+            let (w, h) = (app.doc.job.width, app.doc.job.height);
+            app.doc.add_vector(vec![geom::Path::closed(geom::rect([w / 2.0, h / 2.0], w * 0.6, h * 0.5, w * 0.08))], app::Prim::Free);
+            app.tool = app::Tool2::Measure;
+            if state == "measure" {
+                app.measure = Some(([w * 0.2, h * 0.25], [w * 0.8, h * 0.75]));
+                app.measure_cursor = Some([w * 0.8, h * 0.75]);
+            } else {
+                app.measure_mode = measure::MeasureMode::Shape;
+                let path = app.doc.vectors[0].paths[0].clone();
+                // The edge in the middle of the top right rounded corner.
+                let target = [w / 2.0 + w * 0.3 - w * 0.08 + w * 0.08 * 0.7071, h / 2.0 + h * 0.25 - w * 0.08 + w * 0.08 * 0.7071];
+                let n = path.pts.len();
+                let edge = (0..n).min_by(|&i, &j| geom::dist2_seg(target, path.pts[i], path.pts[(i + 1) % n]).total_cmp(&geom::dist2_seg(target, path.pts[j], path.pts[(j + 1) % n]))).unwrap_or(0);
+                app.inspected = Some(measure::Inspected { vector: app.doc.vectors[0].id, path: 0, edge });
+            }
         }
         "circle" => {
             app.new_file();
