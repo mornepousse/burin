@@ -2,13 +2,24 @@
 # Puts the report relay (relay/worker.js) on Cloudflare: the Worker, its mail binding, the author's
 # address as a secret, and the route https://$ZONE/api/report. From anywhere:
 #   CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... relay/deploy.sh
+# Run without them, it asks for the key and the account id (any shell, fish too).
 # With DRY_RUN=1 it only reads: checks the key, finds the zone and says what it would do.
 # The address comes from a file kept off the repository (.backup/report-email); it must be a
 # verified destination of the zone's Email Routing, and Email Routing must be on.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-: "${CLOUDFLARE_API_TOKEN:?set CLOUDFLARE_API_TOKEN}"
-: "${CLOUDFLARE_ACCOUNT_ID:?set CLOUDFLARE_ACCOUNT_ID}"
+if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+    [ -t 0 ] || { echo "STOPPED: CLOUDFLARE_API_TOKEN isn't set" >&2; exit 1; }
+    read -rsp "Cloudflare key (API token, hidden as you type or paste): " CLOUDFLARE_API_TOKEN
+    echo
+fi
+if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+    [ -t 0 ] || { echo "STOPPED: CLOUDFLARE_ACCOUNT_ID isn't set" >&2; exit 1; }
+    read -rp "Cloudflare account id: " CLOUDFLARE_ACCOUNT_ID
+fi
+CLOUDFLARE_API_TOKEN=$(tr -d ' \r\n' <<< "$CLOUDFLARE_API_TOKEN")
+CLOUDFLARE_ACCOUNT_ID=$(tr -d ' \r\n' <<< "$CLOUDFLARE_ACCOUNT_ID")
+[ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || { echo "STOPPED: the key and the account id are both needed" >&2; exit 1; }
 ZONE=${RELAY_ZONE:-burin.cc}
 NAME=${RELAY_NAME:-burin-relay}
 FROM=${RELAY_FROM:-reports@$ZONE}
