@@ -92,6 +92,12 @@ sudo apt install ./Burin-*-amd64.deb       # Debian, Ubuntu, Mint
 sudo dnf install ./Burin-*-x86_64.rpm      # Fedora (zypper install on openSUSE)
 ```
 
+### Mac (Apple Silicon)
+
+Unzip `Burin-*-macos-arm64.zip` and drag `Burin.app` into Applications. It isn't signed by Apple, so
+the first time right-click it and choose `Open` (or run `xattr -cr /Applications/Burin.app`). It is
+built on GitHub's Macs and hasn't been tried on a real Mac yet.
+
 ### With Nix
 
 The repository is a flake:
