@@ -108,6 +108,8 @@ export default {
       console.error("send failed:", reason);
       return answer(502, { ok: false, error: "could not pass it on", reason: reason.slice(0, 300) });
     }
-    return answer(200, { ok: true });
+    // A line in the Worker's logs (Workers > burin-relay > Logs), never the address or the text.
+    console.log("report passed on", JSON.stringify({ kind, version, language, bytes: text.length, id }));
+    return answer(200, { ok: true, id });
   },
 };

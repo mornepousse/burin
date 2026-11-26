@@ -88,7 +88,7 @@ meta=$(mktemp)
 chmod 600 "$meta"
 trap 'rm -f "$meta"' EXIT
 cat > "$meta" <<EOF
-{"main_module":"worker.js","compatibility_date":"2026-11-01",
+{"main_module":"worker.js","compatibility_date":"2026-11-01","observability":{"enabled":true},
  "bindings":[{"type":"send_email","name":"MAIL"},
              {"type":"plain_text","name":"REPORT_FROM","text":"$FROM"},
              {"type":"secret_text","name":"REPORT_TO","text":"$TO"}]}
