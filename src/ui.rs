@@ -1322,6 +1322,9 @@ impl App {
         crate::crash::set_job(self.doc.vectors.len(), self.doc.toolpaths.len(), self.doc.toolpaths.iter().map(|t| t.moves.len() as u64).sum());
         self.recalc_question(&ctx);
         self.poll_recalc();
+        if let Some(text) = self.clipboard_out.take() {
+            ctx.copy_text(text);
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.poll_solidcraft();
@@ -1568,7 +1571,8 @@ impl App {
             self.delete_selected();
         }
         if fired(Action::Paste) {
-            self.paste();
+            let text = ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Paste(t) = e { Some(t.clone()) } else { None }));
+            self.paste_from(text);
         }
         if fired(Action::Import) {
             self.dialog_import();

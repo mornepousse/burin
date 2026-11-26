@@ -7751,3 +7751,65 @@ fn the_parts_come_out_together_as_one_step_assembly() {
     assert!(text.contains("PRODUCT('pieces','pieces'") && text.contains("PRODUCT('pieces-Couvercle'"));
     assert!(text.contains("CONTEXT_DEPENDENT_SHAPE_REPRESENTATION("));
 }
+
+/// Ctrl+C and Ctrl+V as the window library sends them on a computer: a copy event, then a paste
+/// event carrying the computer's clipboard text (it sends nothing for Ctrl+V when that clipboard
+/// has no text, so Burin puts the shapes there as an SVG drawing when it copies). The copy goes
+/// out to the computer's clipboard, the paste makes a second shape, and an SVG drawing from
+/// another program comes in as shapes where it was drawn.
+#[test]
+fn copy_and_paste_work_through_the_computers_clipboard() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.event(egui::Event::Copy);
+    h.run();
+    assert_eq!(h.state().clipboard.len(), 1, "copied");
+    let sent = h.state().clipboard_sent.clone().expect("put on the computer's clipboard");
+    assert!(sent.contains("<svg") && h.state().clipboard_out.is_none(), "handed over at the end of the frame");
+    assert!(crate::svg::read(&sent, 1.0).is_ok_and(|d| d.objects.len() == 1));
+    h.event(egui::Event::Paste(sent));
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 2, "pasted Burin's own copy");
+    let other = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20in" height="20in" viewBox="0 0 20 20"><rect x="1" y="1" width="3" height="2"/></svg>"#;
+    h.event(egui::Event::Paste(other.into()));
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 3, "another program's drawing");
+    let (lo, hi) = crate::geom::bbox(&h.state().doc.vectors[2].paths).unwrap();
+    assert!((hi[0] - lo[0] - 3.0).abs() < 1e-6 && (hi[1] - lo[1] - 2.0).abs() < 1e-6, "{lo:?} {hi:?}");
+    // A picture on the clipboard is still Ctrl+V: Burin's copy is pasted.
+    h.event(egui::Event::PasteImage(std::sync::Arc::new(egui::ColorImage::new([1, 1], vec![egui::Color32::WHITE]))));
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 4);
+}
+
+/// A right click as the mouse makes it: pressed and let go where the pointer is.
+fn right_click_at(h: &mut Harness<'static, App>, at: Pos2) {
+    h.hover_at(at);
+    h.run();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE });
+        h.run();
+    }
+}
+
+/// A right click on a shape picks it and opens a menu of what it can do, each with its key:
+/// copying then pasting from that menu makes a second shape, as Ctrl+C and Ctrl+V do.
+#[test]
+fn a_right_click_opens_a_menu_of_what_the_shape_can_do() {
+    let mut h = job_with_square([5.0, 5.0]);
+    let other = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([12.0, 5.0], 2.0, 2.0, 0.0))], Prim::Free);
+    h.run();
+    // On the other square: it becomes the one chosen.
+    let at = h.state().to_screen([13.0, 5.0]);
+    right_click_at(&mut h, at);
+    assert_eq!(h.state().selected, [other], "the shape under the pointer is picked");
+    // The toolbar has a Copy button too: the menu's is drawn last, on top.
+    h.get_all_by_label("Copy").last().unwrap().click();
+    h.run();
+    h.run();
+    assert_eq!(h.state().clipboard.len(), 1, "copied from the menu");
+    right_click_at(&mut h, at);
+    h.get_all_by_label("Paste").last().unwrap().click();
+    h.run();
+    h.run();
+    assert_eq!(h.state().doc.vectors.len(), 3, "pasted from the menu");
+}

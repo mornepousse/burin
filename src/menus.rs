@@ -25,6 +25,36 @@ fn entry(ui: &mut Ui, label: &'static str, enabled: bool, key: Option<String>) -
     }
 }
 
+/// How wide the right-click menu's rows are, so their keys line up on the right.
+const MENU_WIDTH: f32 = 300.0;
+
+/// A row of the right-click menu: its picture, its words, and its key on the right. Picked, it
+/// counts as its key pressed (`forced_action`), so it does exactly what the key does.
+fn action_row(ui: &mut Ui, keys: &crate::keys::Keys, icon: crate::icons::Icon, action: Action, enabled: bool) -> bool {
+    let label = crate::keys::action_name(action);
+    let key = keys.text(action);
+    let font = egui::FontId::proportional(13.0);
+    let colour = if enabled { crate::theme::TEXT() } else { crate::theme::MUTED() };
+    let words = ui.painter().layout_no_wrap(label.to_string(), font.clone(), colour);
+    let shortcut = ui.painter().layout_no_wrap(key.clone(), egui::FontId::proportional(11.5), crate::theme::MUTED());
+    let width = (30.0 + words.size().x + 24.0 + shortcut.size().x + 8.0).max(MENU_WIDTH);
+    let (r, resp) = ui.allocate_exact_size(egui::vec2(width, 24.0), if enabled { egui::Sense::click() } else { egui::Sense::hover() });
+    if enabled && resp.hovered() {
+        ui.painter().rect_filled(r, 5.0, crate::theme::BUTTON_HOVER());
+    }
+    crate::icons::paint(ui.painter(), egui::Rect::from_min_size(r.min + egui::vec2(6.0, 4.0), egui::vec2(16.0, 16.0)), icon, enabled);
+    ui.painter().galley(egui::pos2(r.min.x + 30.0, r.center().y - words.size().y / 2.0), words, colour);
+    ui.painter().galley(egui::pos2(r.max.x - 8.0 - shortcut.size().x, r.center().y - shortcut.size().y / 2.0), shortcut, crate::theme::MUTED());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    if resp.clicked() {
+        crate::crash::note(label);
+        ui.close();
+        true
+    } else {
+        false
+    }
+}
+
 /// An entry of the original that Burin doesn't do yet. It stays in its place, greyed.
 fn later(ui: &mut Ui, label: &'static str) {
     ui.add_enabled(false, egui::Button::new(tr(label))).on_disabled_hover_text(tr("Not in this version"));
@@ -502,6 +532,44 @@ impl App {
             self.refresh_model();
         }
         self.model.clone()
+    }
+
+    /// The right-click menu of the drawing: what the chosen shapes can do, each with its key.
+    pub fn canvas_menu(&mut self, ui: &mut Ui) {
+        use crate::icons::Icon;
+        let keys = self.keys;
+        let some = !self.selected.is_empty();
+        let many = self.selected.len() >= 2;
+        let mut chosen = None;
+        let mut row = |ui: &mut Ui, icon: Icon, action: Action, enabled: bool| {
+            if action_row(ui, &keys, icon, action, enabled) {
+                chosen = Some(action);
+            }
+        };
+        ui.set_min_width(MENU_WIDTH);
+        row(ui, Icon::Cut, Action::Cut, some);
+        row(ui, Icon::Copy, Action::Copy, some);
+        row(ui, Icon::Paste, Action::Paste, !self.clipboard.is_empty());
+        row(ui, Icon::Delete, Action::Delete, some);
+        ui.separator();
+        row(ui, Icon::SelectAll, Action::SelectAll, !self.doc.vectors.is_empty());
+        row(ui, Icon::Similar, Action::SelectSimilar, some);
+        ui.separator();
+        row(ui, Icon::Group, Action::Group, many);
+        row(ui, Icon::Ungroup, Action::Ungroup, some);
+        row(ui, Icon::MakePiece, Action::MakePiece, some);
+        ui.separator();
+        row(ui, Icon::Move, Action::MoveForm, some);
+        row(ui, Icon::Scale, Action::SizeForm, some);
+        row(ui, Icon::Rotate, Action::RotateForm, some);
+        row(ui, Icon::FlipAroundY, Action::MirrorX, some);
+        row(ui, Icon::FlipAroundX, Action::MirrorY, some);
+        row(ui, Icon::Rotate, Action::TurnLeft, some);
+        row(ui, Icon::Rotate, Action::TurnRight, some);
+        if let Some(action) = chosen {
+            self.forced_action = Some(action);
+            ui.ctx().request_repaint();
+        }
     }
 
     fn export_stl(&mut self) {

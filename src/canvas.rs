@@ -424,7 +424,28 @@ impl App {
 
         let response = ui.allocate_rect(sheet_rect, Sense::click_and_drag());
         self.snap_held_off = ui.input(|i| i.modifiers.alt);
+        // A right click ends a line being drawn; otherwise it opens the menu below.
+        let drawing_line = matches!(&self.left, LeftForm::Draw(f) if matches!(f.kind, DrawKind::Polyline | DrawKind::Curve));
         self.handle_pointer(ui, &response, sheet_rect);
+        if !drawing_line && self.tool != Tool2::Pan {
+            // The shape under the pointer is what the menu is about, unless it is already among
+            // the chosen ones.
+            if response.secondary_clicked() {
+                if let Some(id) = response.interact_pointer_pos().and_then(|p| self.pick(p)) {
+                    if !self.selected.contains(&id) {
+                        self.selected = vec![id];
+                    }
+                }
+            }
+            response.context_menu(|ui| self.canvas_menu(ui));
+            // For a picture of the menu: BURIN_MENU_SHOT=1 shows it open in the middle of the view.
+            if std::env::var_os("BURIN_MENU_SHOT").is_some() {
+                let at = sheet_rect.center();
+                egui::Area::new(egui::Id::unique("menu-shot")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+                    egui::Frame::menu(ui.style()).show(ui, |ui| self.canvas_menu(ui));
+                });
+            }
+        }
         // Guides are pulled out of the rulers.
         let top = Rect::from_min_max(pos2(sheet_rect.left(), full.top()), pos2(sheet_rect.right(), sheet_rect.top()));
         let side = Rect::from_min_max(pos2(full.left(), sheet_rect.top()), pos2(sheet_rect.left(), sheet_rect.bottom()));

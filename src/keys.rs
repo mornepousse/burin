@@ -81,7 +81,7 @@ impl Shortcut {
             }
             Event::Copy => self == clipboard_key(input, Key::C),
             Event::Cut => self == clipboard_key(input, Key::X),
-            Event::Paste(_) => self == clipboard_key(input, Key::V),
+            Event::Paste(_) | Event::PasteImage(_) => self == clipboard_key(input, Key::V),
             _ => false,
         })
     }
@@ -94,7 +94,7 @@ impl Shortcut {
             }
             Event::Copy => Some(clipboard_key(input, Key::C)),
             Event::Cut => Some(clipboard_key(input, Key::X)),
-            Event::Paste(_) => Some(clipboard_key(input, Key::V)),
+            Event::Paste(_) | Event::PasteImage(_) => Some(clipboard_key(input, Key::V)),
             _ => None,
         })
     }

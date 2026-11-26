@@ -1122,6 +1122,11 @@ pub struct App {
     pub tool: Tool2,
     pub selected: Vec<u64>,
     pub clipboard: Vec<Vector>,
+    /// Text for the computer's clipboard, put there at the end of the frame (`ui.rs`): the copied
+    /// shapes as an SVG drawing. Without text there, the window library drops Ctrl+V altogether.
+    pub clipboard_out: Option<String>,
+    /// What Burin last put on the computer's clipboard, to tell its own copy from another program's.
+    pub clipboard_sent: Option<String>,
     pub selected_tp: Option<usize>,
     pub selected_comp: Option<usize>,
     pub status: String,
@@ -1578,6 +1583,8 @@ impl Default for App {
             tool: Tool2::Select,
             selected: Vec::new(),
             clipboard: Vec::new(),
+            clipboard_out: None,
+            clipboard_sent: None,
             selected_tp: None,
             selected_comp: None,
             status: crate::i18n::tr("Ready").into(),
@@ -2528,8 +2535,46 @@ impl App {
         self.doc.vectors.retain(|v| !sel.contains(&v.id));
     }
 
+    /// Keeps the selected shapes for pasting, and puts them on the computer's clipboard too, as an
+    /// SVG drawing at their real size. Two reasons: on a computer the window library only passes
+    /// Ctrl+V on when that clipboard holds text, so with nothing there pasting did nothing (the
+    /// person's report); and the shapes can then be pasted into a drawing program. Burin's own.
     pub fn copy_selected(&mut self) {
         self.clipboard = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id)).cloned().collect();
+        if self.clipboard.is_empty() {
+            return;
+        }
+        let paths: Vec<Path> = self.clipboard.iter().flat_map(|v| v.paths.iter().cloned()).collect();
+        let unit = if self.doc.job.units == Units::Mm { "mm" } else { "in" };
+        let svg = crate::menus::svg_text(&paths, self.doc.job.width, self.doc.job.height, unit);
+        self.clipboard_sent = Some(svg.clone());
+        self.clipboard_out = Some(svg);
+    }
+
+    /// Ctrl+V with what the computer's clipboard holds: an SVG drawing another program put there
+    /// comes in as shapes, selected, where it was drawn; anything else (Burin's own copy, other
+    /// text, a picture, nothing) pastes the shapes Burin copied.
+    pub fn paste_from(&mut self, text: Option<String>) {
+        let foreign_svg = text.filter(|t| Some(t) != self.clipboard_sent.as_ref() && t.contains("<svg"));
+        let Some(svg) = foreign_svg else {
+            self.paste();
+            return;
+        };
+        let per_inch = if self.doc.job.units == Units::Mm { 25.4 } else { 1.0 };
+        match crate::svg::read(&svg, per_inch) {
+            Ok(d) if !d.objects.is_empty() => {
+                self.checkpoint();
+                self.selected.clear();
+                for paths in d.objects {
+                    let id = self.doc.add_vector(paths, Prim::Free);
+                    self.selected.push(id);
+                }
+                self.view3d = false;
+                self.handles_on = Some(self.selected.clone());
+                self.status = tf!("Pasted {} shapes from the clipboard's drawing.", self.selected.len());
+            }
+            _ => self.paste(),
+        }
     }
 
     pub fn paste(&mut self) {
