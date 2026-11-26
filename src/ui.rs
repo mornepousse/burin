@@ -1223,6 +1223,7 @@ impl App {
         let printed = path.extension().is_some_and(|e| ["pdf", "ai", "eps"].iter().any(|x| e.eq_ignore_ascii_case(x)));
         let mut masked = 0;
         let mut page_note = None;
+        let mut dxf_layers: Vec<String> = Vec::new();
         let (objects, skipped) = if printed {
             let per_inch = if self.doc.job.units == Units::Mm { 25.4 } else { 1.0 };
             let d = crate::pdfin::read(&bytes, per_inch)?;
@@ -1234,15 +1235,36 @@ impl App {
             masked = d.masked;
             (d.objects, d.skipped)
         } else {
-            (geom::dxf_read(&text).into_iter().map(|p| vec![p]).collect::<Vec<_>>(), 0)
+            // A DXF's layers come in as layers of their own (one of the same name is used); a
+            // drawing on one layer only goes on the active one, as before.
+            let shapes = crate::dxfin::read(&text);
+            let mut names: Vec<String> = shapes.iter().map(|s| s.layer.clone()).collect();
+            names.sort();
+            names.dedup();
+            if names.len() > 1 {
+                dxf_layers = shapes.iter().map(|s| s.layer.clone()).collect();
+            }
+            (shapes.into_iter().map(|s| vec![s.path]).collect::<Vec<_>>(), 0)
         };
         if objects.is_empty() {
             return Err(tf!("{} has no lines, curves or shapes this program can read.", path.display()));
         }
         self.checkpoint();
         self.selected.clear();
-        for paths in objects {
+        for (k, paths) in objects.into_iter().enumerate() {
             let id = self.doc.add_vector(paths, Prim::Free);
+            if let Some(name) = dxf_layers.get(k) {
+                let layer = match self.doc.layers.iter().position(|l| &l.name == name) {
+                    Some(at) => at,
+                    None => {
+                        self.doc.layers.push(crate::app::Layer::named(name));
+                        self.doc.layers.len() - 1
+                    }
+                };
+                if let Some(v) = self.doc.vectors.iter_mut().find(|v| v.id == id) {
+                    v.layer = layer;
+                }
+            }
             self.selected.push(id);
         }
         self.view3d = false;

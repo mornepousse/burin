@@ -35,6 +35,7 @@ mod keys;
 mod menus;
 mod measure;
 mod pdfin;
+mod dxfin;
 mod merge;
 mod curvefit;
 mod rates;

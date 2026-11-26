@@ -459,7 +459,7 @@ pub fn bow_points(a: P, b: P, bulge: f64) -> Vec<P> {
 }
 
 /// Turns the bowed sides of a polyline into curves of small straight steps.
-fn unbow(pts: &[P], bulges: &[f64], closed: bool) -> Vec<P> {
+pub(crate) fn unbow(pts: &[P], bulges: &[f64], closed: bool) -> Vec<P> {
     let n = pts.len();
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
@@ -474,7 +474,7 @@ fn unbow(pts: &[P], bulges: &[f64], closed: bool) -> Vec<P> {
 }
 
 /// Reads a DXF spline: its control points when it has them, otherwise the points it passes through.
-fn dxf_spline(fields: &[(i32, &str)]) -> Option<Path> {
+pub(crate) fn dxf_spline(fields: &[(i32, &str)]) -> Option<Path> {
     let num = |s: &str| s.parse::<f64>().unwrap_or(0.0);
     let (mut flags, mut degree) = (0i64, 3usize);
     let (mut knots, mut weights, mut control, mut fit) = (Vec::new(), Vec::new(), Vec::<P>::new(), Vec::<P>::new());
