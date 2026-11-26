@@ -65,6 +65,15 @@ zone_id=$(curl -sS "$API/zones?name=$ZONE" -H "$AUTH" | answer zone) || fail "ca
 [ -n "$zone_id" ] || fail "$ZONE isn't on this account"
 echo "   ok"
 
+# Mail can only leave from a domain whose Email Routing is on: then its MX records point to
+# Cloudflare's mail servers (checked over DNS, which the key can't read).
+mx=$(curl -sS -H 'accept: application/dns-json' "https://cloudflare-dns.com/dns-query?name=$ZONE&type=MX")
+if ! grep -q 'mx.cloudflare.net' <<< "$mx"; then
+    echo "   WARNING: Email Routing isn't on for $ZONE (no Cloudflare MX record): the relay can't send mail."
+    echo "   In the Cloudflare dashboard: $ZONE > Email > Email Routing > Enable, accept the DNS records,"
+    echo "   then add and confirm your address under Destination addresses."
+fi
+
 pattern="$ZONE/api/report"
 routes=$(curl -sS "$API/zones/$zone_id/workers/routes" -H "$AUTH" | answer routes) || fail "can't read the routes"
 
