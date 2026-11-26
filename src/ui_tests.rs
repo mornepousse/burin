@@ -1596,6 +1596,31 @@ fn a_drawing_file_in_an_older_character_set_still_comes_in() {
 }
 
 #[test]
+fn a_boards_drill_and_outline_files_come_in_on_layers_of_their_own() {
+    let dir = std::env::temp_dir().join(format!("burin-board-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let drill = dir.join("plate.drl");
+    std::fs::write(&drill, "M48\nMETRIC\nT1C0.8\nT2C3.0\n%\nT1\nX10.0Y10.0\nX20.0Y10.0\nT2\nX40.0Y20.0\nM30\n").unwrap();
+    let edge = dir.join("plate.gko");
+    std::fs::write(&edge, "%FSLAX46Y46*%\n%MOMM*%\n%ADD10C,0.1*%\nD10*\nX0Y0D02*\nX50000000Y0D01*\nX50000000Y30000000D01*\nX0Y30000000D01*\nX0Y0D01*\nM02*\n").unwrap();
+    let mut h = harness();
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    h.state_mut().doc.job.units = crate::app::Units::Mm;
+    h.state_mut().import_drawing(&drill).unwrap();
+    h.state_mut().import_drawing(&edge).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    let a = h.state();
+    let names: Vec<&str> = a.doc.layers.iter().map(|l| l.name.as_str()).collect();
+    assert!(names.contains(&"plate Ø0.80 mm") && names.contains(&"plate Ø3.00 mm") && names.contains(&"plate"), "{names:?}");
+    assert_eq!(a.doc.vectors.len(), 4);
+    // The outline is one closed shape, lined up with the holes.
+    let outline = a.doc.vectors.last().unwrap();
+    assert!(outline.paths[0].closed);
+    assert_eq!(crate::geom::bbox(&outline.paths), Some(([0.0, 0.0], [50.0, 30.0])));
+}
+
+#[test]
 fn a_project_from_the_original_opens_as_a_new_job() {
     use crate::crv3d::tests::{material, sample};
     let dir = std::env::temp_dir().join(format!("burin-crv3d-{}", std::process::id()));

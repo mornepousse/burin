@@ -2082,4 +2082,8 @@ pub const FR: &[(&str, &str)] = &[
     // Labels that had slipped through untranslated.
     ("Sheet", "Plaque"),
     ("Options", "Options"),
+    // Circuit board files (drill and Gerber).
+    ("{} slots {}", "{} rainures {}"),
+    ("{} holes use a drill size the file doesn't give: they were left out.", "{} trous utilisent un foret dont le fichier ne donne pas la taille : ils ont été laissés de côté."),
+    ("The file repeats parts of itself (step and repeat): only the first copy came in.", "Le fichier répète certaines de ses parties (step and repeat) : seule la première copie a été importée."),
 ];

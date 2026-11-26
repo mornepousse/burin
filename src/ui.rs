@@ -1224,14 +1224,15 @@ impl App {
     }
 
     pub fn dialog_import(&mut self) {
-        let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Drawing or 3D clipart"), &["svg", "dxf", "pdf", "ai", "eps", crate::modeltools::CLIP3D_EXTENSION]).pick_file() else { return };
+        let Some(path) = crate::platform::FileDialog::new().add_filter(crate::i18n::tr("Drawing or 3D clipart"), &[&["svg", "dxf", "pdf", "ai", "eps", crate::modeltools::CLIP3D_EXTENSION][..], crate::pcbin::DRILL_ENDINGS, crate::pcbin::GERBER_ENDINGS].concat()).pick_file() else { return };
         let clip = path.extension().is_some_and(|e| e.eq_ignore_ascii_case(crate::modeltools::CLIP3D_EXTENSION));
         if let Err(why) = if clip { self.import_3d_clipart(&path) } else { self.import_drawing(&path) } {
             self.message = Some(why);
         }
     }
 
-    /// Adds the shapes of a DXF or SVG file to the job, selected.
+    /// Adds the shapes of a drawing (DXF, SVG, PDF, AI, EPS) or a circuit board's drill or Gerber
+    /// file to the job, selected.
     pub fn import_drawing(&mut self, path: &std::path::Path) -> Result<(), String> {
         // Older drawing files are often in other character sets; only the numbers matter here.
         let bytes = crate::platform::read(path).map_err(|e| tf!("Could not read {}: {e}", path.display()))?;
@@ -1241,7 +1242,17 @@ impl App {
         let mut masked = 0;
         let mut page_note = None;
         let mut dxf_layers: Vec<String> = Vec::new();
-        let (objects, skipped) = if printed {
+        let name_text = path.to_string_lossy();
+        let board = crate::pcbin::is_board_file(&name_text);
+        let (objects, skipped) = if board {
+            // A board's files each go on layers of their own (by drill size for holes), so they
+            // can be cut with different tools and stay lined up with each other.
+            let per_mm = if self.doc.job.units == Units::Mm { 1.0 } else { 1.0 / 25.4 };
+            let b = crate::pcbin::read(&name_text, &text, per_mm);
+            page_note = (!b.notes.is_empty()).then(|| b.notes.join(" "));
+            dxf_layers = b.objects.iter().map(|o| o.0.clone()).collect();
+            (b.objects.into_iter().map(|o| o.1).collect::<Vec<_>>(), 0)
+        } else if printed {
             let per_inch = if self.doc.job.units == Units::Mm { 25.4 } else { 1.0 };
             let d = crate::pdfin::read(&bytes, per_inch)?;
             page_note = d.left_out.first().cloned();
