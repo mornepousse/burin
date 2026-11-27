@@ -927,6 +927,8 @@ pub enum Xform {
     Bulk,
     Constraints,
     Distort,
+    /// Create Vector Texture: wavy lines across the chosen shapes or the material.
+    WaveTexture,
 }
 
 #[derive(Clone, Debug)]
@@ -1002,6 +1004,14 @@ pub struct XformForm {
     pub set_h: bool,
     pub tolerance: f64,
     pub layer_only: bool,
+    /// Create Vector Texture: the waves (spacing and angle are the form's own).
+    pub wave_variation: f64,
+    pub wave_amplitude: f64,
+    pub wave_length: f64,
+    pub wave_noise: f64,
+    /// The lines go on a layer of this name, made if it isn't there.
+    pub wave_layer: bool,
+    pub wave_layer_name: String,
 }
 
 impl XformForm {
@@ -1047,7 +1057,7 @@ impl XformForm {
             new_layer: kind == Xform::CopyAlong,
             reverse: false,
             size: if kind == Xform::CopyAlong { 0.1 * unit } else { 0.2 * unit },
-            spacing: 1.0,
+            spacing: if kind == Xform::WaveTexture { 3.0 / 25.4 * unit } else { 1.0 },
             fillet: crate::edit::FilletKind::Normal,
             dim: crate::edit::DimKind::Length,
             decimals: 4,
@@ -1076,6 +1086,12 @@ impl XformForm {
             set_h: true,
             tolerance: job.width.max(job.height) * 1e-3,
             layer_only: false,
+            wave_variation: 0.0,
+            wave_amplitude: 40.0 / 25.4 * unit,
+            wave_length: 100.0 / 25.4 * unit,
+            wave_noise: 0.0,
+            wave_layer: false,
+            wave_layer_name: String::new(),
         }
     }
 }
@@ -1247,6 +1263,12 @@ pub struct App {
     /// The parts being built into a SolidCraft design, in the background.
     #[cfg(not(target_arch = "wasm32"))]
     pub solidcraft_job: Option<std::sync::mpsc::Receiver<Result<PathBuf, String>>>,
+    /// A form's Apply that takes a while (an offset): frames left to show "working" before it runs,
+    /// so the window says so first (the web version can't draw while it works).
+    pub busy_apply: Option<u8>,
+    /// The texture lines the open Create Vector Texture form would make, kept while its settings
+    /// and the shapes stay the same.
+    pub wave_preview: Option<(String, Vec<Path>)>,
     /// Working on one thread, as in a browser: long work waits until its progress is on screen.
     pub one_thread: bool,
     /// Work toolpaths out away from the window. The tests want each result at once.
@@ -1440,6 +1462,15 @@ pub struct App {
     pub draw_origin: bool,
     pub curve_fit_open: bool,
     pub curve_fit_tolerance: f64,
+    /// What the fit makes, whether sharp corners stay sharp (turns of more than this many degrees),
+    /// and whether the result replaces the chosen shapes or comes as new ones.
+    pub curve_fit_kind: crate::curvefit::FitKind,
+    pub curve_fit_corners: bool,
+    pub curve_fit_corner_angle: f64,
+    pub curve_fit_replace: bool,
+    pub curve_fit_preview: Option<(String, Vec<Path>)>,
+    /// The Plates from Data window, when open.
+    pub plates: Option<crate::plates::PlatesForm>,
     /// Writing the machine file from a toolpath's cut on, after a stop: toolpath, cut from 0.
     pub resume: Option<(usize, usize)>,
     pub resume_open: bool,
@@ -1702,6 +1733,8 @@ impl Default for App {
             web_opening_shown: 0,
             #[cfg(not(target_arch = "wasm32"))]
             solidcraft_job: None,
+            busy_apply: None,
+            wave_preview: None,
             one_thread: crate::platform::WEB,
             background_recalc: !cfg!(test),
             metric_by_default: !cfg!(test),
@@ -1837,6 +1870,12 @@ impl Default for App {
             draw_origin: crate::viewprefs::load().draw_origin,
             curve_fit_open: false,
             curve_fit_tolerance: 0.01,
+            curve_fit_kind: crate::curvefit::FitKind::Arcs,
+            curve_fit_corners: true,
+            curve_fit_corner_angle: 60.0,
+            curve_fit_replace: false,
+            curve_fit_preview: None,
+            plates: None,
             resume: None,
             resume_open: false,
             resume_choice: (0, 1),

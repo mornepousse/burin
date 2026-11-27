@@ -22,6 +22,9 @@ pub enum FilletKind {
     Normal,
     DogBone,
     TBone,
+    /// A loop outside the corner: the sides run on past it and turn round a circle, so a plasma
+    /// torch or a drag knife turns the corner without stopping.
+    Loop,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,7 +57,7 @@ pub fn anchor_point(lo: P, hi: P, anchor: Datum) -> P {
     }
 }
 
-fn segment_cross(a: P, b: P, c: P, d: P) -> Option<f64> {
+pub(crate) fn segment_cross(a: P, b: P, c: P, d: P) -> Option<f64> {
     let (rx, ry) = (b[0] - a[0], b[1] - a[1]);
     let (sx, sy) = (d[0] - c[0], d[1] - c[1]);
     let denom = rx * sy - ry * sx;
@@ -63,7 +66,9 @@ fn segment_cross(a: P, b: P, c: P, d: P) -> Option<f64> {
     }
     let t = ((c[0] - a[0]) * sy - (c[1] - a[1]) * sx) / denom;
     let u = ((c[0] - a[0]) * ry - (c[1] - a[1]) * rx) / denom;
-    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some(t)
+    // A line that only touches another (a T, an end on a line) counts, within a hair.
+    const HAIR: f64 = 1e-9;
+    ((-HAIR..=1.0 + HAIR).contains(&t) && (-HAIR..=1.0 + HAIR).contains(&u)).then_some(t.clamp(0.0, 1.0))
 }
 
 fn lerp(a: P, b: P, t: f64) -> P {
@@ -151,6 +156,11 @@ impl App {
     pub fn apply_xform(&mut self) {
         let LeftForm::Xform(f) = &self.left else { return };
         let f = f.clone();
+        // A texture fills the material when nothing is chosen.
+        if f.kind == Xform::WaveTexture {
+            self.make_wave_texture(&f);
+            return;
+        }
         let Some((lo, hi)) = self.selected_bbox() else {
             self.status = crate::i18n::tr("Select one or more shapes first.").into();
             return;
@@ -208,8 +218,119 @@ impl App {
             Xform::Join => self.join_with(f.distance),
             Xform::Nest => self.nest_selected(&f),
             Xform::TextOnCurve => self.text_on_curve(&f),
+            Xform::WaveTexture => self.make_wave_texture(&f),
             _ => {}
         }
+    }
+
+    /// Convert Text to Curves: each selected text becomes plain shapes that can be edited point by
+    /// point, one per letter (its outline with its holes), the letters of one text grouped.
+    pub fn text_to_curves(&mut self) {
+        let texts: Vec<u64> = self.doc.vectors.iter().filter(|v| self.selected.contains(&v.id) && matches!(v.prim, Prim::Text { .. })).map(|v| v.id).collect();
+        if texts.is_empty() {
+            self.status = crate::i18n::tr("Select a text to convert.").into();
+            return;
+        }
+        self.checkpoint();
+        let mut now_selected: Vec<u64> = self.selected.iter().copied().filter(|id| !texts.contains(id)).collect();
+        for id in texts {
+            let Some(at) = self.doc.vectors.iter().position(|v| v.id == id) else { continue };
+            let text = self.doc.vectors.remove(at);
+            // Each outline with the holes inside it is one letter.
+            let paths = text.paths.clone();
+            let depth = |k: usize| paths.iter().enumerate().filter(|(j, p)| *j != k && p.closed && paths[k].pts.first().is_some_and(|q| geom::inside_even_odd(std::iter::once(*p), *q))).count();
+            let mut letters: Vec<Vec<Path>> = Vec::new();
+            let mut holes: Vec<Path> = Vec::new();
+            for (k, p) in paths.iter().enumerate() {
+                if p.closed && depth(k) % 2 == 1 {
+                    holes.push(p.clone());
+                } else {
+                    letters.push(vec![p.clone()]);
+                }
+            }
+            for h in holes {
+                let inside = letters.iter_mut().find(|l| h.pts.first().is_some_and(|q| geom::inside_even_odd(std::iter::once(&l[0]), *q)));
+                match inside {
+                    Some(l) => l.push(h),
+                    None => letters.push(vec![h]),
+                }
+            }
+            let mut ids = Vec::new();
+            for letter in letters {
+                let new = self.doc.add_vector(letter, Prim::Free);
+                if let Some(v) = self.doc.vectors.iter_mut().find(|v| v.id == new) {
+                    v.layer = text.layer;
+                    v.sheet = text.sheet;
+                    v.face = text.face;
+                }
+                ids.push(new);
+            }
+            if ids.len() > 1 {
+                self.group_now(ids);
+                now_selected.extend(self.selected.iter().copied());
+            } else {
+                now_selected.extend(ids);
+            }
+        }
+        self.selected = now_selected;
+        self.status = crate::i18n::tr("Text converted to curves: its points can be edited now.").into();
+    }
+
+    /// What a texture fills: the chosen closed shapes, or the material when none is chosen.
+    pub(crate) fn wave_area(&self) -> Vec<Path> {
+        let chosen: Vec<Path> = self.selected_paths().into_iter().filter(|p| p.closed).collect();
+        if !chosen.is_empty() {
+            return chosen;
+        }
+        let (w, h) = (self.doc.job.width, self.doc.job.height);
+        vec![Path::closed(vec![[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]])]
+    }
+
+    pub(crate) fn wave_settings(f: &XformForm) -> crate::wavetexture::WaveSettings {
+        crate::wavetexture::WaveSettings { angle: f.angle, spacing: f.spacing, variation: f.wave_variation, amplitude: f.wave_amplitude, length: f.wave_length, noise: f.wave_noise }
+    }
+
+    /// The lines the form would make now, worked out again only when something changed.
+    pub(crate) fn wave_preview_lines(&mut self) -> Vec<Path> {
+        let LeftForm::Xform(f) = &self.left else { return Vec::new() };
+        if f.kind != Xform::WaveTexture {
+            return Vec::new();
+        }
+        let area = self.wave_area();
+        let key = format!("{:?}|{:?}", Self::wave_settings(f), area.iter().map(|p| (p.pts.len(), p.pts.first().copied())).collect::<Vec<_>>());
+        if let Some((k, lines)) = &self.wave_preview {
+            if *k == key {
+                return lines.clone();
+            }
+        }
+        let lines = crate::wavetexture::lines(&area, Self::wave_settings(f));
+        self.wave_preview = Some((key, lines.clone()));
+        lines
+    }
+
+    fn make_wave_texture(&mut self, f: &XformForm) {
+        let lines = crate::wavetexture::lines(&self.wave_area(), Self::wave_settings(f));
+        if lines.is_empty() {
+            self.status = crate::i18n::tr("No texture there: check the spacing and the wave length.").into();
+            return;
+        }
+        self.checkpoint();
+        let id = self.doc.add_vector(lines, Prim::Free);
+        if f.wave_layer {
+            let name = if f.wave_layer_name.trim().is_empty() { crate::i18n::tr("Texture").to_string() } else { f.wave_layer_name.trim().to_string() };
+            let layer = match self.doc.layers.iter().position(|l| l.name == name) {
+                Some(at) => at,
+                None => {
+                    self.doc.layers.push(crate::app::Layer::named(&name));
+                    self.doc.layers.len() - 1
+                }
+            };
+            if let Some(v) = self.doc.vectors.iter_mut().find(|v| v.id == id) {
+                v.layer = layer;
+            }
+        }
+        self.selected = vec![id];
+        self.status = crate::i18n::tr("Texture made.").into();
     }
 
     fn array_copy(&mut self, f: &XformForm, lo: P, hi: P) {
@@ -499,40 +620,91 @@ impl App {
     }
 
     fn fillet_inner(&mut self, at: P, reach: f64, radius: f64, kind: FilletKind) -> bool {
-        let mut best: Option<(f64, usize, usize, usize)> = None;
+        let plan = match self.fillet_plan(at, reach, radius, kind) {
+            Ok(plan) => plan,
+            Err(why) => {
+                self.status = why.into();
+                return false;
+            }
+        };
+        self.checkpoint();
+        if kind == FilletKind::Normal {
+            self.new_fillet = Some((self.doc.vectors[plan.vi].id, plan.start, plan.end));
+        }
+        let v = &mut self.doc.vectors[plan.vi];
+        v.paths[plan.pi].pts = plan.pts;
+        v.prim = Prim::Free;
+        true
+    }
+
+    /// The corner a click at `at` takes: the nearest real corner (a turn of more than a few degrees)
+    /// within reach, else the nearest point. Shapes drawn as many short pieces (curves) have points
+    /// all along them, which aren't corners.
+    fn fillet_corner(&self, at: P, reach: f64) -> Option<(usize, usize, usize)> {
+        let mut sharp: Option<(f64, usize, usize, usize)> = None;
+        let mut any: Option<(f64, usize, usize, usize)> = None;
         for (vi, v) in self.doc.vectors.iter().enumerate() {
+            if !self.doc.can_pick(v) {
+                continue;
+            }
             for (pi, path) in v.paths.iter().enumerate() {
+                let n = path.pts.len();
                 for (i, q) in path.pts.iter().enumerate() {
                     let d = (q[0] - at[0]).hypot(q[1] - at[1]);
-                    if d <= reach && best.is_none_or(|b| d < b.0) {
-                        best = Some((d, vi, pi, i));
+                    if d > reach * 1.6 {
+                        continue;
+                    }
+                    if d <= reach && any.is_none_or(|b| d < b.0) {
+                        any = Some((d, vi, pi, i));
+                    }
+                    if n < 3 || !path.closed && (i == 0 || i == n - 1) {
+                        continue;
+                    }
+                    let (a, b) = (path.pts[(i + n - 1) % n], path.pts[(i + 1) % n]);
+                    let (u, w) = ([q[0] - a[0], q[1] - a[1]], [b[0] - q[0], b[1] - q[1]]);
+                    let turn = (u[0] * w[1] - u[1] * w[0]).atan2(u[0] * w[0] + u[1] * w[1]).abs();
+                    if turn > 12f64.to_radians() && sharp.is_none_or(|b| d < b.0) {
+                        sharp = Some((d, vi, pi, i));
                     }
                 }
             }
         }
-        let Some((_, vi, pi, i)) = best else {
-            self.status = crate::i18n::tr("Click on a corner of a shape.").into();
-            return false;
+        sharp.or(any).map(|(_, vi, pi, i)| (vi, pi, i))
+    }
+
+    /// The corner under `at` and the rounded corner a click would make there, to show beforehand.
+    pub(crate) fn fillet_preview(&self, at: P, reach: f64, radius: f64, kind: FilletKind) -> Option<(P, Option<Vec<P>>)> {
+        let (vi, pi, i) = self.fillet_corner(at, reach)?;
+        let corner = self.doc.vectors[vi].paths[pi].pts[i];
+        let arc = self.fillet_plan(at, reach, radius, kind).ok().map(|p| p.arc);
+        Some((corner, arc))
+    }
+
+    /// Works out a fillet at the corner under `at`: the shape's new points.
+    fn fillet_plan(&self, at: P, reach: f64, radius: f64, kind: FilletKind) -> Result<FilletPlan, &'static str> {
+        let Some((vi, pi, i)) = self.fillet_corner(at, reach) else {
+            return Err(crate::i18n::tr("Click on a corner of a shape."));
         };
-        let path = self.doc.vectors[vi].paths[pi].clone();
+        let path = &self.doc.vectors[vi].paths[pi];
         let n = path.pts.len();
         if !path.closed && (i == 0 || i == n - 1) || n < 3 {
-            self.status = crate::i18n::tr("That point is the end of a line, not a corner.").into();
-            return false;
+            return Err(crate::i18n::tr("That point is the end of a line, not a corner."));
+        }
+        // A rounded corner between curves too: where the two sides, moved in by the radius, meet
+        // is the arc's centre, and the arc touches each side at the foot from there.
+        if kind == FilletKind::Normal {
+            if let Some(plan) = round_corner(&path.pts, path.closed, i, radius) {
+                return Ok(FilletPlan { vi, pi, start: plan.1[0], end: *plan.1.last().unwrap(), arc: plan.1, pts: plan.0 });
+            }
         }
         let (a, c, b) = (path.pts[(i + n - 1) % n], path.pts[i], path.pts[(i + 1) % n]);
         let Some(replacement) = corner_points(a, c, b, radius, kind) else {
-            self.status = crate::i18n::tr("That corner is too small or too flat for this radius.").into();
-            return false;
+            return Err(crate::i18n::tr("That corner is too small or too flat for this radius."));
         };
-        self.checkpoint();
-        if kind == FilletKind::Normal {
-            self.new_fillet = Some((self.doc.vectors[vi].id, replacement[0], *replacement.last().unwrap()));
-        }
-        let v = &mut self.doc.vectors[vi];
-        v.paths[pi].pts.splice(i..=i, replacement);
-        v.prim = Prim::Free;
-        true
+        let mut pts = path.pts.clone();
+        let (start, end) = (replacement[0], *replacement.last().unwrap());
+        pts.splice(i..=i, replacement.clone());
+        Ok(FilletPlan { vi, pi, pts, arc: replacement, start, end })
     }
 
     /// Removes the stretch of line under `at` between its crossings with other lines.
@@ -542,9 +714,16 @@ impl App {
         done
     }
 
-    fn trim_inner(&mut self, at: P, reach: f64, delete_whole: bool) -> bool {
+    /// The line nearest `at` (within `reach`) and where the other lines cross it: what a trim there
+    /// works from. `None` when no line is that near.
+    fn trim_target(&self, at: P, reach: f64) -> Option<TrimTarget> {
         let mut best: Option<(f64, usize, usize, usize)> = None;
+        // Only what can be seen and picked: lines on hidden layers or other sheets neither get cut
+        // nor cut others.
         for (vi, v) in self.doc.vectors.iter().enumerate() {
+            if !self.doc.can_pick(v) {
+                continue;
+            }
             for (pi, path) in v.paths.iter().enumerate() {
                 for (si, (a, b)) in path.segments().enumerate() {
                     let d = geom::dist2_seg(at, a, b);
@@ -554,20 +733,14 @@ impl App {
                 }
             }
         }
-        let Some((_, vi, pi, si)) = best else { return false };
-        if delete_whole {
-            self.checkpoint();
-            self.doc.vectors[vi].paths.remove(pi);
-            if self.doc.vectors[vi].paths.is_empty() {
-                let id = self.doc.vectors.remove(vi).id;
-                self.selected.retain(|s| *s != id);
-            }
-            return true;
-        }
+        let (_, vi, pi, si) = best?;
         let path = self.doc.vectors[vi].paths[pi].clone();
         // Every other line, with what a rule would call it.
         let mut others: Vec<(P, P, crate::constraints::Elem)> = Vec::new();
         for (ovi, v) in self.doc.vectors.iter().enumerate() {
+            if !self.doc.shows(v) {
+                continue;
+            }
             let whole = crate::constraints::round_shape(v).is_some();
             for (opi, p) in v.paths.iter().enumerate() {
                 if ovi == vi && opi == pi {
@@ -592,16 +765,63 @@ impl App {
         crossings.sort_by(|x, y| x.0.total_cmp(&y.0));
         let mut cuts: Vec<f64> = crossings.iter().map(|c| c.0).collect();
         cuts.dedup_by(|x, y| (*x - *y).abs() < 1e-9);
-        if cuts.is_empty() {
-            self.status = crate::i18n::tr("That line doesn't cross anything. Hold Shift and click to delete it.").into();
-            return false;
-        }
         let (sa, sb) = segs[si];
         let along_seg = {
             let (dx, dy) = (sb[0] - sa[0], sb[1] - sa[1]);
             ((at[0] - sa[0]) * dx + (at[1] - sa[1]) * dy) / (dx * dx + dy * dy).max(1e-12)
         };
         let click = si as f64 + along_seg.clamp(0.0, 1.0);
+        Some(TrimTarget { vi, pi, closed: path.closed, segs, crossings, cuts, click })
+    }
+
+    /// What a trim at `at` would take away, to show before the click: the stretch of line between
+    /// the crossings either side (the whole line when nothing crosses it), and the point on the line.
+    pub(crate) fn trim_preview(&self, at: P, reach: f64) -> Option<(Vec<P>, P, bool)> {
+        let t = self.trim_target(at, reach)?;
+        let total = t.segs.len() as f64;
+        let on = t.point_at(t.click);
+        if t.cuts.is_empty() {
+            let mut whole: Vec<P> = t.segs.iter().map(|s| s.0).collect();
+            if let Some(last) = t.segs.last() {
+                whole.push(last.1);
+            }
+            return Some((whole, on, false));
+        }
+        let (from, to) = if t.closed {
+            let before = t.cuts.iter().rev().find(|c| **c <= t.click).copied().unwrap_or(*t.cuts.last().unwrap() - total);
+            let after = t.cuts.iter().find(|c| **c > t.click).copied().unwrap_or(t.cuts[0] + total);
+            (before, after)
+        } else {
+            (t.cuts.iter().rev().find(|c| **c <= t.click).copied().unwrap_or(0.0), t.cuts.iter().find(|c| **c > t.click).copied().unwrap_or(total))
+        };
+        let mut pts = vec![t.point_at(from.rem_euclid(total))];
+        let mut k = from.floor() + 1.0;
+        while k < to {
+            pts.push(t.point_at(k.rem_euclid(total)));
+            k += 1.0;
+        }
+        pts.push(t.point_at(if t.closed { to.rem_euclid(total) } else { to }));
+        Some((pts, on, true))
+    }
+
+    fn trim_inner(&mut self, at: P, reach: f64, delete_whole: bool) -> bool {
+        let Some(t) = self.trim_target(at, reach) else { return false };
+        let (vi, pi) = (t.vi, t.pi);
+        if delete_whole {
+            self.checkpoint();
+            self.doc.vectors[vi].paths.remove(pi);
+            if self.doc.vectors[vi].paths.is_empty() {
+                let id = self.doc.vectors.remove(vi).id;
+                self.selected.retain(|s| *s != id);
+            }
+            return true;
+        }
+        let path_closed = t.closed;
+        let TrimTarget { segs, crossings, cuts, click, .. } = t;
+        if cuts.is_empty() {
+            self.status = crate::i18n::tr("That line doesn't cross anything. Hold Shift and click to delete it.").into();
+            return false;
+        }
         let total = segs.len() as f64;
         let point_at = |pos: f64| {
             let i = (pos.floor() as usize).min(segs.len() - 1);
@@ -619,7 +839,7 @@ impl App {
         };
         let mut kept: Vec<Vec<P>> = Vec::new();
         let mut ends_made: Vec<f64> = Vec::new();
-        if path.closed {
+        if path_closed {
             // Keep everything except the stretch around the click.
             let before = cuts.iter().rev().find(|c| **c <= click).copied().unwrap_or(*cuts.last().unwrap() - total);
             let after = cuts.iter().find(|c| **c > click).copied().unwrap_or(cuts[0] + total);
@@ -1466,9 +1686,13 @@ pub const NEST_SHAPE_CELLS: f64 = 200.0;
 /// The step a part gets when it may not turn: a full turn.
 pub const NEST_NO_TURN: f64 = 360.0;
 
-/// Connects open lines whose ends touch within `tolerance`.
+/// Connects open lines whose ends touch within `tolerance`. The closest pairs of ends over the whole
+/// drawing are joined first (so an end goes to its nearest neighbour, not merely the first found),
+/// a chain whose ends meet is closed, and two ends a little apart meet halfway, leaving no tiny
+/// step at the joint.
 pub fn join_paths(paths: Vec<Path>, tolerance: f64) -> Vec<Path> {
-    let near = |a: P, b: P| (a[0] - b[0]).hypot(a[1] - b[1]) <= tolerance;
+    let dist = |a: P, b: P| (a[0] - b[0]).hypot(a[1] - b[1]);
+    let mid = |a: P, b: P| [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
     let mut keep = Vec::new();
     let mut open: Vec<Vec<P>> = Vec::new();
     for p in paths {
@@ -1478,33 +1702,91 @@ pub fn join_paths(paths: Vec<Path>, tolerance: f64) -> Vec<Path> {
             open.push(p.pts);
         }
     }
-    while let Some(mut line) = open.pop() {
-        loop {
-            let end = *line.last().unwrap();
-            let start = line[0];
-            if let Some(i) = open.iter().position(|o| near(end, o[0]) || near(end, *o.last().unwrap())) {
-                let mut o = open.swap_remove(i);
-                if !near(end, o[0]) {
-                    o.reverse();
+    let n = open.len();
+    // End 2k is line k's start, 2k+1 its end.
+    let end_point = |e: usize| if e % 2 == 0 { open[e / 2][0] } else { *open[e / 2].last().unwrap() };
+    // Nearby ends found through a grid of cells as big as the tolerance.
+    let cell = tolerance.max(1e-9);
+    let key = |p: P| ((p[0] / cell).floor() as i64, (p[1] / cell).floor() as i64);
+    let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> = std::collections::HashMap::new();
+    for e in 0..2 * n {
+        grid.entry(key(end_point(e))).or_default().push(e);
+    }
+    let mut pairs: Vec<(f64, usize, usize)> = Vec::new();
+    for a in 0..2 * n {
+        let (cx, cy) = key(end_point(a));
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for &b in grid.get(&(cx + dx, cy + dy)).map_or(&[][..], |v| &v[..]) {
+                    // A line's own two ends close it only when it is more than one straight piece.
+                    if b <= a || (a / 2 == b / 2 && open[a / 2].len() <= 2) {
+                        continue;
+                    }
+                    let d = dist(end_point(a), end_point(b));
+                    if d <= tolerance {
+                        pairs.push((d, a, b));
+                    }
                 }
-                line.extend(o.into_iter().skip(1));
-            } else if let Some(i) = open.iter().position(|o| near(start, o[0]) || near(start, *o.last().unwrap())) {
-                let mut o = open.swap_remove(i);
-                if !near(start, *o.last().unwrap()) {
-                    o.reverse();
-                }
-                o.pop();
-                o.extend(line);
-                line = o;
-            } else {
-                break;
             }
         }
-        if line.len() > 2 && near(line[0], *line.last().unwrap()) {
-            line.pop();
-            keep.push(Path::closed(line));
-        } else {
-            keep.push(Path::open(line));
+    }
+    pairs.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let mut link: Vec<Option<usize>> = vec![None; 2 * n];
+    for (_, a, b) in pairs {
+        if link[a].is_none() && link[b].is_none() {
+            link[a] = Some(b);
+            link[b] = Some(a);
+        }
+    }
+    let oriented = |k: usize, from_start: bool| -> Vec<P> {
+        let mut pts = open[k].clone();
+        if !from_start {
+            pts.reverse();
+        }
+        pts
+    };
+    let mut used = vec![false; n];
+    // Walks from end `e` of its line, along it and on through the joints. True when it came back
+    // round to where it started (a closed chain).
+    let walk = |e: usize, used: &mut Vec<bool>| -> (Vec<P>, bool) {
+        let first = e / 2;
+        let mut out: Vec<P> = Vec::new();
+        let mut at = e;
+        loop {
+            let k = at / 2;
+            used[k] = true;
+            let seq = oriented(k, at % 2 == 0);
+            match out.last_mut() {
+                Some(last) => {
+                    *last = mid(*last, seq[0]);
+                    out.extend(seq.into_iter().skip(1));
+                }
+                None => out = seq,
+            }
+            let other = k * 2 + 1 - at % 2;
+            match link[other] {
+                Some(next) if next / 2 == first && next == e => {
+                    // Back where it began: the last joint closes the shape.
+                    let last = out.pop().unwrap();
+                    out[0] = mid(last, out[0]);
+                    return (out, true);
+                }
+                Some(next) if !used[next / 2] => at = next,
+                _ => return (out, false),
+            }
+        }
+    };
+    // Chains with a loose end first, then what's left goes round in loops.
+    for e in 0..2 * n {
+        if link[e].is_none() && !used[e / 2] {
+            let (pts, closed) = walk(e, &mut used);
+            keep.push(if closed { Path::closed(pts) } else { Path::open(pts) });
+        }
+    }
+    for k in 0..n {
+        if !used[k] {
+            let (pts, closed) = walk(2 * k, &mut used);
+            keep.push(if closed && pts.len() >= 3 { Path::closed(pts) } else { Path::open(pts) });
         }
     }
     keep
@@ -1548,39 +1830,59 @@ fn corner_points(a: P, c: P, b: P, r: f64, kind: FilletKind) -> Option<Vec<P>> {
             Some(arc(centre, from, to, false))
         }
         FilletKind::DogBone | FilletKind::TBone => {
-            // A round notch past the corner, so a square part seats fully.
-            let dir = if kind == FilletKind::TBone {
-                [-u[0], -u[1]]
+            // A round notch past the corner, so a square part seats fully. Dog-bone: a circle
+            // through the corner with its centre on the bisector, the outline following it from
+            // where it crosses one side to where it crosses the other. T-bone: a half circle on the
+            // second side, starting at the corner.
+            let (centre, from, to) = if kind == FilletKind::DogBone {
+                let bis = unit([0.0, 0.0], [u[0] + v[0], u[1] + v[1]])?;
+                let d = 2.0 * r * half.cos();
+                if d >= la || d >= lb {
+                    return None;
+                }
+                ([c[0] + bis[0] * r, c[1] + bis[1] * r], [c[0] + u[0] * d, c[1] + u[1] * d], [c[0] + v[0] * d, c[1] + v[1] * d])
             } else {
-                unit([0.0, 0.0], [-(u[0] + v[0]), -(u[1] + v[1])])?
+                if 2.0 * r >= lb {
+                    return None;
+                }
+                ([c[0] + v[0] * r, c[1] + v[1] * r], c, [c[0] + v[0] * 2.0 * r, c[1] + v[1] * 2.0 * r])
             };
-            let centre = [c[0] + dir[0] * r, c[1] + dir[1] * r];
-            let chord = |w: P| {
-                let t = 2.0 * r * (dir[0] * w[0] + dir[1] * w[1]);
-                [c[0] + w[0] * t, c[1] + w[1] * t]
-            };
-            let reach_on = |w: P| (2.0 * r * (dir[0] * w[0] + dir[1] * w[1])).abs();
-            let (from, to) = if kind == FilletKind::TBone { (c, chord(v)) } else { (c, c) };
-            if reach_on(v) >= lb {
-                return None;
-            }
+            // The arc goes round the side away from the shape: through the corner (dog-bone), or
+            // away from the first side (T-bone).
+            let through = if kind == FilletKind::DogBone { c } else { [centre[0] - u[0] * r, centre[1] - u[1] * r] };
+            Some(arc_through(centre, r, from, to, through))
+        }
+        FilletKind::Loop => {
+            // Both sides run on past the corner to where a circle outside it touches their lines,
+            // and the path goes round that circle, crossing itself at the corner.
+            let t = r / half.tan();
+            let bis = unit([0.0, 0.0], [u[0] + v[0], u[1] + v[1]])?;
+            let centre = [c[0] - bis[0] * r / half.sin(), c[1] - bis[1] * r / half.sin()];
+            let (ta, tb) = ([c[0] - u[0] * t, c[1] - u[1] * t], [c[0] - v[0] * t, c[1] - v[1] * t]);
+            // Round the far side of the circle, away from the corner.
+            let far = [centre[0] - bis[0] * r, centre[1] - bis[1] * r];
             let mut pts = vec![c];
-            let start = if kind == FilletKind::TBone { from } else { c };
-            let end = if kind == FilletKind::TBone { to } else { c };
-            if kind == FilletKind::DogBone {
-                pts.extend((1..24).map(|i| {
-                    let t = std::f64::consts::TAU * i as f64 / 24.0;
-                    let (s, k) = t.sin_cos();
-                    let (x, y) = (c[0] - centre[0], c[1] - centre[1]);
-                    [centre[0] + x * k - y * s, centre[1] + x * s + y * k]
-                }));
-                pts.push(c);
-            } else {
-                pts = arc(centre, start, end, true);
-            }
+            pts.extend(arc_through(centre, r, ta, tb, far));
+            pts.push(c);
             Some(pts)
         }
     }
+}
+
+/// Points round a circle from `from` to `to` (both on it), the way that passes `through`.
+pub(crate) fn arc_through(centre: P, r: f64, from: P, to: P, through: P) -> Vec<P> {
+    let tau = std::f64::consts::TAU;
+    let angle = |p: P| (p[1] - centre[1]).atan2(p[0] - centre[0]);
+    let (a0, a1, am) = (angle(from), angle(to), angle(through));
+    let ccw = (a1 - a0).rem_euclid(tau);
+    let d = if (am - a0).rem_euclid(tau) <= ccw { ccw } else { ccw - tau };
+    let d = if d.abs() < 1e-9 { tau } else { d };
+    let n = ((d.abs() / 5f64.to_radians()).ceil() as usize).max(8);
+    (0..=n).map(|k| {
+        let t = a0 + d * k as f64 / n as f64;
+        [centre[0] + r * t.cos(), centre[1] + r * t.sin()]
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -1746,6 +2048,82 @@ mod tests {
         assert!(!a.fillet_at([9.0, 9.0], 0.1, 0.5, FilletKind::Normal), "nothing to round there");
     }
 
+    /// The person's report: a corner where two curves meet (many short pieces each side) is rounded
+    /// too, with the click caught on the corner rather than on a point of a curve.
+    #[test]
+    fn fillet_rounds_a_corner_between_two_curves() {
+        let mut a = app();
+        // A lens: two arcs of radius 10 meeting at two sharp corners, (±8.66, 0).
+        let mut pts: Vec<P> = Vec::new();
+        for k in 0..=60 {
+            let t = (150.0 - 120.0 * k as f64 / 60.0f64).to_radians();
+            pts.push([10.0 * t.cos(), -5.0 + 10.0 * t.sin()]);
+        }
+        for k in 1..60 {
+            let t = (-30.0 - 120.0 * k as f64 / 60.0f64).to_radians();
+            pts.push([10.0 * t.cos(), 5.0 + 10.0 * t.sin()]);
+        }
+        add(&mut a, vec![Path::closed(pts)]);
+        let cusp = [10.0 * 30f64.to_radians().cos(), 0.0];
+        // Clicked a little off the corner, nearer the curve's own points.
+        assert!(a.fillet_at([cusp[0] - 0.3, 0.2], 0.5, 1.0, FilletKind::Normal), "{}", a.status);
+        let path = &a.doc.vectors[0].paths[0];
+        assert!(path.closed);
+        let nearest = path.pts.iter().map(|p| (p[0] - cusp[0]).hypot(p[1] - cusp[1])).fold(f64::MAX, f64::min);
+        // A 120° corner: the arc's centre is r / sin 60° from the point, so the arc passes
+        // 1.155 - 1 = 0.155 from it (a little more, as the sides bulge).
+        assert!(nearest > 0.15 && nearest < 0.25, "the sharp point is gone: {nearest}");
+        // The arc meets each curve: its ends lie on the two circles.
+        let (start, end) = a.new_fillet.map(|f| (f.1, f.2)).unwrap_or(([0.0; 2], [0.0; 2]));
+        let on = |p: P, cy: f64| ((p[0]).hypot(p[1] - cy) - 10.0).abs() < 0.05;
+        assert!(a.new_fillet.is_none() || ((on(start, -5.0) || on(start, 5.0)) && (on(end, -5.0) || on(end, 5.0))), "{start:?} {end:?}");
+        // The other corner is still sharp.
+        assert!(path.pts.iter().any(|p| (p[0] + cusp[0]).abs() < 1e-6 && p[1].abs() < 1e-6));
+    }
+
+    #[test]
+    fn join_takes_the_nearest_end_and_closes_with_small_gaps() {
+        // A square drawn as four lines with small gaps, and a stray line whose end is near a corner
+        // but farther than the square's own next side.
+        let sides = vec![
+            Path::open(vec![[0.0, 0.0], [10.0, 0.0]]),
+            Path::open(vec![[10.03, 0.02], [10.0, 10.0]]),
+            Path::open(vec![[10.0, 10.04], [0.0, 10.0]]),
+            Path::open(vec![[0.0, 9.97], [0.01, 0.03]]),
+            Path::open(vec![[10.08, 0.0], [20.0, 0.0]]),
+        ];
+        let joined = join_paths(sides, 0.1);
+        let closed: Vec<&Path> = joined.iter().filter(|p| p.closed).collect();
+        assert_eq!(closed.len(), 1, "{joined:?}");
+        assert_eq!(closed[0].pts.len(), 4, "one point per corner: {:?}", closed[0].pts);
+        assert!((geom::signed_area(&closed[0].pts).abs() - 100.0).abs() < 1.0);
+        assert_eq!(joined.iter().filter(|p| !p.closed).count(), 1, "the stray line stays apart");
+    }
+
+    /// As the person showed, radius 4 on a square corner: the dog-bone's circle
+    /// goes through the corner and the outline follows it; the T-bone is a half circle on the second
+    /// side; the plasma loop runs both sides past the corner round a circle outside.
+    #[test]
+    fn dog_bone_t_bone_and_loop_follow_the_outline() {
+        let (a, c, b) = ([0.0, 10.0], [0.0, 0.0], [10.0, 0.0]);
+        let near = |p: P, q: P| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-6;
+        let d = 4.0 * 2f64.sqrt();
+        let dog = corner_points(a, c, b, 4.0, FilletKind::DogBone).unwrap();
+        assert!(near(dog[0], [0.0, d]) && near(*dog.last().unwrap(), [d, 0.0]), "{:?} {:?}", dog[0], dog.last());
+        let centre = [d / 2.0, d / 2.0];
+        assert!(dog.iter().all(|p| ((p[0] - centre[0]).hypot(p[1] - centre[1]) - 4.0).abs() < 1e-6));
+        assert!(dog.iter().any(|p| near(*p, c)), "through the corner");
+        let t = corner_points(a, c, b, 4.0, FilletKind::TBone).unwrap();
+        assert!(near(t[0], c) && near(*t.last().unwrap(), [8.0, 0.0]));
+        let low = t.iter().map(|p| p[1]).fold(f64::MAX, f64::min);
+        assert!((low + 4.0).abs() < 1e-6, "below, away from the first side: {low}");
+        let lp = corner_points(a, c, b, 4.0, FilletKind::Loop).unwrap();
+        assert!(near(lp[0], c) && near(*lp.last().unwrap(), c));
+        assert!(near(lp[1], [0.0, -4.0]) && near(lp[lp.len() - 2], [-4.0, 0.0]), "{:?} {:?}", lp[1], lp[lp.len() - 2]);
+        let far = lp.iter().map(|p| p[0] + p[1]).fold(f64::MAX, f64::min);
+        assert!((far - (-8.0 - 4.0 * 2f64.sqrt())).abs() < 0.1, "round the far side: {far}");
+    }
+
     #[test]
     fn dog_bone_extends_past_the_corner() {
         let mut a = app();
@@ -1753,6 +2131,29 @@ mod tests {
         assert!(a.fillet_at([3.0, 3.0], 0.1, 0.25, FilletKind::DogBone));
         let (lo, _) = geom::bbox(&a.doc.vectors[0].paths).unwrap();
         assert!(lo[0] < 3.0 && lo[1] < 3.0, "{lo:?}");
+    }
+
+    /// The person's report: the trim stopped where nothing could be seen. Lines on a hidden layer
+    /// (or another sheet) don't cut; a line that only touches another (a T) does.
+    #[test]
+    fn trim_stops_at_what_can_be_seen() {
+        let mut a = app();
+        add(&mut a, vec![Path::open(vec![[0.0, 5.0], [10.0, 5.0]])]);
+        add(&mut a, vec![Path::open(vec![[3.0, 0.0], [3.0, 10.0]])]);
+        let hidden = add(&mut a, vec![Path::open(vec![[7.0, 0.0], [7.0, 10.0]])]);
+        a.doc.layers.push(crate::app::Layer::named("hidden"));
+        a.doc.layers[1].visible = false;
+        a.doc.vectors.iter_mut().find(|v| v.id == hidden).unwrap().layer = 1;
+        // A T: a line whose end sits on the first one.
+        add(&mut a, vec![Path::open(vec![[1.5, 10.0], [1.5, 5.0]])]);
+        a.selected.clear();
+        assert!(a.trim_at([8.0, 5.0], 0.2, false));
+        let first = &a.doc.vectors[0];
+        let right = first.paths.iter().flat_map(|p| p.pts.iter().map(|q| q[0])).fold(0.0, f64::max);
+        assert!((right - 3.0).abs() < 1e-9, "cut at the visible crossing, not the hidden line: {right}");
+        assert!(a.trim_at([0.5, 5.0], 0.2, false));
+        let left = a.doc.vectors[0].paths.iter().flat_map(|p| p.pts.iter().map(|q| q[0])).fold(f64::MAX, f64::min);
+        assert!((left - 1.5).abs() < 1e-9, "cut where the T touches it: {left}");
     }
 
     #[test]
@@ -1872,4 +2273,172 @@ mod tests {
         assert!(((lo[0] + hi[0]) / 2.0 - 8.0).abs() < 1e-9, "turned about its own centre");
     }
 
+}
+
+/// The line a trim works on and where it is crossed.
+struct TrimTarget {
+    vi: usize,
+    pi: usize,
+    closed: bool,
+    segs: Vec<(P, P)>,
+    crossings: Vec<(f64, crate::constraints::Elem)>,
+    cuts: Vec<f64>,
+    click: f64,
+}
+
+impl TrimTarget {
+    fn point_at(&self, pos: f64) -> P {
+        let i = (pos.floor().max(0.0) as usize).min(self.segs.len() - 1);
+        lerp(self.segs[i].0, self.segs[i].1, pos - i as f64)
+    }
+}
+
+/// A fillet worked out: the path's new points, the arc alone, and where it starts and ends.
+struct FilletPlan {
+    vi: usize,
+    pi: usize,
+    pts: Vec<P>,
+    arc: Vec<P>,
+    start: P,
+    end: P,
+}
+
+/// A rounded corner of `radius` at point `i` of a path whose sides may be curves (many short
+/// pieces): each side moved in by the radius, their crossing nearest the corner is the centre, and
+/// the arc runs between the feet of the centre on the sides. The path's new points and the arc.
+fn round_corner(pts: &[P], closed: bool, i: usize, radius: f64) -> Option<(Vec<P>, Vec<P>)> {
+    let n = pts.len();
+    if radius <= 0.0 || n < 3 {
+        return None;
+    }
+    // Each side as points walking away from the corner, at most half the shape.
+    let reach = if closed { n / 2 } else { n };
+    let side = |step: isize| -> Vec<(usize, P)> {
+        let mut out = vec![(i, pts[i])];
+        for k in 1..reach as isize {
+            let at = i as isize + step * k;
+            if !closed && (at < 0 || at >= n as isize) {
+                break;
+            }
+            let at = at.rem_euclid(n as isize) as usize;
+            out.push((at, pts[at]));
+        }
+        out
+    };
+    let (back, fwd) = (side(-1), side(1));
+    if back.len() < 2 || fwd.len() < 2 {
+        return None;
+    }
+    let unit = |p: P, q: P| {
+        let l = (q[0] - p[0]).hypot(q[1] - p[1]);
+        (l > 1e-12).then(|| [(q[0] - p[0]) / l, (q[1] - p[1]) / l])
+    };
+    let (u, v) = (unit(back[0].1, back[1].1)?, unit(fwd[0].1, fwd[1].1)?);
+    let cross = u[0] * v[1] - u[1] * v[0];
+    if cross.abs() < 1e-9 {
+        return None;
+    }
+    // Moved toward the other side: left of the way walked on one side, right on the other.
+    let left = |d: P| [-d[1], d[0]];
+    let moved = |chain: &[(usize, P)], sign: f64| -> Vec<(P, P)> {
+        chain
+            .windows(2)
+            .filter_map(|w| {
+                let d = unit(w[0].1, w[1].1)?;
+                let m = left(d);
+                Some(([w[0].1[0] + sign * m[0] * radius, w[0].1[1] + sign * m[1] * radius], [w[1].1[0] + sign * m[0] * radius, w[1].1[1] + sign * m[1] * radius]))
+            })
+            .collect()
+    };
+    let (sa, sb) = (cross.signum(), -cross.signum());
+    let (ma, mb) = (moved(&back, sa), moved(&fwd, sb));
+    // The crossing of the moved sides nearest the corner (pieces of a curve moved one by one leave
+    // small gaps at their joints, so each piece reaches a little past its ends).
+    let mut best: Option<(usize, usize, P)> = None;
+    'search: for (ja, a) in ma.iter().enumerate() {
+        for (jb, b) in mb.iter().enumerate() {
+            if best.is_some_and(|(x, y, _)| ja + jb >= x + y) {
+                continue;
+            }
+            if let Some(o) = crossing_with_slack(a.0, a.1, b.0, b.1, 0.02) {
+                best = Some((ja, jb, o));
+                if ja == 0 && jb == 0 {
+                    break 'search;
+                }
+            }
+        }
+    }
+    let (ja, jb, o) = best?;
+    // The feet of the centre on the two sides: where the arc meets them.
+    let foot = |p: P, q: P| {
+        let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
+        let t = (((o[0] - p[0]) * dx + (o[1] - p[1]) * dy) / (dx * dx + dy * dy).max(1e-18)).clamp(0.0, 1.0);
+        [p[0] + dx * t, p[1] + dy * t]
+    };
+    let ta = foot(back[ja].1, back[ja + 1].1);
+    let tb = foot(fwd[jb].1, fwd[jb + 1].1);
+    // The arc, the short way round.
+    let a0 = (ta[1] - o[1]).atan2(ta[0] - o[0]);
+    let a1 = (tb[1] - o[1]).atan2(tb[0] - o[0]);
+    let mut sweep = a1 - a0;
+    while sweep > std::f64::consts::PI {
+        sweep -= std::f64::consts::TAU;
+    }
+    while sweep < -std::f64::consts::PI {
+        sweep += std::f64::consts::TAU;
+    }
+    let steps = ((sweep.abs() / 5f64.to_radians()).ceil() as usize).max(2);
+    let arc: Vec<P> = (0..=steps).map(|k| {
+        let t = a0 + sweep * k as f64 / steps as f64;
+        [o[0] + radius * t.cos(), o[1] + radius * t.sin()]
+    })
+    .collect();
+    // The path again: up to the arc's start on the way in, the arc, then on from its end.
+    let first_dropped = back[ja + 1].0; // the last point kept before the arc
+    let last_dropped = fwd[jb + 1].0; // the first point kept after it
+    let mut out: Vec<P> = Vec::new();
+    if closed {
+        // The arc, then round from just after it to just before it; then turned so the shape
+        // starts where it did (when that point is kept).
+        out.extend(arc.iter().copied());
+        let mut kept: Vec<usize> = Vec::new();
+        let mut k = last_dropped;
+        loop {
+            kept.push(k);
+            out.push(pts[k]);
+            if k == first_dropped {
+                break;
+            }
+            k = (k + 1) % n;
+            if kept.len() > n {
+                return None;
+            }
+        }
+        if let Some(at) = kept.iter().position(|k| *k == 0) {
+            out.rotate_left(arc.len() + at);
+        }
+    } else {
+        out.extend_from_slice(&pts[..=first_dropped]);
+        out.extend(arc.iter().copied());
+        out.extend_from_slice(&pts[last_dropped..]);
+    }
+    if out.len() < 3 {
+        return None;
+    }
+    Some((out, arc))
+}
+
+/// Where segments a-b and c-d cross, each reaching `slack` of its length past its ends.
+fn crossing_with_slack(a: P, b: P, c: P, d: P, slack: f64) -> Option<P> {
+    let r = [b[0] - a[0], b[1] - a[1]];
+    let q = [d[0] - c[0], d[1] - c[1]];
+    let den = r[0] * q[1] - r[1] * q[0];
+    if den.abs() < 1e-15 {
+        return None;
+    }
+    let w = [c[0] - a[0], c[1] - a[1]];
+    let t = (w[0] * q[1] - w[1] * q[0]) / den;
+    let u = (w[0] * r[1] - w[1] * r[0]) / den;
+    let ok = |x: f64| (-slack..=1.0 + slack).contains(&x);
+    (ok(t) && ok(u)).then(|| [a[0] + r[0] * t, a[1] + r[1] * t])
 }

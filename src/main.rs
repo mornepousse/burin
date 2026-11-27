@@ -37,6 +37,8 @@ mod measure;
 mod pdfin;
 mod dxfin;
 mod pcbin;
+mod wavetexture;
+mod plates;
 mod merge;
 mod curvefit;
 mod rates;
@@ -1247,6 +1249,29 @@ fn open_state(app: &mut App, state: &str) {
             app.path = Some(file);
             app.dirty = false;
             app.backups_open = true;
+        }
+        "wavetexture" => {
+            app.new_file();
+            app.doc.job.units = app::Units::Mm;
+            (app.doc.job.width, app.doc.job.height, app.doc.job.thickness) = (400.0, 300.0, 18.0);
+            app.doc.add_vector(vec![geom::Path::closed(geom::rect([160.0, 160.0], 110.0, 90.0, 0.0))], app::Prim::Free);
+            app.start_xform(app::Xform::WaveTexture);
+            app.selected.clear();
+        }
+        "plates" => {
+            app.new_file();
+            app.doc.job.units = app::Units::Mm;
+            (app.doc.job.width, app.doc.job.height, app.doc.job.thickness) = (400.0, 400.0, 3.0);
+            let frame = app.doc.add_vector(vec![geom::Path::closed(geom::rect([60.0, 50.0], 114.0, 98.0, 0.0))], app::Prim::Free);
+            let prim = app::Prim::Text { at: [20.0, 40.0], height: 20.0, text: "Name".into(), style: Default::default() };
+            let text = app.doc.add_vector(prim.paths(), prim);
+            app.selected = vec![frame, text];
+            app.open_plates();
+            if let Some(f) = &mut app.plates {
+                f.data = "Name;Room\nAnna;12\nBob;7\n".into();
+                f.separator = plates::Separator::Semicolon;
+                f.titles = true;
+            }
         }
         "feedback" => {
             app.load_sample();

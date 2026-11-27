@@ -260,6 +260,9 @@ impl App {
                 if icon_button(ui, Icon::Trace, crate::i18n::tr("Trace bitmap"), true, false).clicked() {
                     self.start_trace();
                 }
+                if icon_button(ui, Icon::TpTexture, crate::i18n::tr("Create vector texture"), true, false).clicked() {
+                    self.start_xform(Xform::WaveTexture);
+                }
             });
         }
         ui.add_space(6.0);
@@ -271,6 +274,9 @@ impl App {
                 self.array_buttons(ui, some);
                 if icon_button(ui, Icon::Nest, crate::i18n::tr("Nest parts"), some, false).clicked() {
                     self.start_xform(Xform::Nest);
+                }
+                if icon_button(ui, Icon::BlockCopy, crate::i18n::tr("Plates from data"), some, false).clicked() {
+                    self.open_plates();
                 }
             });
         }
@@ -954,6 +960,7 @@ impl App {
             Xform::Bulk => (Icon::Bulk, crate::i18n::tr("Modify Several Shapes")),
             Xform::Constraints => (Icon::Constraint, crate::i18n::tr("Dimensions and Rules")),
             Xform::Distort => (Icon::Distort, crate::i18n::tr("Distort Object")),
+            Xform::WaveTexture => (Icon::TpTexture, crate::i18n::tr("Create Vector Texture")),
         };
         let title = if f.zero_only { crate::i18n::tr("X/Y Zero") } else { title };
         // Burin's own head: the tool's icon, large, and its name.
@@ -964,6 +971,51 @@ impl App {
         });
         let mut apply_label = Some(crate::i18n::tr("Apply"));
         match f.kind {
+            Xform::WaveTexture => {
+                use crate::ui::icon_caps;
+                apply_label = Some(crate::i18n::tr("Create"));
+                note(ui, if some { crate::i18n::tr("Fills the selected closed shapes. The lines show on the sheet as you change the settings.") } else { crate::i18n::tr("Fills the whole material (select closed shapes to fill only them). The lines show on the sheet as you change the settings.") });
+                card(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    icon_caps(ui, Icon::Rotate, crate::i18n::tr("Angle"));
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Slider::new(&mut f.angle, -90.0..=90.0).show_value(false));
+                        crate::ui::number(ui, &mut f.angle, 46.0);
+                        ui.label(crate::i18n::tr("degrees"));
+                    });
+                    f.angle = f.angle.clamp(-90.0, 90.0);
+                });
+                card(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    icon_caps(ui, Icon::Measure, crate::i18n::tr("Line spacing"));
+                    labelled(ui, crate::i18n::tr("Largest gap"), 0.0, &mut f.spacing, 54.0, unit);
+                    ui.horizontal(|ui| {
+                        ui.label(crate::i18n::tr("Variation"));
+                        ui.add(egui::Slider::new(&mut f.wave_variation, 0.0..=0.9).show_value(false));
+                    });
+                });
+                card(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    icon_caps(ui, Icon::TpTexture, crate::i18n::tr("Waves"));
+                    labelled(ui, crate::i18n::tr("Amplitude"), 0.0, &mut f.wave_amplitude, 54.0, unit);
+                    labelled(ui, crate::i18n::tr("Length"), 0.0, &mut f.wave_length, 54.0, unit);
+                    ui.horizontal(|ui| {
+                        ui.label(crate::i18n::tr("Noise"));
+                        ui.add(egui::Slider::new(&mut f.wave_noise, 0.0..=1.0).show_value(false));
+                    });
+                });
+                card(ui, |ui| {
+                    ui.checkbox(&mut f.wave_layer, crate::i18n::tr("Put the lines on a layer"));
+                    ui.add_enabled_ui(f.wave_layer, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(crate::i18n::tr("Name"));
+                            ui.add(egui::TextEdit::singleline(&mut f.wave_layer_name).desired_width(120.0).hint_text(crate::i18n::tr("Texture")));
+                        });
+                    });
+                });
+                f.spacing = f.spacing.max(0.0);
+                f.wave_length = f.wave_length.max(0.0);
+            }
             // The machine's zero, on its own: what it is, where it is, and where to put it.
             Xform::Move if f.zero_only => {
                 card(ui, |ui| {
@@ -1318,15 +1370,17 @@ impl App {
                 apply_label = None;
                 card(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 4.0;
-                    let kinds = [FilletKind::Normal, FilletKind::DogBone, FilletKind::TBone];
+                    let kinds = [FilletKind::Normal, FilletKind::DogBone, FilletKind::TBone, FilletKind::Loop];
+                    let pics = [Pic::FilletNormal, Pic::FilletDogBone, Pic::FilletTBone, Pic::FilletLoop];
                     let at = kinds.iter().position(|k| *k == f.fillet).unwrap_or(0);
-                    if let Some(k) = pictured_pills(ui, &[(Some(Pic::FilletNormal), crate::i18n::tr("Rounded")), (Some(Pic::FilletDogBone), crate::i18n::tr("Dog-bone")), (Some(Pic::FilletTBone), crate::i18n::tr("T-bone"))], at) {
+                    if let Some(k) = pictured_pills(ui, &[(Some(pics[0]), crate::i18n::tr("Rounded")), (Some(pics[1]), crate::i18n::tr("Dog-bone")), (Some(pics[2]), crate::i18n::tr("T-bone")), (Some(pics[3]), crate::i18n::tr("Plasma / drag knife"))], at) {
                         f.fillet = kinds[k];
                     }
-                    explain(ui, [Pic::FilletNormal, Pic::FilletDogBone, Pic::FilletTBone][at], match f.fillet {
+                    explain(ui, pics[at], match f.fillet {
                         FilletKind::Normal => crate::i18n::tr("Click on an angled corner to change it into a circular fillet. Undo removes a fillet."),
                         FilletKind::DogBone => crate::i18n::tr("Clears inside corners so slotted pieces fit together."),
                         FilletKind::TBone => crate::i18n::tr("The same clearance, for when the slot is the same size as the tool."),
+                        FilletKind::Loop => crate::i18n::tr("A loop outside the corner, for a plasma torch or a drag knife to turn without stopping."),
                     });
                     labelled(ui, crate::i18n::tr("Radius or tool"), 0.0, &mut f.distance, 54.0, unit);
                 });
@@ -1554,9 +1608,20 @@ impl App {
         }
         match apply_label {
             Some(label) => {
-                let enabled = some;
-                if self.apply_close(ui, label, enabled) {
-                    self.apply_xform();
+                let enabled = some || f.kind == Xform::WaveTexture;
+                if self.busy_apply.is_some() {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(crate::i18n::tr("Working it out..."));
+                    });
+                } else if self.apply_close(ui, label, enabled) {
+                    if matches!(f.kind, Xform::Offset | Xform::WaveTexture) {
+                        // Said first, then worked out two frames later, once the window shows it.
+                        self.busy_apply = Some(2);
+                        ui.ctx().request_repaint();
+                    } else {
+                        self.apply_xform();
+                    }
                 }
             }
             None => {

@@ -216,12 +216,23 @@ impl App {
         if gap < 1.0 {
             return;
         }
-        // Tighter than a click, so a sweep only takes the lines it really crosses.
-        let reach = (3.0 / self.scale) as f64;
-        let steps = (gap / 2.0).ceil() as usize;
+        // A sweep takes only the lines it really crosses, each where it crosses: passing close to a
+        // line (or along the one just cut, near where it was crossed) takes nothing.
+        let (from, to) = (self.to_world(last), self.to_world(at));
+        let mut crossed: Vec<(f64, P)> = Vec::new();
+        for v in self.doc.vectors.iter().filter(|v| self.doc.can_pick(v)) {
+            for path in &v.paths {
+                for (a, b) in path.segments() {
+                    if let Some(t) = crate::edit::segment_cross(from, to, a, b) {
+                        crossed.push((t, [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]));
+                    }
+                }
+            }
+        }
+        crossed.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let reach = (0.5 / self.scale) as f64;
         let mut hits = 0;
-        for i in 1..=steps {
-            let world = self.to_world(last + (at - last) * (i as f32 / steps as f32));
+        for (_, world) in crossed {
             hits += usize::from(self.trim_at(world, reach, shift));
         }
         if let Some(s) = &mut self.trim_stroke {
@@ -1310,6 +1321,66 @@ impl App {
             _ => {}
         }
         self.paint_measure(&painter);
+        self.paint_edit_reticle(&painter);
+        // What Curve Fit Vectors would make, over the shapes, before it's applied.
+        if let Some((_, paths)) = self.curve_fit_preview.as_ref().filter(|_| self.curve_fit_open) {
+            let ink = Stroke::new(1.4, Color32::from_rgb(220, 0, 200));
+            for p in paths {
+                let mut pts: Vec<Pos2> = p.pts.iter().map(|q| self.to_screen(*q)).collect();
+                if p.closed {
+                    if let Some(first) = pts.first().copied() {
+                        pts.push(first);
+                    }
+                }
+                painter.add(egui::Shape::line(pts, ink));
+            }
+        }
+    }
+
+    /// The tools that act on a line under a click (trim, fillet) show beforehand what they will take:
+    /// a reticle caught on the line or corner, and the stretch or corner itself lit.
+    fn paint_edit_reticle(&self, painter: &egui::Painter) {
+        let LeftForm::Xform(f) = &self.left else { return };
+        if f.kind == Xform::WaveTexture {
+            if let Some((_, lines)) = &self.wave_preview {
+                let ink = Stroke::new(1.0, Color32::from_rgb(40, 130, 210));
+                for l in lines {
+                    painter.add(egui::Shape::line(l.pts.iter().map(|q| self.to_screen(*q)).collect(), ink));
+                }
+            }
+            return;
+        }
+        let Some(w) = self.cursor else { return };
+        let reach = (8.0 / self.scale) as f64;
+        let red = Color32::from_rgb(210, 40, 40);
+        let reticle = |at: Pos2, ink: Color32| {
+            let s = Stroke::new(1.3, ink);
+            painter.circle_stroke(at, 6.0, s);
+            painter.line_segment([at - vec2(11.0, 0.0), at - vec2(3.0, 0.0)], s);
+            painter.line_segment([at + vec2(3.0, 0.0), at + vec2(11.0, 0.0)], s);
+            painter.line_segment([at - vec2(0.0, 11.0), at - vec2(0.0, 3.0)], s);
+            painter.line_segment([at + vec2(0.0, 3.0), at + vec2(0.0, 11.0)], s);
+        };
+        match f.kind {
+            Xform::Trim => {
+                if let Some((stretch, on, crossed)) = self.trim_preview(w, reach) {
+                    let pts: Vec<Pos2> = stretch.iter().map(|q| self.to_screen(*q)).collect();
+                    let ink = if crossed { red } else { red.gamma_multiply(0.45) };
+                    painter.add(egui::Shape::line(pts, Stroke::new(3.0, ink)));
+                    reticle(self.to_screen(on), red);
+                }
+            }
+            Xform::Fillet => {
+                if let Some((corner, arc)) = self.fillet_preview(w, reach, f.distance, f.fillet) {
+                    if let Some(arc) = arc {
+                        let pts: Vec<Pos2> = arc.iter().map(|q| self.to_screen(*q)).collect();
+                        painter.add(egui::Shape::line(pts, Stroke::new(2.5, crate::theme::ACCENT)));
+                    }
+                    reticle(self.to_screen(corner), crate::theme::ACCENT);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Fine and bold grid lines across the whole view, tuned to read on the sheet and around it.

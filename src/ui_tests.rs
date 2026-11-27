@@ -8216,3 +8216,130 @@ fn grid_copies_go_the_way_asked() {
     let (minx, miny) = lows.iter().fold((f64::MAX, f64::MAX), |(a, b), p| (a.min(p[0]), b.min(p[1])));
     assert!((minx - (4.0 - 3.0)).abs() < 1e-9 && (miny - (4.0 - 3.0)).abs() < 1e-9, "left and down by size + gap: {lows:?}");
 }
+
+/// The person's report: an offset can take seconds in the browser. Apply first says it is working
+/// it out, in the form and over the drawing, then makes the new outline.
+#[test]
+fn an_offset_says_it_is_working_before_it_runs() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().start_xform(crate::app::Xform::Offset);
+    h.run();
+    let before = h.state().doc.vectors.len();
+    h.get_by_label("Apply").click();
+    h.step();
+    h.step();
+    assert!(h.state().busy_apply.is_some(), "working on it, not yet done");
+    assert_eq!(h.state().doc.vectors.len(), before);
+    h.get_all_by_label("Working it out...").next().expect("it says so");
+    for _ in 0..5 {
+        h.step();
+    }
+    assert!(h.state().busy_apply.is_none());
+    assert_eq!(h.state().doc.vectors.len(), before + 1, "the outline is made");
+}
+
+/// The person's report: trim and fillet show what a click would take before it, with a reticle
+/// caught on the line or corner.
+#[test]
+fn trim_and_fillet_show_what_a_click_would_take() {
+    let mut h = trim_setup();
+    let at = h.state().to_screen([7.0, 5.02]);
+    h.hover_at(at);
+    h.run();
+    let (stretch, on, crossed) = h.state().trim_preview([7.0, 5.02], 0.2).expect("caught on the line");
+    assert!(crossed);
+    assert!((on[1] - 5.0).abs() < 1e-9, "the reticle sits on the line");
+    let xs: Vec<f64> = stretch.iter().map(|p| p[0]).collect();
+    assert!((xs.iter().cloned().fold(f64::MAX, f64::min) - 5.0).abs() < 1e-9 && (xs.iter().cloned().fold(0.0, f64::max) - 9.0).abs() < 1e-9, "from the crossing to the end: {xs:?}");
+    assert_eq!(right_ends(&h)[1], 9.0, "nothing taken by hovering");
+    // A square's corner for the fillet.
+    let sq = h.state_mut().doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([15.0, 15.0], 4.0, 4.0, 0.0))], Prim::Free);
+    h.state_mut().start_xform(crate::app::Xform::Fillet);
+    h.run();
+    let (corner, arc) = h.state().fillet_preview([13.1, 13.05], 0.3, 0.5, crate::edit::FilletKind::Normal).expect("a corner");
+    assert_eq!(corner, [13.0, 13.0]);
+    assert!(arc.is_some_and(|a| a.len() > 3));
+    h.hover_at(h.state().to_screen([13.1, 13.05]));
+    h.run();
+    assert!(h.state().doc.vectors.iter().any(|v| v.id == sq && v.paths[0].pts.len() == 4), "nothing changed yet");
+}
+
+/// Create Vector Texture, as the person asked: wavy lines across the
+/// material (or the chosen shapes), shown while the settings change, made on a named layer.
+#[test]
+fn a_vector_texture_fills_the_material_or_the_chosen_shape() {
+    let mut h = job_with_square([5.0, 5.0]);
+    h.state_mut().selected.clear();
+    h.state_mut().start_xform(crate::app::Xform::WaveTexture);
+    h.run();
+    let shown = h.state().wave_preview.as_ref().map_or(0, |p| p.1.len());
+    assert!(shown > 10, "the lines show before anything is made: {shown}");
+    if let crate::app::LeftForm::Xform(f) = &mut h.state_mut().left {
+        f.wave_layer = true;
+        f.wave_layer_name = "Waves".into();
+    }
+    let before = h.state().doc.vectors.len();
+    h.state_mut().apply_xform();
+    let a = h.state();
+    assert_eq!(a.doc.vectors.len(), before + 1);
+    let made = a.doc.vectors.last().unwrap();
+    assert!(made.paths.len() > 10 && made.paths.iter().all(|p| !p.closed));
+    assert_eq!(a.doc.layers[made.layer].name, "Waves");
+    let (lo, hi) = crate::geom::bbox(&made.paths).unwrap();
+    assert!(lo[0] >= -1e-6 && lo[1] >= -1e-6 && hi[0] <= a.doc.job.width + 1e-6 && hi[1] <= a.doc.job.height + 1e-6);
+}
+
+/// Plates from data, as the person asked: one design laid out in rows and
+/// columns, each plate's text from a line of data.
+#[test]
+fn plates_from_data_lay_out_the_design_and_fill_its_texts() {
+    let mut h = harness();
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    let a = h.state_mut();
+    a.doc.job.units = crate::app::Units::Mm;
+    (a.doc.job.width, a.doc.job.height) = (400.0, 400.0);
+    let frame = a.doc.add_vector(vec![crate::geom::Path::closed(crate::geom::rect([60.0, 50.0], 114.0, 98.0, 0.0))], Prim::Rect { c: [60.0, 50.0], w: 114.0, h: 98.0, corner: 0.0 });
+    let prim = Prim::Text { at: [20.0, 40.0], height: 20.0, text: "Name".into(), style: Default::default() };
+    let text = a.doc.add_vector(prim.paths(), prim);
+    a.selected = vec![frame, text];
+    a.open_plates();
+    let mut f = a.plates.take().unwrap();
+    f.data = "Anna\nBob\nChloé\n".into();
+    f.margins = [10.0; 4];
+    f.gaps = [5.0, 5.0];
+    f.texts[0].2 = crate::plates::Fill::Column(0);
+    a.make_plates(&f);
+    h.run();
+    let a = h.state();
+    let texts: Vec<String> = a.doc.vectors.iter().filter_map(|v| match &v.prim { Prim::Text { text, .. } => Some(text.clone()), _ => None }).collect();
+    assert_eq!(texts, ["Anna", "Bob", "Chloé"]);
+    assert_eq!(a.doc.vectors.len(), 6, "three plates of two shapes");
+    let boxes: Vec<([f64; 2], [f64; 2])> = a.doc.vectors.iter().filter(|v| matches!(v.prim, Prim::Rect { .. })).map(|v| crate::geom::bbox(&v.paths).unwrap()).collect();
+    assert!((boxes[0].0[0] - 10.0).abs() < 1e-6 && (boxes[0].1[1] - 390.0).abs() < 1e-6, "the first at the top left: {:?}", boxes[0]);
+    assert!((boxes[1].0[0] - 129.0).abs() < 1e-6, "the next to its right: {:?}", boxes[1]);
+}
+
+/// The person's request: Convert Text to Curves. Each letter becomes a shape of its own with its
+/// holes, the letters of the text grouped, and their points can be edited (no longer a text).
+#[test]
+fn a_text_converts_to_curves_letter_by_letter() {
+    let mut h = harness();
+    click(&mut h, "Start a new project");
+    click(&mut h, "OK");
+    let a = h.state_mut();
+    let prim = Prim::Text { at: [1.0, 1.0], height: 2.0, text: "OB".into(), style: Default::default() };
+    let id = a.doc.add_vector(prim.paths(), prim);
+    let outline = a.doc.vectors.iter().find(|v| v.id == id).unwrap().paths.clone();
+    a.selected = vec![id];
+    a.text_to_curves();
+    h.run();
+    let a = h.state();
+    assert!(!a.doc.vectors.iter().any(|v| matches!(v.prim, Prim::Text { .. })), "no text left");
+    let group = a.doc.vectors.iter().find(|v| a.selected.contains(&v.id)).unwrap();
+    assert!(group.is_group());
+    let mut holes: Vec<usize> = group.members.iter().map(|m| m.paths.len()).collect();
+    holes.sort();
+    assert_eq!(holes, [2, 3], "O with its hole, B with its two");
+    assert_eq!(group.paths.iter().map(|p| p.pts.len()).sum::<usize>(), outline.iter().map(|p| p.pts.len()).sum::<usize>(), "the same outline");
+}

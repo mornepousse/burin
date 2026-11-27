@@ -399,6 +399,7 @@ pub(crate) enum Pic {
     FilletNormal,
     FilletDogBone,
     FilletTBone,
+    FilletLoop,
     NestAlongX,
     NestAlongY,
     EnvelopeBox,
@@ -752,7 +753,7 @@ pub(crate) fn draw_pic(p: &egui::Painter, r: Rect, pic: Pic, c: Color32) {
                 p.circle_filled(at(x, 0.5), 2.2, c);
             }
         }
-        Pic::FilletNormal | Pic::FilletDogBone | Pic::FilletTBone => {
+        Pic::FilletNormal | Pic::FilletDogBone | Pic::FilletTBone | Pic::FilletLoop => {
             match pic {
                 Pic::FilletNormal => {
                     line(&[(0.1, 0.9), (0.1, 0.45)], s);
@@ -760,12 +761,20 @@ pub(crate) fn draw_pic(p: &egui::Painter, r: Rect, pic: Pic, c: Color32) {
                     line(&[(0.55, 0.0), (0.95, 0.0)], s);
                 }
                 Pic::FilletDogBone => {
-                    line(&[(0.15, 0.95), (0.15, 0.15), (0.95, 0.15)], faint);
-                    p.circle_stroke(at(0.25, 0.25), w * 0.17, s);
+                    // The outline follows a circle through the corner.
+                    line(&[(0.15, 0.95), (0.15, 0.43)], s);
+                    arc(0.29, 0.29, 0.2, 225.0, 45.0, s);
+                    line(&[(0.43, 0.15), (0.95, 0.15)], s);
+                }
+                Pic::FilletTBone => {
+                    line(&[(0.15, 0.95), (0.15, 0.15)], s);
+                    arc(0.35, 0.15, 0.2, 180.0, 0.0, s);
+                    line(&[(0.55, 0.15), (0.95, 0.15)], s);
                 }
                 _ => {
-                    line(&[(0.15, 0.95), (0.15, 0.15), (0.95, 0.15)], faint);
-                    p.circle_stroke(at(0.15, 0.35), w * 0.17, s);
+                    line(&[(0.45, 0.95), (0.45, 0.25)], s);
+                    arc(0.25, 0.25, 0.2, 0.0, 270.0, s);
+                    line(&[(0.25, 0.45), (0.95, 0.45)], s);
                 }
             }
         }
@@ -1399,6 +1408,7 @@ impl App {
         self.checks_window(&ctx);
         self.resume_window(&ctx);
         self.curve_fit_window(&ctx);
+        self.plates_window(&ctx);
         self.feedback_window(&ctx);
         self.crash_window(&ctx);
         self.after_crash_window(&ctx);
@@ -1409,6 +1419,32 @@ impl App {
         crate::crash::set_job(self.doc.vectors.len(), self.doc.toolpaths.len(), self.doc.toolpaths.iter().map(|t| t.moves.len() as u64).sum());
         self.recalc_question(&ctx);
         self.poll_recalc();
+        // The texture form shows its lines on the sheet as its settings change.
+        if matches!(&self.left, LeftForm::Xform(f) if f.kind == Xform::WaveTexture) {
+            let _ = self.wave_preview_lines();
+        } else {
+            self.wave_preview = None;
+        }
+        match self.busy_apply {
+            Some(0) => {
+                self.busy_apply = None;
+                self.apply_xform();
+            }
+            Some(n) => {
+                self.busy_apply = Some(n - 1);
+                // Over the drawing too, where the eye is.
+                egui::Area::new(egui::Id::unique("busy-apply")).order(egui::Order::Foreground).anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0)).interactable(false).show(&ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(crate::i18n::tr("Working it out..."));
+                        });
+                    });
+                });
+                ctx.request_repaint();
+            }
+            None => {}
+        }
         if let Some(text) = self.clipboard_out.take() {
             ctx.copy_text(text);
         }

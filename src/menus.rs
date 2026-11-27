@@ -571,6 +571,14 @@ impl App {
         row(ui, Icon::FlipAroundX, Action::MirrorY, some);
         row(ui, Icon::Rotate, Action::TurnLeft, some);
         row(ui, Icon::Rotate, Action::TurnRight, some);
+        let mut convert = false;
+        if self.doc.vectors.iter().any(|v| self.selected.contains(&v.id) && matches!(v.prim, Prim::Text { .. })) {
+            ui.separator();
+            convert = entry(ui, "Convert Text to Curves", true, None);
+        }
+        if convert {
+            self.text_to_curves();
+        }
         if let Some(action) = chosen {
             self.forced_action = Some(action);
             ui.ctx().request_repaint();
@@ -1027,6 +1035,10 @@ impl App {
         if entry(ui, "Ungroup All Levels", apart, Some(keys.text(Action::UngroupAll))) {
             self.ungroup_with(true, true);
         }
+        let has_text = self.doc.vectors.iter().any(|v| self.selected.contains(&v.id) && matches!(v.prim, Prim::Text { .. }));
+        if entry(ui, "Convert Text to Curves", has_text, Some(format!("\n{}", tr("Letters become shapes whose points can be edited; the text can no longer be retyped.")))) {
+            self.text_to_curves();
+        }
         ui.menu_button(tr("Pieces"), |ui| {
             let in_piece = self.selection_in_piece();
             if entry(ui, "Make Piece", self.can_make_piece(), Some(keys.text(Action::MakePiece))) {
@@ -1043,6 +1055,9 @@ impl App {
         ui.separator();
         if entry(ui, "Join Vectors", true, Some(keys.text(Action::JoinForm))) {
             self.start_xform(Xform::Join);
+        }
+        if entry(ui, "Plates from Data...", !self.selected.is_empty(), None) {
+            self.open_plates();
         }
         if entry(ui, "Curve Fit Vectors", true, None) {
             self.curve_fit_open = true;
